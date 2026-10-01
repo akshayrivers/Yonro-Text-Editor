@@ -467,8 +467,8 @@ impl View {
     }
     fn move_down(&mut self, step: usize, buffer: &Buffer) {
         self.text_location.line_idx = self.text_location.line_idx.saturating_add(step);
-        self.snap_to_valid_grapheme(buffer);
         self.snap_to_valid_line(buffer);
+        self.snap_to_valid_grapheme(buffer);
     }
     // clippy::arithmetic_side_effects: This function performs arithmetic calculations
     // after explicitly checking that the target value will be within bounds.
@@ -509,8 +509,16 @@ impl View {
     }
     // Ensures self.location.line_idx points to a valid line index by snapping it to the bottom most line if appropriate.
     // Doesn't trigger scrolling.
+    // Valid lines are `0..height` (i.e. max `height - 1`); `height` itself
+    // is one past EOF and must never be a resting cursor position.
     fn snap_to_valid_line(&mut self, buffer: &Buffer) {
-        self.text_location.line_idx = min(self.text_location.line_idx, buffer.height());
+        let height = buffer.height();
+        if height == 0 {
+            self.text_location.line_idx = 0;
+        } else {
+            self.text_location.line_idx =
+                min(self.text_location.line_idx, height.saturating_sub(1));
+        }
     }
     // region : Search
     pub fn enter_search(&mut self) {
@@ -784,5 +792,24 @@ mod tests {
         view.handle_move_command(Move::Left, &buffer);
         assert_eq!(view.text_location.line_idx, 0);
         assert_eq!(view.text_location.grapheme_idx, 1);
+    }
+
+    #[test]
+    fn move_down_at_eof_stays_on_last_line() {
+        let (mut view, buffer) = setup_view_and_buffer("a\nb");
+        assert_eq!(buffer.height(), 2);
+        view.text_location = Location {
+            line_idx: 1,
+            grapheme_idx: 0,
+        };
+        view.handle_move_command(Move::Down, &buffer);
+        assert_eq!(view.text_location.line_idx, 1);
+        // Pushing far past EOF must also clamp, never rest on the phantom line.
+        view.text_location = Location {
+            line_idx: 99,
+            grapheme_idx: 0,
+        };
+        view.handle_move_command(Move::Down, &buffer);
+        assert_eq!(view.text_location.line_idx, 1);
     }
 }

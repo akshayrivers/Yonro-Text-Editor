@@ -176,10 +176,25 @@ fn handle_left_drag(position: Position, ctx: &mut EditorContext) {
             let mut rect = pane.component().rect();
             rect.position.col = position.col.saturating_sub(ctx.drag_offset.col);
             rect.position.row = position.row.saturating_sub(ctx.drag_offset.row);
+            clamp_floating_rect(&mut rect, ctx.terminal_size);
             pane.resize(rect);
         }
         ctx.mark_all_panes_for_redraw();
     }
+}
+
+/// Keep floating panes inside the editor area: below `BufferBar` (row 0),
+/// above `StatusBar` (`height - 2`) and `CommandBar` (`height - 1`).
+/// `saturating_*` is mandatory: terminal sizes are `usize`, so plain `-`
+/// panics in debug / wraps in release on tiny terminals or oversized panes.
+fn clamp_floating_rect(rect: &mut Rect, term: Size) {
+    let max_col = term.width.saturating_sub(rect.size.width);
+    rect.position.col = rect.position.col.min(max_col);
+    let max_row = term
+        .height
+        .saturating_sub(rect.size.height.saturating_add(2))
+        .max(1);
+    rect.position.row = rect.position.row.clamp(1, max_row);
 }
 
 fn handle_left_release(ctx: &mut EditorContext) {
@@ -300,11 +315,13 @@ pub fn toggle_floating(id: usize, ctx: &mut EditorContext) {
         rect.position.col = rect
             .position
             .col
-            .min(ctx.terminal_size.width.saturating_sub(4));
-        rect.position.row = rect
-            .position
-            .row
-            .min(ctx.terminal_size.height.saturating_sub(2));
+            .min(ctx.terminal_size.width.saturating_sub(rect.size.width));
+        let max_row = ctx
+            .terminal_size
+            .height
+            .saturating_sub(rect.size.height.saturating_add(2))
+            .max(1);
+        rect.position.row = rect.position.row.clamp(1, max_row);
         pane.resize(rect);
     }
 

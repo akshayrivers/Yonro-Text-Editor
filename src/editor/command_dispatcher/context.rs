@@ -108,12 +108,20 @@ impl<'a> EditorContext<'a> {
         self.layout_tree.compute_layout(editor_rect);
         self.sync_pane_rects();
 
-        // Bounds check for floating panes
+        // Bounds check for floating panes: keep them off the chrome
+        // (BufferBar row 0, StatusBar height-2, CommandBar height-1).
         for pane in self.pane_manager.iter_mut() {
             if pane.is_floating {
                 let mut rect = pane.component().rect();
-                rect.position.col = rect.position.col.min(size.width.saturating_sub(4));
-                rect.position.row = rect.position.row.min(size.height.saturating_sub(2));
+                rect.position.col = rect
+                    .position
+                    .col
+                    .min(size.width.saturating_sub(rect.size.width));
+                let max_row = size
+                    .height
+                    .saturating_sub(rect.size.height.saturating_add(2))
+                    .max(1);
+                rect.position.row = rect.position.row.clamp(1, max_row);
                 pane.resize(rect);
             }
         }

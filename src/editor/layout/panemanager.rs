@@ -1,5 +1,4 @@
 use crate::editor::layout::{Pane, PaneContent};
-use crate::editor::uicomponents::UIComponent;
 use crate::prelude::Rect;
 use std::collections::HashMap;
 

@@ -7,9 +7,7 @@ pub mod builtin;
 pub mod runtime;
 pub use runtime::PluginRuntime;
 
-use crate::editor::command::Move;
 use crate::editor::events::EditorEvent;
-use crate::editor::uicomponents::UIComponent;
 use crate::{editor, prelude::*};
 use async_trait::async_trait;
 

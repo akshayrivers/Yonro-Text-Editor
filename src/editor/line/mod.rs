@@ -241,23 +241,17 @@ impl Line {
             .position(|fragment| fragment.start_byte_idx >= byte_idx)
     }
     fn grapheme_idx_to_byte_idx(&self, grapheme_idx: GraphemeIdx) -> ByteIdx {
-        debug_assert!(grapheme_idx <= self.grapheme_count());
         if grapheme_idx == 0 || self.grapheme_count() == 0 {
             return 0;
         }
-        self.fragments.get(grapheme_idx).map_or_else(
-            || {
-                #[cfg(debug_assertions)]
-                {
-                    panic!("Fragment not found for grapheme index: {grapheme_idx:?}");
-                }
-                #[cfg(not(debug_assertions))]
-                {
-                    0
-                }
-            },
-            |fragment| fragment.start_byte_idx,
-        )
+        // End-of-line is valid (cursor rests here constantly) — return one-past-end,
+        // never panic. Covers `PLAN.md Phase 1.4`.
+        if grapheme_idx >= self.grapheme_count() {
+            return self.string.len();
+        }
+        self.fragments
+            .get(grapheme_idx)
+            .map_or(self.string.len(), |fragment| fragment.start_byte_idx)
     }
     pub fn search_forward(
         &self,
@@ -537,5 +531,21 @@ mod tests {
         let visible = line.get_visible_graphemes(0..3);
 
         assert_eq!(visible, "hel");
+    }
+
+    #[test]
+    fn grapheme_idx_to_byte_idx_at_eol_returns_len() {
+        // PLAN.md Phase 1.4: `grapheme_idx == count` (cursor at EOL) must
+        // return one-past-end instead of panicking (debug) / returning 0 (release).
+        let line = Line::from("hello");
+        assert_eq!(line.grapheme_idx_to_byte_idx(5), line.len());
+        assert_eq!(line.grapheme_idx_to_byte_idx(99), line.len());
+
+        let empty = Line::from("");
+        assert_eq!(empty.grapheme_idx_to_byte_idx(0), 0);
+
+        // Multibyte: "aé" where é = e + combining acute (2 chars, 1 grapheme).
+        let uni = Line::from("aé");
+        assert_eq!(uni.grapheme_idx_to_byte_idx(uni.grapheme_count()), uni.len());
     }
 }

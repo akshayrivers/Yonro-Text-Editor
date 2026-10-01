@@ -509,8 +509,14 @@ impl Editor {
         for pane in self.pane_manager.iter_mut() {
             if pane.is_floating {
                 let mut rect = pane.component().rect();
-                rect.position.col = rect.position.col.min(width.saturating_sub(4));
-                rect.position.row = rect.position.row.min(height.saturating_sub(2));
+                rect.position.col = rect
+                    .position
+                    .col
+                    .min(width.saturating_sub(rect.size.width));
+                let max_row = height
+                    .saturating_sub(rect.size.height.saturating_add(2))
+                    .max(1);
+                rect.position.row = rect.position.row.clamp(1, max_row);
                 pane.resize(rect);
             }
         }

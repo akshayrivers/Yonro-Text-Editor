@@ -21,6 +21,13 @@ pub enum SplitDirection {
     Horizontal,
     Vertical,
 }
+/// Result of removing one pane from a layout subtree.
+enum RemovalResult {
+    /// Target was in this subtree; carries the rebuilt subtree.
+    Survived(LayoutNode),
+    /// This node itself was the target leaf; the parent must use the sibling.
+    Deleted,
+}
 pub struct SplitHandle {
     pub id: usize,
     pub direction: SplitDirection,
@@ -253,30 +260,25 @@ impl LayoutTree {
             },
         );
         match self.remove_node_recursive(old_root, id) {
-            Ok(new_root) => {
+            RemovalResult::Survived(new_root) => {
                 self.root = new_root;
                 Ok(())
             }
-            //still just in case
-            Err(e) if e.to_string() == "DELETED" => {
-                Err(Error::other("Unexpected deletion of root"))
-            }
-            Err(e) => Err(e),
+            // Target was the root leaf itself (guarded above, but stay total).
+            RemovalResult::Deleted => Err(Error::other("Unexpected deletion of root")),
         }
     }
 
-    // need to use type safe methods rather than string comparisions
-    fn remove_node_recursive(
-        &self,
-        node: LayoutNode,
-        target_id: usize,
-    ) -> Result<LayoutNode, Error> {
+    /// Type-safe removal signal — replaces the old `Err(Error::other("DELETED"))`
+    /// string-comparison hack (`PLAN.md Phase 1.6`). `io::Error` is for I/O
+    /// failures, never for control flow.
+    fn remove_node_recursive(&self, node: LayoutNode, target_id: usize) -> RemovalResult {
         match node {
             LayoutNode::Leaf { pane_id, rect } => {
                 if pane_id == target_id {
-                    return Err(Error::other("DELETED"));
+                    return RemovalResult::Deleted;
                 }
-                Ok(LayoutNode::Leaf { pane_id, rect })
+                RemovalResult::Survived(LayoutNode::Leaf { pane_id, rect })
             }
             LayoutNode::Split {
                 split_id,
@@ -287,13 +289,16 @@ impl LayoutTree {
                 rect,
             } => {
                 match self.remove_node_recursive(*first, target_id) {
-                    Err(e) if e.to_string() == "DELETED" => Ok(*second),
-                    Ok(new_first) => {
+                    // First child was (or contained) the target: sibling takes over.
+                    RemovalResult::Deleted => RemovalResult::Survived(*second),
+                    RemovalResult::Survived(new_first) => {
                         match self.remove_node_recursive(*second, target_id) {
-                            Err(e) if e.to_string() == "DELETED" => Ok(new_first),
-                            Ok(new_second) => {
+                            RemovalResult::Deleted => {
+                                RemovalResult::Survived(new_first)
+                            }
+                            RemovalResult::Survived(new_second) => {
                                 // neither was the target, so we rebuild the split
-                                Ok(LayoutNode::Split {
+                                RemovalResult::Survived(LayoutNode::Split {
                                     split_id,
                                     direction,
                                     ratio,
@@ -302,15 +307,12 @@ impl LayoutTree {
                                     rect,
                                 })
                             }
-                            Err(e) => Err(e),
                         }
                     }
-                    Err(e) => Err(e),
                 }
             }
         }
     }
-
     pub fn find_split(&self, mouse: Position) -> Option<SplitHandle> {
         Self::find_split_at(&self.root, mouse)
     }

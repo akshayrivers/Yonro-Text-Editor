@@ -7,7 +7,6 @@
 use super::UIComponent;
 use crate::editor::command::Move;
 use crate::prelude::*;
-use std::io::Error;
 
 /// What a mouse click on a plugin component resolved to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
