@@ -446,8 +446,10 @@ fn main() {
         view.handle_edit_command(Edit::Insert('X'), &mut buf_mut);
 
         let mut highlighter = RustSyntaxHighlighter::default();
-        for (idx, line) in buf_mut.lines().iter().enumerate().take(30) {
-            highlighter.highlight(idx, line);
+        for idx in 0..30 {
+            if let Some(line) = buf_mut.get_line(idx) {
+                highlighter.highlight(idx, &line);
+            }
         }
         let _ = view.caret_position(buf_mut);
     }));
