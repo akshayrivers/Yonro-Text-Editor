@@ -1,0 +1,21 @@
+[package]
+name = "yonro-core"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+ropey = "1.6"
+unicode-segmentation = "1.12.0"
+unicode-width = "0.2.2"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+tempfile = "3.8"
+
+[[bench]]
+name = "line_benchmarks"
+harness = false
+
+[[bench]]
+name = "buffer_benchmarks"
+harness = false
