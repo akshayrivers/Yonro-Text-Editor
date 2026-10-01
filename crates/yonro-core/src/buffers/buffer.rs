@@ -7,6 +7,7 @@ use ropey::Rope;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Error, Write};
 use std::ops::Range;
+use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Default)]
@@ -261,6 +262,13 @@ impl Buffer {
         // so in-memory edits and loaded files agree.
         self.rope.len_lines()
     }
+
+    /// Get an immutable snapshot of the underlying rope as `Arc<Rope>`.
+    /// This is O(1) — ropey uses copy-on-write, so cloning is just an Arc increment.
+    pub fn rope(&self) -> Arc<Rope> {
+        Arc::new(self.rope.clone())
+    }
+
     pub fn insert_char(&mut self, character: char, at: Location) {
         if self.rope.len_chars() == 0 {
             debug_assert!(at.line_idx == 0);

@@ -13,18 +13,15 @@ impl CommandHandler for MoveHandler {
     fn handle(&mut self, command: &Command, ctx: &mut EditorContext) -> Result<(), String> {
         if let Command::Move(move_cmd) = command {
             if let Some(pane) = ctx.pane_manager.active_pane_mut() {
-                match &mut pane.content {
-                    PaneContent::TextView(view) => {
-                        // Get buffer_id immutably, drop borrow, then get buffer
-                        let buffer_id = view.buffer_id();
-                        if let Some(buffer) = ctx.buffer_manager.get(buffer_id) {
-                            view.handle_move_command(*move_cmd, buffer);
-                        }
+                // Direct dispatch to plugin panes (FileExplorer, etc.) - synchronous, no channel round-trip
+                pane.plugin_handle_move(*move_cmd);
+
+                // For TextView, handle cursor movement
+                if let PaneContent::TextView(view) = &mut pane.content {
+                    let buffer_id = view.buffer_id();
+                    if let Some(buffer) = ctx.buffer_manager.get(buffer_id) {
+                        view.handle_move_command(*move_cmd, buffer);
                     }
-                    PaneContent::Plugin(_component) => {
-                        // need to figure this out soon
-                    }
-                    PaneContent::Popup(_) => {}
                 }
             }
             Ok(())

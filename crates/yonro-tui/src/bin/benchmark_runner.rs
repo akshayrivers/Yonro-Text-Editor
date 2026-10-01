@@ -408,7 +408,7 @@ fn main() {
     results.push(run_benchmark("Plugin", "BufferSnapshot delivery (100 lines)", None, duration, || {
         let snapshot = BufferSnapshot {
             buffer_id: 1,
-            lines: snap_buf.lines_as_strings(),
+            rope: snap_buf.rope(),
             file_name: Some("main.rs".to_string()),
             is_dirty: snap_buf.is_dirty(),
         };

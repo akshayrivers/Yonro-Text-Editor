@@ -8,15 +8,32 @@ pub mod runtime;
 pub use runtime::PluginRuntime;
 
 use crate::prelude::*;
+use ropey::Rope;
+use std::sync::Arc;
 use yonro_core::events::EditorEvent;
 use async_trait::async_trait;
 
 #[derive(Clone, Debug)]
 pub struct BufferSnapshot {
     pub buffer_id: usize,
-    pub lines: Vec<String>,
+    pub rope: Arc<Rope>,
     pub file_name: Option<String>,
     pub is_dirty: bool,
+}
+
+impl BufferSnapshot {
+    /// Get all lines as owned Strings (materializes from rope).
+    /// Use sparingly; prefer working with `rope` directly for performance.
+    pub fn lines(&self) -> Vec<String> {
+        (0..self.rope.len_lines())
+            .filter_map(|idx| self.rope.get_line(idx).map(|slice| slice.to_string()))
+            .collect()
+    }
+
+    /// Get the full text as a single String.
+    pub fn text(&self) -> String {
+        self.rope.to_string()
+    }
 }
 
 // PluginMessage

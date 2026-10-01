@@ -4,6 +4,7 @@ use std::{
     env,
     io::Error,
     panic::{set_hook, take_hook},
+    time::Duration,
 };
 use yonro_core::{
     Buffer, BufferManager, Command, DocumentStatus, EditorEvent, FileType, System,
@@ -151,6 +152,7 @@ impl Editor {
     // Event loop
 
     pub fn run(&mut self) {
+        const FRAME_TIMEOUT: Duration = Duration::from_millis(16); // ~60fps
         loop {
             // 1. Apply plugin responses from last cycle
             let responses = self.plugin_runtime.drain_responses();
@@ -170,9 +172,9 @@ impl Editor {
                 break;
             }
 
-            // 4. Wait for next input event
-            match Terminal::wait_for_event() {
-                Ok(event) => {
+            // 4. Non-blocking poll for next input event (~60fps)
+            match Terminal::poll_event(FRAME_TIMEOUT) {
+                Ok(Some(event)) => {
                     // Clone for plugins before core consumes
                     let event_for_plugins = event.clone();
                     self.handle_event(event);
@@ -184,9 +186,12 @@ impl Editor {
                             active_pane_id,
                         });
                 }
-                Err(err) => {
+                Ok(None) => {
+                    // Timeout - no event, just continue loop for next frame
+                }
+                Err(_err) => {
                     #[cfg(debug_assertions)]
-                    panic!("Could not read event: {err:?}");
+                    panic!("Could not read event: {_err:?}");
                 }
             }
 
@@ -242,7 +247,7 @@ impl Editor {
         let buffer = self.buffer_manager.get(buffer_id)?;
         Some(BufferSnapshot {
             buffer_id,
-            lines: buffer.lines_as_strings(),
+            rope: buffer.rope(),
             file_name: buffer
                 .get_file_info()
                 .get_path()

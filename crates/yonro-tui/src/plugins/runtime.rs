@@ -1,5 +1,6 @@
 use super::{Plugin, PluginMessage, PluginResponse};
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use crossbeam_channel::{unbounded, Receiver, Sender};
+use std::thread;
 
 pub struct PluginRuntime {
     pub tx: Sender<PluginMessage>,
@@ -14,10 +15,10 @@ impl Default for PluginRuntime {
 
 impl PluginRuntime {
     pub fn new() -> Self {
-        let (core_tx, worker_rx) = mpsc::channel::<PluginMessage>();
-        let (worker_tx, core_rx) = mpsc::channel::<PluginResponse>();
+        let (core_tx, worker_rx) = unbounded::<PluginMessage>();
+        let (worker_tx, core_rx) = unbounded::<PluginResponse>();
 
-        std::thread::spawn(move || {
+        thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -37,11 +38,8 @@ impl PluginRuntime {
 
     pub fn drain_responses(&self) -> Vec<PluginResponse> {
         let mut responses = Vec::new();
-        loop {
-            match self.rx.try_recv() {
-                Ok(r) => responses.push(r),
-                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
-            }
+        while let Ok(r) = self.rx.try_recv() {
+            responses.push(r);
         }
         responses
     }
@@ -55,7 +53,7 @@ impl PluginRuntime {
     }
 }
 
-async fn plugin_worker(rx: std::sync::mpsc::Receiver<PluginMessage>, tx: Sender<PluginResponse>) {
+async fn plugin_worker(rx: Receiver<PluginMessage>, tx: Sender<PluginResponse>) {
     let mut plugins: Vec<Box<dyn Plugin>> = Vec::new();
 
     loop {
@@ -89,7 +87,6 @@ async fn plugin_worker(rx: std::sync::mpsc::Receiver<PluginMessage>, tx: Sender<
                 }
             }
 
-            // Core telling a plugin that its requested pane was opened
             PluginMessage::PaneOpened {
                 plugin_name,
                 pane_id,
