@@ -7,6 +7,8 @@ pub struct DocumentStatus {
     pub total_lines: usize,
     pub current_line_idx: LineIdx,
     pub is_modified: bool,
+    pub word_count: usize,
+    pub char_count: usize,
 }
 
 impl DocumentStatus {

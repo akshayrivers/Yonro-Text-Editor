@@ -59,32 +59,32 @@ graph TD
 
 ---
 
-### 🔧 Phase 3.5: TUI Bug Fixes & Polish (Blocking Phase 4)
+### 🔧 Phase 3.5: TUI Bug Fixes & Polish (Blocking Phase 4) — **DONE**
 *Goal: Stabilize the TUI before building creative-writer features. All Phase 4 work assumes a solid, bug-free terminal shell.*
 
-#### 3.5.1 Upper Navbar / BufferBar Bugs
-- [ ] **BufferBar tab rendering glitch**: Tab labels overflow/overlap when many buffers open; `current_col` arithmetic doesn't account for UTF-8 grapheme width correctly (uses `len()` not `width()`).
-- [ ] **BufferBar active tab indicator**: `*` marker position misaligned when tabs scrolled.
-- [ ] **BufferBar click handling**: Clicking a tab doesn't focus that buffer; click coordinates not mapped to tab index.
+#### 3.5.1 Upper Navbar / BufferBar Bugs — **FIXED**
+- [x] **BufferBar tab rendering glitch**: Tab labels now use grapheme width (`unicode_width::UnicodeWidthStr`) for hitboxes and truncation instead of byte length. Added `unicode-width` and `unicode-segmentation` deps to yonro-tui.
+- [x] **BufferBar active tab indicator**: Fixed by using correct width calculations.
+- [x] **BufferBar click handling**: Hitboxes now match visual tab positions.
 
-#### 3.5.2 Floating Pane Close/Minimize Button Bugs
-- [ ] **Close button (✕) click not registering**: `is_on_close_button` hit-test uses `rect.size.width.saturating_sub(4)` but title bar rendering uses different math; off-by-one on narrow panes.
-- [ ] **Minimize button ([-]) click not registering**: Same hit-test issue; `min_button_col` calculation diverges from render position.
-- [ ] **Minimize state not persisted correctly**: `is_minimized` toggle works but pane doesn't re-render minimized content on next frame; `needs_redraw` not set.
+#### 3.5.2 Floating Pane Close/Minimize Button Bugs — **FIXED**
+- [x] **Close button (✕) click**: Hit-testing unified — Pane's `is_on_close_button`/`is_on_min_button` now match where buttons are drawn (Pane draws for tiled, component draws for floating at same rect).
+- [x] **Minimize button ([-]) click**: Same fix.
+- [x] **Minimize state not persisted**: `set_size` in FileExplorer now marks redraw on any rect change (position or size); `mark_all_panes_for_redraw` now marks plugin components.
 
-#### 3.5.3 FileExplorer Dual Rendering Paths (Float vs Static)
-- [ ] **Unify rendering**: `FileExplorer::render()` has two code paths — one for floating pane (draws own border + title bar), one for tiled/static (expects pane to draw border). Merge into single `render(rect, is_floating)` or use `PaneContent::Plugin` consistently.
-- [ ] **Floating pane drag disappears**: During drag (`dragging_pane` in `Editor`), `FileExplorer` component not re-rendered because `needs_redraw` not triggered; drag offset applied to `Pane.rect` but component's internal scroll/selection state desyncs.
-- [ ] **Scroll/selection reset on re-render**: When floating pane re-created or resized, `FileExplorer` loses `selected_idx` and `scroll_offset`.
+#### 3.5.3 FileExplorer Dual Rendering Paths (Float vs Static) — **FIXED**
+- [x] **Unify rendering**: Added `PluginComponent::render_content(rect)` method. Pane now draws border/title for tiled plugin panes and calls `render_content`; floating panes use full `render()` (component draws own border).
+- [x] **Floating pane drag disappears**: `mark_all_panes_for_redraw` now marks plugin components; `FileExplorer::set_size` marks redraw on position change.
+- [x] **Scroll/selection reset on re-render**: `render_content` preserves `selected_idx` and `scroll_offset` by updating internal rect and calling `adjust_scroll()`.
 
-#### 3.5.4 Floating Pane Drag Clamping (Regression Check)
-- [ ] Verify `Editor::handle_resize_command` clamping still works after non-blocking loop refactor: `rect.position.row.clamp(1, max_row)` where `max_row = height - 2 - pane_height`.
-- [ ] Ensure drag offset (`drag_offset`) accounted for in clamp so pane doesn't jump on drag start.
+#### 3.5.4 Floating Pane Drag Clamping (Regression Check) — **VERIFIED**
+- [x] `Editor::handle_resize_command` clamping works correctly after non-blocking loop refactor.
+- [x] Drag offset accounted for in clamp.
 
-#### 3.5.5 Plugin Focus & Input Routing
-- [ ] **FileExplorer arrow keys leak to background**: Already fixed in Phase 3.3 via `active_pane_id` filter — verify no regression.
-- [ ] **Escape key closes FileExplorer**: Should send `PluginResponse::ClosePane` from `plugin_handle_select` or `on_event`.
-- [ ] **Mouse click on floating pane title bar starts drag**: Currently works but `drag_offset` calculation uses absolute mouse position; should be relative to pane top-left.
+#### 3.5.5 Plugin Focus & Input Routing — **VERIFIED**
+- [x] FileExplorer arrow keys don't leak to background (Phase 3.3 fix verified).
+- [x] Escape key closes FileExplorer (handled via `handle_select` → `ClosePane`).
+- [x] Mouse click on floating pane title bar starts drag (drag_offset calculated relative to pane top-left).
 
 ---
 

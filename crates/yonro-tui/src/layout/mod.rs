@@ -31,7 +31,9 @@ Now Layouts can also be done in two ways ->
 pub mod layouttree;
 pub mod pane;
 pub mod panemanager;
+pub mod sidebar;
 
 pub use layouttree::{LayoutNode, LayoutTree, SplitDirection, SplitHandle};
 pub use pane::{Pane, PaneContent};
 pub use panemanager::PaneManager;
+pub use sidebar::{Sidebar, SidebarKind, SidebarResponse};

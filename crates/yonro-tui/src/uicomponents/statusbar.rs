@@ -1,4 +1,6 @@
 use crate::terminal::Terminal;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 use yonro_core::DocumentStatus;
 use super::UIComponent;
 use crate::prelude::*;
@@ -41,8 +43,9 @@ impl UIComponent for StatusBar {
         let modified_indicator = self.current_status.modified_indicator_to_string();
 
         let beginning = format!(
-            "{} - {line_count} {modified_indicator}",
-            self.current_status.file_name
+            "{} - {line_count} {} words {modified_indicator}",
+            self.current_status.file_name,
+            self.current_status.word_count
         );
         // Assemble the back part
         let position_indicator = self.current_status.position_indicator_to_string();
@@ -51,18 +54,31 @@ impl UIComponent for StatusBar {
 
         let back_part = format!("{file_type} | {position_indicator}");
 
-        // assemble the whole status bar
-        let remainder_len = width.saturating_sub(beginning.len());
+        // assemble the whole status bar (grapheme-width aware per AGENTS.md §2.1)
+        let beginning_width = UnicodeWidthStr::width(beginning.as_str());
+        let back_width = UnicodeWidthStr::width(back_part.as_str());
+        let remainder_len = width
+            .saturating_sub(beginning_width)
+            .saturating_sub(back_width);
 
         let status = format!("{beginning}{back_part:>remainder_len$}");
 
-        // Only print out the status if it fits.
-        // Otherwise write out an empty string
-        // to ensure the row is cleared.
-        let to_print = if status.len() <= width {
+        // Truncate (not blank) when the terminal is narrow.
+        let to_print = if UnicodeWidthStr::width(status.as_str()) <= width {
             status
         } else {
-            String::new()
+            // Keep a readable prefix; `width` is a display-column budget.
+            let mut kept = String::new();
+            let mut used: usize = 0;
+            for g in status.as_str().graphemes(true) {
+                let w = UnicodeWidthStr::width(g);
+                if used.saturating_add(w) > width {
+                    break;
+                }
+                kept.push_str(g);
+                used = used.saturating_add(w);
+            }
+            kept
         };
 
         Terminal::clear_rect_line(self.rect, self.rect.position.row)?;

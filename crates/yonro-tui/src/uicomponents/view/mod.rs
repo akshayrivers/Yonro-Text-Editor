@@ -62,12 +62,15 @@ const GROUP_TIMEOUT_MS: u128 = 800;
 impl View {
     pub fn get_status(&self, buffer: &Buffer) -> DocumentStatus {
         let file_info = buffer.get_file_info();
+        let (words, graphemes, _) = buffer.word_count_stats();
         DocumentStatus {
             file_name: format!("{file_info}"),
             total_lines: buffer.height(),
             current_line_idx: self.text_location.line_idx,
             is_modified: buffer.is_dirty(),
             file_type: file_info.get_file_type(),
+            word_count: words,
+            char_count: graphemes,
         }
     }
     pub fn set_id(&mut self, id: usize) {

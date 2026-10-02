@@ -50,6 +50,12 @@ pub enum PluginMessage {
         plugin_name: String,
         pane_id: usize,
     },
+    /// Core tells a plugin that its pane was closed/hidden (sidebar toggle,
+    /// mouse [x], command-bar close). Plugins must clear `open_pane_id`.
+    PaneClosed {
+        plugin_name: String,
+        pane_id: usize,
+    },
     Shutdown,
 }
 
@@ -81,6 +87,11 @@ pub enum PluginResponse {
     EmitCustomEvent(yonro_core::events::customevent::CustomEvent),
     /// Ask the core for a fresh buffer snapshot.
     RequestSnapshot { buffer_id: usize },
+    /// Toggle a sidebar (FileExplorer, WordCount, etc.)
+    ToggleSidebar { kind: crate::layout::SidebarKind },
+    /// Hide a sidebar without toggling (Esc, [x] button, close command).
+    /// No-op when the sidebar is already hidden.
+    CloseSidebar { kind: crate::layout::SidebarKind },
 }
 
 impl std::fmt::Debug for PluginResponse {
@@ -99,6 +110,8 @@ impl std::fmt::Debug for PluginResponse {
             Self::UpdateMessage(m) => write!(f, "UpdateMessage({m})"),
             Self::EmitCustomEvent(_) => write!(f, "EmitCustomEvent"),
             Self::RequestSnapshot { buffer_id } => write!(f, "RequestSnapshot({buffer_id})"),
+            Self::ToggleSidebar { kind } => write!(f, "ToggleSidebar({kind:?})"),
+            Self::CloseSidebar { kind } => write!(f, "CloseSidebar({kind:?})"),
         }
     }
 }
@@ -129,4 +142,8 @@ pub trait Plugin: Send + Sync {
     /// Called when a pane this plugin requested has been opened.
     /// The plugin should store pane_id for future close/move calls.
     async fn on_pane_opened(&mut self, _pane_id: usize) {}
+
+    /// Called when this plugin's pane was closed or hidden.
+    /// Default clears stale state; override when tracking `open_pane_id`.
+    async fn on_pane_closed(&mut self, _pane_id: usize) {}
 }

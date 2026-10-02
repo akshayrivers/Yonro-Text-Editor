@@ -1,5 +1,6 @@
 // src/editor/uicomponents/fileexplorer.rs
 use yonro_core::command::Move;
+use yonro_core::buffers::Buffer;
 use crate::uicomponents::{ClickAction, PluginComponent, UIComponent};
 use crate::terminal::Terminal;
 use crate::prelude::*;
@@ -26,6 +27,9 @@ pub struct FileExplorer {
     rect: Rect,
     needs_redraw: bool,
     pub active: bool,
+    // For double-click detection
+    last_click_time: Option<std::time::Instant>,
+    last_click_idx: Option<usize>,
 }
 
 struct FileEntry {
@@ -44,6 +48,8 @@ impl Default for FileExplorer {
             rect: Rect::default(),
             needs_redraw: true,
             active: false,
+            last_click_time: None,
+            last_click_idx: None,
         };
         explorer.refresh_entries();
         explorer
@@ -335,12 +341,10 @@ impl UIComponent for FileExplorer {
     }
 
     fn set_size(&mut self, rect: Rect) {
-        if self.rect.size != rect.size {
+        if self.rect != rect {
             self.rect = rect;
             self.adjust_scroll();
             self.needs_redraw = true;
-        } else {
-            self.rect = rect;
         }
     }
 
@@ -392,6 +396,18 @@ impl PluginComponent for FileExplorer {
                     if prev != self.selected_idx {
                         self.needs_redraw = true;
                     }
+                    
+                    // Check for double-click on the same item
+                    let now = std::time::Instant::now();
+                    let is_double_click = self.last_click_idx == Some(click_idx)
+                        && self.last_click_time.map_or(false, |t| t.elapsed().as_millis() < 300);
+                    
+                    self.last_click_time = Some(now);
+                    self.last_click_idx = Some(click_idx);
+                    
+                    if is_double_click && !self.entries[click_idx].is_dir {
+                        return ClickAction::DoubleClick;
+                    }
                 }
             }
             ClickAction::None
@@ -403,5 +419,18 @@ impl PluginComponent for FileExplorer {
             self.active = active;
             self.needs_redraw = true;
         }
+    }
+
+    fn update_from_buffer(&mut self, _buffer: &Buffer) {
+        // FileExplorer doesn't need buffer updates
+    }
+
+    fn render_content(&mut self, rect: Rect) -> Result<(), Error> {
+        // Update our internal rect to match the content rect for hit-testing
+        self.rect = rect;
+        self.adjust_scroll();
+        self.draw_entries()?;
+        self.needs_redraw = false;
+        Ok(())
     }
 }

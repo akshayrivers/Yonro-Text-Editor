@@ -11,7 +11,7 @@ use yonro_tui::{
     layout::{LayoutTree, Pane, PaneContent, PaneManager, SplitDirection},
     plugins::{BufferSnapshot, PluginMessage, PluginRuntime},
     plugins::builtin::FileExplorerPlugin,
-    uicomponents::{BufferBar, CommandBar, MessageBar, UIComponent, View},
+    uicomponents::{CommandBar, MessageBar, PaneBar, UIComponent, View},
 };
 use yonro_tui::prelude::*;
 
@@ -360,7 +360,7 @@ fn main() {
     let p_0 = Pane { pane_id: 0, content: PaneContent::TextView(initial_v), active: true, is_floating: false, z_index: 0, is_minimized: false, rect: screen_rect };
     let mut p_mgr = PaneManager::new(p_0);
     let mut l_tree = LayoutTree::new(0, screen_rect);
-    let mut b_bar = BufferBar::default();
+    let mut p_bar = PaneBar::default();
     let mut c_bar = CommandBar::default();
     let mut m_bar = MessageBar::default();
     let mut p_type = PromptType::None;
@@ -369,16 +369,18 @@ fn main() {
     let mut d_split = None;
     let mut d_pane = None;
     let mut d_offset = Position::default();
+    let mut l_editor: Option<usize> = None;
     let mut reg = HandlerRegistry::default();
     let cmd_down = Command::Move(Move::Down);
 
     results.push(run_benchmark("Command", "HandlerRegistry dispatch overhead", None, duration, || {
+        let mut plugin_responses = Vec::new();
         let mut ctx = EditorContext {
             prompt_type: &mut p_type,
             pane_manager: &mut p_mgr,
             layout_tree: &mut l_tree,
             buffer_manager: &mut buf_mgr,
-            buffer_bar: &mut b_bar,
+            pane_bar: &mut p_bar,
             command_bar: &mut c_bar,
             message_bar: &mut m_bar,
             terminal_size: screen_rect.size,
@@ -388,6 +390,8 @@ fn main() {
             dragging_pane: &mut d_pane,
             drag_offset: &mut d_offset,
             buffer_changed: None,
+            plugin_responses: &mut plugin_responses,
+            last_editor_pane: &mut l_editor,
         };
         let _ = reg.dispatch(&cmd_down, &mut ctx);
     }));

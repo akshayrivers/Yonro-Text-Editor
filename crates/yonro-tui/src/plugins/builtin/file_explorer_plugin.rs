@@ -1,12 +1,9 @@
 // src/editor/plugins/builtin/file_explorer_plugin.rs
-use yonro_core::command::Move;
 use yonro_core::events::keyboard::{KeyCode, KeyModifiers};
 use yonro_core::events::mouse::{MouseAction, MouseButton};
 use yonro_core::events::EditorEvent;
-use crate::layout::PaneContent;
+use crate::layout::SidebarKind;
 use crate::plugins::{BufferSnapshot, Plugin, PluginResponse};
-use crate::uicomponents::FileExplorer;
-use crate::prelude::*;
 use async_trait::async_trait;
 
 pub struct FileExplorerPlugin {
@@ -33,34 +30,26 @@ impl Plugin for FileExplorerPlugin {
 
     async fn on_load(&mut self) {}
 
-    /// Core calls this after our OpenFloatingPane was applied.
+    /// Core calls this after our sidebar pane was created.
     async fn on_pane_opened(&mut self, pane_id: usize) {
         self.open_pane_id = Some(pane_id);
     }
 
+    /// Core calls this after our sidebar was hidden/closed.
+    /// Clears stale state so the next `Ctrl+E` reopens instead of no-op.
+    async fn on_pane_closed(&mut self, pane_id: usize) {
+        if self.open_pane_id == Some(pane_id) {
+            self.open_pane_id = None;
+        }
+    }
+
     async fn on_event(&mut self, event: &EditorEvent, active_pane_id: usize) -> Option<PluginResponse> {
         match event {
-            // ── Ctrl+E — toggle ───────────────────────────────────────────
+            // ── Ctrl+E — toggle sidebar ───────────────────────────────────────
             EditorEvent::Key(key)
                 if key.modifiers == KeyModifiers::CTRL && key.key_code == KeyCode::Char('e') =>
             {
-                if let Some(pane_id) = self.open_pane_id.take() {
-                    return Some(PluginResponse::ClosePane { pane_id });
-                }
-                // Open — core will call on_pane_opened with the new pane_id
-                return Some(PluginResponse::OpenFloatingPane {
-                    plugin_name: self.name().to_string(),
-                    content_factory: Box::new(|| {
-                        PaneContent::Plugin(Box::new(FileExplorer::default()))
-                    }),
-                    rect: Rect {
-                        position: Position { row: 2, col: 4 },
-                        size: Size {
-                            height: 24,
-                            width: 42,
-                        },
-                    },
-                });
+                return Some(PluginResponse::ToggleSidebar { kind: SidebarKind::FileExplorer });
             }
 
             // Other events are only processed if the explorer is currently the active pane
@@ -70,24 +59,17 @@ impl Plugin for FileExplorerPlugin {
                         let pane_id = self.open_pane_id.unwrap();
                         if key.modifiers == KeyModifiers::NONE {
                             match key.key_code {
-                                KeyCode::Up => {
-                                    return Some(PluginResponse::MoveInPane {
-                                        pane_id,
-                                        direction: Move::Up,
-                                    });
-                                }
-                                KeyCode::Down => {
-                                    return Some(PluginResponse::MoveInPane {
-                                        pane_id,
-                                        direction: Move::Down,
-                                    });
-                                }
+                                // NOTE: Up/Down are deliberately NOT answered here.
+                                // `MoveHandler` already forwards arrows synchronously
+                                // to the active plugin pane (`PLAN.md Phase 3.3`
+                                // direct dispatch); emitting `MoveInPane` as well
+                                // would move the selection TWICE per keypress.
                                 KeyCode::Enter => {
                                     return Some(PluginResponse::SelectInPane { pane_id });
                                 }
                                 KeyCode::Esc => {
                                     self.open_pane_id = None;
-                                    return Some(PluginResponse::ClosePane { pane_id });
+                                    return Some(PluginResponse::CloseSidebar { kind: SidebarKind::FileExplorer });
                                 }
                                 _ => {}
                             }

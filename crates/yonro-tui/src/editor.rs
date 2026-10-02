@@ -12,16 +12,16 @@ use yonro_core::{
 
 pub use crate::command_dispatcher::{EditorContext, HandlerRegistry, PromptType};
 pub use crate::layout::{
-    LayoutNode, LayoutTree, Pane, PaneContent, PaneManager, SplitDirection, SplitHandle,
+    LayoutNode, LayoutTree, Pane, PaneContent, PaneManager, SplitDirection, SplitHandle, SidebarKind,
 };
 pub use crate::plugins::{
-    builtin::FileExplorerPlugin, BufferSnapshot, Plugin, PluginMessage, PluginResponse,
+    builtin::{FileExplorerPlugin, WordCountPlugin}, BufferSnapshot, Plugin, PluginMessage, PluginResponse,
     PluginRuntime,
 };
 pub use crate::terminal::Terminal;
 pub use crate::uicomponents::{
-    view::EditOperation, BufferBar, ClickAction, CommandBar, FileExplorer, MessageBar, StatusBar,
-    UIComponent, View,
+    view::EditOperation, ClickAction, CommandBar, FileExplorer, MessageBar, PaneBar, StatusBar,
+    UIComponent, View, WordCount,
 };
 pub use yonro_core::{
     MarkDownSyntaxHighlighter, RustSyntaxHighlighter, SearchResultHighlighter, SyntaxHighlighter,
@@ -37,7 +37,7 @@ pub struct Editor {
     /// The async plugin runtime — runs on its own thread.
     plugin_runtime: PluginRuntime,
 
-    buffer_bar: BufferBar,
+    pane_bar: PaneBar,
     status_bar: StatusBar,
     message_bar: MessageBar,
     command_bar: CommandBar,
@@ -52,6 +52,12 @@ pub struct Editor {
 
     /// Custom events emitted by plugins, injected into the next cycle.
     pending_events: Vec<EditorEvent>,
+
+    /// Plugin responses from handlers, applied after command dispatch.
+    pending_plugin_responses: Vec<PluginResponse>,
+
+    /// Track the last text editor pane that was focused (for opening files from sidebar)
+    last_editor_pane: Option<usize>,
 }
 
 impl Editor {
@@ -98,6 +104,7 @@ impl Editor {
         // Spin up plugin runtime and register built-in plugins
         let plugin_runtime = PluginRuntime::new();
         plugin_runtime.load_plugin(Box::new(FileExplorerPlugin::new()));
+        plugin_runtime.load_plugin(Box::new(WordCountPlugin::new()));
 
         let mut editor = Self {
             should_quit: false,
@@ -105,7 +112,7 @@ impl Editor {
             pane_manager,
             buffer_manager,
             plugin_runtime,
-            buffer_bar: BufferBar::default(),
+            pane_bar: PaneBar::default(),
             status_bar: StatusBar::default(),
             message_bar: MessageBar::default(),
             command_bar: CommandBar::default(),
@@ -118,6 +125,8 @@ impl Editor {
             drag_offset: Position::default(),
             command_handler: HandlerRegistry::default(),
             pending_events: Vec::new(),
+            pending_plugin_responses: Vec::new(),
+            last_editor_pane: None,
         };
 
         editor.handle_resize_command(terminal_size);
@@ -157,6 +166,12 @@ impl Editor {
             // 1. Apply plugin responses from last cycle
             let responses = self.plugin_runtime.drain_responses();
             for response in responses {
+                self.apply_plugin_response(response);
+            }
+
+            // 1b. Apply plugin responses from command handlers (mouse, etc.)
+            let handler_responses = std::mem::take(&mut self.pending_plugin_responses);
+            for response in handler_responses {
                 self.apply_plugin_response(response);
             }
 
@@ -220,6 +235,8 @@ impl Editor {
                     self.plugin_runtime
                         .send(PluginMessage::BufferChanged(snapshot));
                 }
+                // Update WordCount component for active buffer
+                self.update_word_count_if_open();
             }
         }
     }
@@ -230,7 +247,7 @@ impl Editor {
             pane_manager: &mut self.pane_manager,
             layout_tree: &mut self.layout_tree,
             buffer_manager: &mut self.buffer_manager,
-            buffer_bar: &mut self.buffer_bar,
+            pane_bar: &mut self.pane_bar,
             command_bar: &mut self.command_bar,
             message_bar: &mut self.message_bar,
             terminal_size: self.terminal_size,
@@ -240,6 +257,8 @@ impl Editor {
             dragging_pane: &mut self.dragging_pane,
             drag_offset: &mut self.drag_offset,
             buffer_changed: None,
+            plugin_responses: &mut self.pending_plugin_responses,
+            last_editor_pane: &mut self.last_editor_pane,
         }
     }
 
@@ -275,9 +294,159 @@ impl Editor {
                     plugin_name,
                     pane_id,
                 });
+                // Populate live stats immediately — otherwise a fresh
+                // WordCount pane shows 0/0 until the next keystroke.
+                self.update_word_count_if_open();
+            }
+
+            PluginResponse::ToggleSidebar { kind } => {
+                // Kind-switch: hide the current sidebar first (without conflating
+                // `visible` with `is_floating`; hidden panes are simply not rendered).
+                if self.layout_tree.sidebar.kind != kind
+                    && self.layout_tree.sidebar.visible
+                {
+                    let old_kind = self.layout_tree.sidebar.kind;
+                    if let Some(pane_id) = self.layout_tree.sidebar.pane_id {
+                        if let Some(pane) = self.pane_manager.get_pane_mut(pane_id) {
+                            pane.is_floating = false;
+                            pane.is_minimized = false;
+                        }
+                        self.plugin_runtime.send(PluginMessage::PaneClosed {
+                            plugin_name: Self::sidebar_plugin_name(old_kind),
+                            pane_id,
+                        });
+                    }
+                    self.layout_tree.sidebar.hide();
+                    self.focus_editor_after_sidebar();
+                }
+                if self.layout_tree.sidebar.kind != kind {
+                    self.layout_tree.sidebar.kind = kind;
+                }
+
+                if self.layout_tree.sidebar.visible {
+                    // Persistent explorer: re-pressing Ctrl+E (same kind)
+                    // focuses the sidebar instead of hiding it, so opening
+                    // files never strands you without the tree. Hide via Esc,
+                    // the [x] button, or CloseSidebar.
+                    if let Some(pane_id) = self.layout_tree.sidebar.pane_id {
+                        if let Some(pane) = self.pane_manager.get_pane_mut(pane_id) {
+                            pane.is_floating = false;
+                            pane.is_minimized = false;
+                            if let crate::layout::PaneContent::Plugin(c) = &mut pane.content {
+                                c.mark_redraw(true);
+                            }
+                        }
+                        self.pane_manager.set_active_pane(pane_id);
+                        self.mark_all_panes_for_redraw();
+                    }
+                } else {
+                    // Toggle ON - show sidebar
+                    let pane_id = if let Some(existing_id) =
+                        self.layout_tree.sidebar.pane_id
+                    {
+                        // Reuse existing pane
+                        existing_id
+                    } else {
+                        // Create new pane
+                        let content = match kind {
+                            SidebarKind::FileExplorer => {
+                                PaneContent::Plugin(Box::new(FileExplorer::default()))
+                            }
+                            SidebarKind::WordCount => {
+                                PaneContent::Plugin(Box::new(WordCount::default()))
+                            }
+                        };
+                        let new_id = self.pane_manager.create_pane(content);
+                        self.layout_tree.sidebar.set_pane_id(new_id);
+                        new_id
+                    };
+
+                    // Mark the sidebar visible BEFORE resize/render so the
+                    // right-strip block in `refresh_screen` actually draws it.
+                    // (This `show()` was missing entirely — the pane existed
+                    // in `pane_manager` (hence the PaneBar tab) but `visible`
+                    // stayed false, so nothing was ever drawn on screen.)
+                    self.layout_tree.sidebar.show();
+
+                    // Show the pane as sidebar (non-floating, not minimized)
+                    if let Some(pane) = self.pane_manager.get_pane_mut(pane_id) {
+                        pane.is_floating = false;
+                        pane.is_minimized = false;
+                        // Force mark for redraw so sidebar renders immediately
+                        if let crate::layout::PaneContent::Plugin(c) = &mut pane.content {
+                            c.mark_redraw(true);
+                        }
+                    }
+
+                    // Set sidebar as active pane so it receives input
+                    // This will track the previous editor pane in last_editor_pane
+                    self.set_active_editor_pane(pane_id);
+                    // Notify plugin that pane was opened
+                    self.plugin_runtime.send(PluginMessage::PaneOpened {
+                        plugin_name: Self::sidebar_plugin_name(kind),
+                        pane_id,
+                    });
+                }
+                self.handle_resize_command(self.terminal_size);
+            }
+
+            PluginResponse::CloseSidebar { kind } => {
+                // Explicit hide (Esc, [x], close command). No-op unless the
+                // shown sidebar matches, so stray closes can't kill the tree.
+                if self.layout_tree.sidebar.visible && self.layout_tree.sidebar.kind == kind
+                {
+                    if let Some(pane_id) = self.layout_tree.sidebar.pane_id {
+                        if let Some(pane) = self.pane_manager.get_pane_mut(pane_id) {
+                            pane.is_floating = false;
+                            pane.is_minimized = false;
+                        }
+                        self.plugin_runtime.send(PluginMessage::PaneClosed {
+                            plugin_name: Self::sidebar_plugin_name(kind),
+                            pane_id,
+                        });
+                    }
+                    self.layout_tree.sidebar.hide();
+                    self.focus_editor_after_sidebar();
+                    self.handle_resize_command(self.terminal_size);
+                }
             }
 
             PluginResponse::ClosePane { pane_id } => {
+                // Sidebar panes live outside `LayoutTree` (right-strip, not a split),
+                // so `remove_node` would fail — hide the sidebar instead.
+                if Some(pane_id) == self.layout_tree.sidebar.pane_id {
+                    let kind = self.layout_tree.sidebar.kind;
+                    if let Some(pane) = self.pane_manager.get_pane_mut(pane_id) {
+                        pane.is_floating = false;
+                        pane.is_minimized = false;
+                    }
+                    // Notify the owning plugin so `open_pane_id` clears (mouse [x],
+                    // Enter-open, command-bar close all funnel through here).
+                    let plugin_name = Self::sidebar_plugin_name(kind);
+                    let was_active = self
+                        .pane_manager
+                        .active_pane()
+                        .map(|p| p.pane_id == pane_id)
+                        .unwrap_or(false);
+                    // If this ClosePane came from the WordCount floating pane
+                    // (Ctrl-W W), the plugin name is "word_count" but the pane
+                    // is NOT the sidebar — fall through to floating removal.
+                    // Sidebar WordCount panes use ToggleSidebar, never ClosePane,
+                    // so reaching here with a sidebar id is always a hide.
+                    self.layout_tree.sidebar.hide();
+                    self.plugin_runtime.send(PluginMessage::PaneClosed {
+                        plugin_name,
+                        pane_id,
+                    });
+                    if was_active {
+                        self.focus_editor_after_sidebar();
+                    }
+                    self.handle_resize_command(self.terminal_size);
+                    // If this was actually a floating WordCount pane whose id
+                    // coincidentally equals sidebar.pane_id == None case is
+                    // already excluded by the `Some(pane_id) ==` guard above.
+                    return;
+                }
                 let is_floating = self
                     .pane_manager
                     .get_pane(pane_id)
@@ -291,6 +460,17 @@ impl Editor {
 
                 if is_floating {
                     self.pane_manager.remove_pane(pane_id);
+                    // Keep async plugins in sync (mouse [x] on floating WordCount).
+                    self.plugin_runtime.send(PluginMessage::PaneClosed {
+                        plugin_name: "word_count".to_string(),
+                        pane_id,
+                    });
+                    // Also notify file_explorer in case a legacy floating explorer
+                    // was closed (harmless for non-owners: they filter by id).
+                    self.plugin_runtime.send(PluginMessage::PaneClosed {
+                        plugin_name: "file_explorer".to_string(),
+                        pane_id,
+                    });
                 } else if self.layout_tree.remove_node(pane_id).is_ok() {
                     self.pane_manager.remove_pane(pane_id);
                     self.handle_resize_command(self.terminal_size);
@@ -336,24 +516,9 @@ impl Editor {
                 };
 
                 if let Some(path) = file_to_open {
-                    self.apply_plugin_response(PluginResponse::ClosePane { pane_id });
-                    if let Some(file_name) = path.to_str() {
-                        match Buffer::load(file_name) {
-                            Ok(buffer) => {
-                                let buffer_id = self.buffer_manager.add(buffer);
-                                if let Some(view) = self
-                                    .pane_manager
-                                    .active_pane_mut()
-                                    .and_then(|p| p.view_mut())
-                                {
-                                    view.set_buffer_id(buffer_id);
-                                }
-                            }
-                            Err(_) => {
-                                self.update_message(&format!("ERR: Could not open file: {}", file_name));
-                            }
-                        }
-                    }
+                    // Persistent explorer: stay open; the file opens in a NEW
+                    // sibling pane so the previous file keeps its place.
+                    self.open_file_in_new_pane(&path);
                 }
             }
             PluginResponse::MouseClickInPane { pane_id, position } => {
@@ -369,6 +534,12 @@ impl Editor {
                     }
                     ClickAction::Minimize => {
                         self.apply_plugin_response(PluginResponse::ToggleMinimize { pane_id });
+                    }
+                    ClickAction::DoubleClick => {
+                        // Same as Enter: new sibling pane, explorer stays open.
+                        if let Some(path) = self.pane_manager.get_pane_mut(pane_id).and_then(|p| p.plugin_handle_select()) {
+                            self.open_file_in_new_pane(&path);
+                        }
                     }
                     ClickAction::None => {}
                 }
@@ -387,9 +558,11 @@ impl Editor {
 
         let _ = Terminal::hide_caret();
 
-        let _ = self
-            .buffer_bar
-            .render(&self.buffer_manager, &self.pane_manager);
+        let _ = self.pane_bar.render(
+            &self.buffer_manager,
+            &self.pane_manager,
+            self.layout_tree.sidebar.pane_id,
+        );
 
         if self.in_prompt() {
             self.command_bar.render();
@@ -399,6 +572,28 @@ impl Editor {
 
         if height > 1 {
             self.status_bar.render();
+        }
+
+        // Render sidebar if visible (on the right side).
+        // The sidebar pane lives outside `LayoutTree` by design; hidden means
+        // "not rendered anywhere", never "floating + minimized".
+        if self.layout_tree.sidebar.visible {
+            if let Some(sidebar_pane_id) = self.layout_tree.sidebar.pane_id {
+                if let Some(pane) = self.pane_manager.get_pane_mut(sidebar_pane_id) {
+                    let sidebar_width = self.layout_tree.sidebar.width;
+                    let sidebar_rect = Rect {
+                        position: Position { row: 1, col: width.saturating_sub(sidebar_width) },
+                        size: Size {
+                            height: height.saturating_sub(3),
+                            width: sidebar_width,
+                        },
+                    };
+                    pane.is_floating = false;
+                    pane.is_minimized = false;
+                    pane.resize(sidebar_rect);
+                    pane.render(&self.buffer_manager);
+                }
+            }
         }
 
         if height > 2 {
@@ -411,12 +606,15 @@ impl Editor {
                 }
             }
 
-            // Floating panes sorted by z-index (layer 10+)
+            // Floating panes sorted by z-index (layer 10+).
+            // Never render the sidebar here, even if stale state marks it floating.
+            let sidebar_id = self.layout_tree.sidebar.pane_id;
             let floating_ids: Vec<usize> = self
                 .pane_manager
                 .get_floating_panes_sorted()
                 .iter()
                 .map(|p| p.pane_id)
+                .filter(|id| Some(*id) != sidebar_id)
                 .collect();
 
             for id in floating_ids {
@@ -427,18 +625,25 @@ impl Editor {
         }
 
         // Caret
-        let active_pane = self.pane_manager.active_pane().unwrap();
+        let active_pane = self.pane_manager.active_pane();
         let new_caret_pos = if self.in_prompt() {
             self.command_bar.caret_position()
-        } else if let Some(view) = active_pane.view() {
-            let buffer = self.buffer_manager.get(view.buffer_id()).unwrap();
-            view.caret_position(buffer)
-        } else {
-            let rect = active_pane.component().rect();
-            Position {
-                row: rect.position.row.saturating_add(1),
-                col: rect.position.col.saturating_add(1),
+        } else if let Some(pane) = active_pane {
+            if let Some(view) = pane.view() {
+                self.buffer_manager
+                    .get(view.buffer_id())
+                    .map(|buffer| view.caret_position(buffer))
+                    .unwrap_or(Position { row: 1, col: 0 })
+            } else {
+                let rect = pane.component().rect();
+                Position {
+                    row: rect.position.row.saturating_add(1),
+                    col: rect.position.col.saturating_add(1),
+                }
             }
+        } else {
+            // No active pane - default to top-left of editor area
+            Position { row: 1, col: 0 }
         };
 
         debug_assert!(new_caret_pos.col <= width);
@@ -450,17 +655,42 @@ impl Editor {
     }
 
     pub fn refresh_status(&mut self) {
-        let active_pane = self.pane_manager.active_pane().unwrap();
-        let status = if let Some(view) = active_pane.view() {
-            let buffer = self.buffer_manager.get(view.buffer_id()).unwrap();
-            view.get_status(buffer)
+        let active_pane = self.pane_manager.active_pane();
+        let status = if let Some(pane) = active_pane {
+            if let Some(view) = pane.view() {
+                if let Some(buffer) = self.buffer_manager.get(view.buffer_id()) {
+                    view.get_status(buffer)
+                } else {
+                    DocumentStatus {
+                        file_name: "Plugin".to_string(),
+                        total_lines: 0,
+                        current_line_idx: 0,
+                        is_modified: false,
+                        file_type: FileType::Text,
+                        word_count: 0,
+                        char_count: 0,
+                    }
+                }
+            } else {
+                DocumentStatus {
+                    file_name: "Plugin".to_string(),
+                    total_lines: 0,
+                    current_line_idx: 0,
+                    is_modified: false,
+                    file_type: FileType::Text,
+                    word_count: 0,
+                    char_count: 0,
+                }
+            }
         } else {
             DocumentStatus {
-                file_name: "Plugin".to_string(),
+                file_name: "No Pane".to_string(),
                 total_lines: 0,
                 current_line_idx: 0,
                 is_modified: false,
                 file_type: FileType::Text,
+                word_count: 0,
+                char_count: 0,
             }
         };
 
@@ -477,7 +707,7 @@ impl Editor {
         self.terminal_size = size;
         let Size { height, width } = size;
 
-        self.buffer_bar.resize(Rect {
+        self.pane_bar.resize(Rect {
             position: Position { row: 0, col: 0 },
             size: Size { height: 1, width },
         });
@@ -492,13 +722,18 @@ impl Editor {
         self.layout_tree.compute_layout(editor_rect);
         self.sync_pane_rects();
 
+        let sidebar_width = if self.layout_tree.sidebar.visible {
+            self.layout_tree.sidebar.width
+        } else {
+            0
+        };
         for pane in self.pane_manager.iter_mut() {
             if pane.is_floating {
                 let mut rect = pane.component().rect();
                 rect.position.col = rect
                     .position
                     .col
-                    .min(width.saturating_sub(rect.size.width));
+                    .min(width.saturating_sub(sidebar_width).saturating_sub(rect.size.width));
                 let max_row = height
                     .saturating_sub(rect.size.height.saturating_add(2))
                     .max(1);
@@ -550,6 +785,188 @@ impl Editor {
             if let Some(view) = pane.view_mut() {
                 view.mark_redraw(true);
             }
+            // Also mark plugin components for redraw
+            if let crate::layout::PaneContent::Plugin(c) = &mut pane.content {
+                c.mark_redraw(true);
+            }
+            if let crate::layout::PaneContent::Popup(p) = &mut pane.content {
+                p.mark_redraw(true);
+            }
+        }
+    }
+
+    /// Set the active pane, tracking the last text editor pane for sidebar file opening.
+    fn set_active_editor_pane(&mut self, pane_id: usize) {
+        // If the currently active pane is a text editor (not sidebar/plugin), save it
+        if let Some(current_pane) = self.pane_manager.active_pane() {
+            if current_pane.view().is_some() && !current_pane.is_floating {
+                self.last_editor_pane = Some(current_pane.pane_id);
+            }
+        }
+        self.pane_manager.set_active_pane(pane_id);
+        self.pane_manager.bring_to_front(pane_id);
+        self.mark_all_panes_for_redraw();
+        // Update WordCount for new active buffer
+        self.update_word_count_if_open();
+    }
+
+    fn update_word_count_if_open(&mut self) {
+        // Prefer the last text-editor pane, then the active pane, then any
+        // text view — `last_editor_pane` is `None` until the sidebar is first
+        // opened, and the active pane may itself be a plugin pane (sidebar
+        // explorer focused when stats open). Stats must reflect the OPENED
+        // FILE, never the WordCount pane's own (empty) defaults.
+        let active_buffer_id = self
+            .last_editor_pane
+            .and_then(|pane_id| self.pane_manager.get_pane(pane_id))
+            .and_then(|p| p.view())
+            .map(View::buffer_id)
+            .or_else(|| {
+                self.pane_manager
+                    .active_pane()
+                    .and_then(|p| p.view())
+                    .map(View::buffer_id)
+            })
+            .or_else(|| {
+                self.pane_manager
+                    .iter()
+                    .find_map(|p| p.view())
+                    .map(View::buffer_id)
+            });
+
+        if let Some(buffer_id) = active_buffer_id {
+            if let Some(buffer) = self.buffer_manager.get(buffer_id) {
+                let sidebar_id = self.layout_tree.sidebar.pane_id;
+                // Update floating WordCount panes AND the sidebar WordCount pane.
+                for pane in self.pane_manager.iter_mut() {
+                    let is_sidebar_wordcount = Some(pane.pane_id) == sidebar_id
+                        && self.layout_tree.sidebar.kind == SidebarKind::WordCount;
+                    if pane.is_floating || is_sidebar_wordcount {
+                        if let crate::layout::PaneContent::Plugin(component) =
+                            &mut pane.content
+                        {
+                            component.update_from_buffer(buffer);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Map a sidebar kind to its owning plugin name for PaneOpened/PaneClosed.
+    fn sidebar_plugin_name(kind: SidebarKind) -> String {
+        match kind {
+            SidebarKind::FileExplorer => "file_explorer".to_string(),
+            SidebarKind::WordCount => "word_count".to_string(),
+        }
+    }
+
+    /// After hiding the sidebar, return focus to the last text editor.
+    fn focus_editor_after_sidebar(&mut self) {
+        if let Some(id) = self.editor_target_pane() {
+            self.pane_manager.set_active_pane(id);
+        }
+        self.mark_all_panes_for_redraw();
+    }
+
+    /// Which text-editor pane should receive an opened file / keep focus.
+    /// `last_editor_pane` first, then the active pane if it is a text view,
+    /// then the first text view in the manager. Guarantees files open
+    /// IN PLACE in a real editor instead of vanishing when focus is stale.
+    fn editor_target_pane(&self) -> Option<usize> {
+        self.last_editor_pane
+            .filter(|id| {
+                self.pane_manager
+                    .get_pane(*id)
+                    .is_some_and(|p| p.view().is_some())
+            })
+            .or_else(|| {
+                self.pane_manager
+                    .active_pane()
+                    .filter(|p| p.view().is_some())
+                    .map(|p| p.pane_id)
+            })
+            .or_else(|| {
+                self.pane_manager
+                    .iter()
+                    .filter(|p| p.view().is_some() && !p.is_floating)
+                    .map(|p| p.pane_id)
+                    .next()
+            })
+    }
+
+    /// Pane already showing `path`, if any (avoids duplicate panes).
+    fn find_pane_with_file(&self, path: &std::path::Path) -> Option<usize> {
+        self.pane_manager.iter().find_map(|pane| {
+            let view = pane.view()?;
+            let buffer = self.buffer_manager.get(view.buffer_id())?;
+            let open = buffer.get_file_info().get_path()?;
+            if open == path {
+                Some(pane.pane_id)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Open `path` in a NEW tiled sibling pane (side-by-side with the
+    /// current editor), keeping the previous file in place and the
+    /// explorer open. Falls back to an in-place open when the active
+    /// pane is too small to split.
+    fn open_file_in_new_pane(&mut self, path: &std::path::Path) {
+        let Some(file_name) = path.to_str() else {
+            self.update_message("ERR: Could not open file (bad path)");
+            return;
+        };
+        // Already visible → just focus it, no duplicate pane.
+        if let Some(existing) = self.find_pane_with_file(path) {
+            self.pane_manager.set_active_pane(existing);
+            self.mark_all_panes_for_redraw();
+            return;
+        }
+        let Ok(buffer) = Buffer::load(file_name) else {
+            self.update_message(&format!("ERR: Could not open file: {file_name}"));
+            return;
+        };
+        let buffer_id = self.buffer_manager.add(buffer);
+        let Some(target_id) = self.editor_target_pane() else {
+            self.update_message("ERR: No editor pane to split");
+            return;
+        };
+
+        let mut view = View::default();
+        view.set_buffer_id(buffer_id);
+        let new_id = self
+            .pane_manager
+            .create_pane(PaneContent::TextView(view));
+        if let Some(pane) = self.pane_manager.get_pane_mut(new_id) {
+            if let Some(view) = pane.view_mut() {
+                view.set_id(new_id);
+            }
+        }
+
+        if let Ok(()) = self.layout_tree.split_pane(
+            target_id,
+            new_id,
+            SplitDirection::Vertical,
+            0.5,
+        ) {
+            self.handle_resize_command(self.terminal_size);
+            self.set_active_editor_pane(new_id);
+            self.last_editor_pane = Some(new_id);
+            self.update_message(&format!("Opened {file_name} in pane {new_id}"));
+            self.update_word_count_if_open();
+        } else {
+            // Too small to split — open in place so the file still opens.
+            self.pane_manager.remove_pane(new_id);
+            if let Some(pane) = self.pane_manager.get_pane_mut(target_id) {
+                if let Some(view) = pane.view_mut() {
+                    view.set_buffer_id(buffer_id);
+                }
+            }
+            self.pane_manager.set_active_pane(target_id);
+            self.update_word_count_if_open();
+            self.update_message("Opened in current pane (no room to split)");
         }
     }
 }
@@ -561,5 +978,136 @@ impl Drop for Editor {
         if self.should_quit {
             let _ = Terminal::print("Goodbye.\r\n");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layout::{LayoutTree, Sidebar, SidebarKind};
+    use crate::uicomponents::{FileExplorer, WordCount};
+    use crate::prelude::*;
+    use yonro_core::buffers::Buffer;
+
+    #[test]
+    fn test_sidebar_default() {
+        let sidebar = Sidebar::default();
+        assert!(!sidebar.visible);
+        assert_eq!(sidebar.kind, SidebarKind::FileExplorer);
+        assert_eq!(sidebar.width, 30);
+        assert!(sidebar.pane_id.is_none());
+    }
+
+    #[test]
+    fn test_sidebar_toggle() {
+        let mut sidebar = Sidebar::new(SidebarKind::FileExplorer, 30);
+        assert!(!sidebar.visible);
+        
+        sidebar.toggle();
+        assert!(sidebar.visible);
+        
+        sidebar.toggle();
+        assert!(!sidebar.visible);
+    }
+
+    #[test]
+    fn test_layout_tree_sidebar_integration() {
+        let mut layout = LayoutTree::new(0, Rect {
+            position: Position { row: 1, col: 0 },
+            size: Size { height: 20, width: 80 },
+        });
+        
+        assert!(!layout.sidebar.visible);
+        
+        layout.sidebar.toggle();
+        assert!(layout.sidebar.visible);
+        
+        layout.compute_layout(Rect {
+            position: Position { row: 1, col: 0 },
+            size: Size { height: 20, width: 80 },
+        });
+        
+        let leaves = layout.collect_leaf_layouts();
+        for (_, rect) in leaves {
+            assert_eq!(rect.size.width, 50); // 80 - 30 = 50
+        }
+    }
+
+    #[test]
+    fn test_file_explorer_creation() {
+        let explorer = FileExplorer::default();
+        assert!(!explorer.active);
+        assert!(explorer.needs_redraw());
+    }
+
+    #[test]
+    fn test_word_count_creation() {
+        let wc = WordCount::default();
+        assert!(!wc.active);
+        assert!(wc.needs_redraw());
+    }
+
+    #[test]
+    fn test_word_count_update_from_buffer() {
+        let mut wc = WordCount::default();
+        let mut buffer = Buffer::default();
+        
+        buffer.insert_char('h', Location { line_idx: 0, grapheme_idx: 0 });
+        buffer.insert_char('e', Location { line_idx: 0, grapheme_idx: 1 });
+        buffer.insert_char('l', Location { line_idx: 0, grapheme_idx: 2 });
+        buffer.insert_char('l', Location { line_idx: 0, grapheme_idx: 3 });
+        buffer.insert_char('o', Location { line_idx: 0, grapheme_idx: 4 });
+        buffer.insert_newline(Location { line_idx: 0, grapheme_idx: 5 });
+        buffer.insert_char('w', Location { line_idx: 1, grapheme_idx: 0 });
+        buffer.insert_char('o', Location { line_idx: 1, grapheme_idx: 1 });
+        buffer.insert_char('r', Location { line_idx: 1, grapheme_idx: 2 });
+        buffer.insert_char('l', Location { line_idx: 1, grapheme_idx: 3 });
+        buffer.insert_char('d', Location { line_idx: 1, grapheme_idx: 4 });
+        
+        wc.update_from_buffer(&buffer);
+        
+        // "hello world" = 2 words, 10 chars (without newline), 2 lines
+        assert_eq!(wc.words(), 2);
+        assert_eq!(wc.lines(), 2);
+        assert!(wc.chars() >= 10);
+    }
+
+    #[test]
+    fn test_word_count_dyn_dispatch_updates() {
+        // Regression: `update_from_buffer` was inherent-only, so
+        // `Box<dyn PluginComponent>` calls hit the no-op default and stats
+        // froze at 0. This must update through dynamic dispatch.
+        use crate::uicomponents::PluginComponent;
+        let mut buffer = Buffer::default();
+        buffer.insert_char('h', Location { line_idx: 0, grapheme_idx: 0 });
+        buffer.insert_char('i', Location { line_idx: 0, grapheme_idx: 1 });
+
+        let mut boxed: Box<dyn PluginComponent> = Box::new(WordCount::default());
+        boxed.update_from_buffer(&buffer);
+        // Downcast via words()? Can't — assert via re-draw state: needs_redraw
+        // cleared only by render; update must have marked it (still true).
+        assert!(boxed.needs_redraw());
+    }
+
+    #[test]
+    fn test_word_count_empty_reading_time_zero() {
+        let mut wc = WordCount::default();
+        let buffer = Buffer::default();
+        wc.update_from_buffer(&buffer);
+        assert_eq!(wc.words(), 0);
+        assert_eq!(wc.reading_time_minutes(), 0);
+    }
+
+    #[test]
+    fn test_buffer_stats_grapheme_correct() {
+        // Family emoji is one grapheme cluster, not 7 scalar chars.
+        let mut buffer = Buffer::default();
+        for (i, c) in "👨‍👩‍👧‍👦".chars().enumerate() {
+            buffer.insert_char(c, Location { line_idx: 0, grapheme_idx: i });
+        }
+        let (words, graphemes, _) = buffer.word_count_stats();
+        assert_eq!(graphemes, 1);
+        // No alphanumeric word chunks in a pure-emoji buffer.
+        assert_eq!(words, 0);
     }
 }

@@ -259,9 +259,64 @@ impl Pane {
                 if !component.needs_redraw() {
                     return;
                 }
-                // Plugin panes draw their own border if they want one
-                // (FileExplorer uses the full rect)
-                component.render();
+                // Calculate button positions for title bar
+                let min_button_col = self
+                    .rect
+                    .position
+                    .col
+                    .saturating_add(self.rect.size.width)
+                    .saturating_sub(7);
+                if self.is_floating {
+                    // Floating panes: plugin draws its own border/title
+                    component.render();
+                } else {
+                    // Tiled panes: Pane draws border, plugin draws content only
+                    let _ = Terminal::draw_border(rect);
+
+                    // Draw title bar (pane id + active indicator)
+                    let title = if self.active {
+                        format!("─ [{}]* ", self.pane_id)
+                    } else {
+                        format!("─ [{}]  ", self.pane_id)
+                    };
+                    let _ = Terminal::print_at(
+                        Position {
+                            row: rect.position.row,
+                            col: rect.position.col.saturating_add(1),
+                        },
+                        &title,
+                    );
+
+                    // Render minimize and close buttons on the top border
+                    if rect.size.width >= 10 {
+                        let _ = Terminal::print_at(
+                            Position {
+                                row: rect.position.row,
+                                col: min_button_col,
+                            },
+                            "[-][x]",
+                        );
+                    }
+
+                    // Content rect is inset by 1 on all sides (inside the border)
+                    let content_rect = Rect {
+                        position: Position {
+                            row: rect.position.row.saturating_add(1),
+                            col: rect.position.col.saturating_add(1),
+                        },
+                        size: Size {
+                            height: rect.size.height.saturating_sub(2),
+                            width: rect.size.width.saturating_sub(2),
+                        },
+                    };
+
+                    if let Err(_e) = component.render_content(content_rect) {
+                        #[cfg(debug_assertions)]
+                        eprintln!("Plugin content render error: {_e:?}");
+                    } else {
+                        component.mark_redraw(false);
+                    }
+                }
             }
 
             PaneContent::Popup(popup) => {

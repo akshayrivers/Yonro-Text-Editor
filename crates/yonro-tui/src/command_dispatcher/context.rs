@@ -1,6 +1,7 @@
 use crate::{
     layout::{LayoutTree, PaneManager},
-    uicomponents::{BufferBar, CommandBar, MessageBar, UIComponent},
+    plugins::PluginResponse,
+    uicomponents::{CommandBar, MessageBar, PaneBar, UIComponent},
 };
 use yonro_core::buffers::BufferManager;
 use crate::prelude::*;
@@ -12,7 +13,7 @@ pub struct EditorContext<'a> {
     pub pane_manager: &'a mut PaneManager,
     pub layout_tree: &'a mut LayoutTree,
     pub buffer_manager: &'a mut BufferManager,
-    pub buffer_bar: &'a mut BufferBar,
+    pub pane_bar: &'a mut PaneBar,
     pub command_bar: &'a mut CommandBar,
     pub message_bar: &'a mut MessageBar,
     pub terminal_size: Size,
@@ -23,6 +24,10 @@ pub struct EditorContext<'a> {
     pub drag_offset: &'a mut Position,
 
     pub buffer_changed: Option<usize>,
+    pub plugin_responses: &'a mut Vec<PluginResponse>,
+    /// Tracks the last focused text editor (for explorer file opens).
+    /// Mirrors `Editor::last_editor_pane`; handlers must keep it fresh.
+    pub last_editor_pane: &'a mut Option<usize>,
 }
 
 #[derive(Eq, PartialEq, Default, Clone, Copy)]
@@ -84,6 +89,14 @@ impl<'a> EditorContext<'a> {
         for pane in self.pane_manager.iter_mut() {
             if let Some(view) = pane.view_mut() {
                 view.mark_redraw(true);
+            }
+            // Sidebar + floating plugin panes must also redraw on focus/resize,
+            // otherwise the explorer stays blank after `set_active_pane`.
+            if let crate::layout::PaneContent::Plugin(c) = &mut pane.content {
+                c.mark_redraw(true);
+            }
+            if let crate::layout::PaneContent::Popup(p) = &mut pane.content {
+                p.mark_redraw(true);
             }
         }
     }
@@ -148,6 +161,13 @@ impl<'a> EditorContext<'a> {
             .unwrap_or(false)
         {
             return;
+        }
+        // Remember text editors when focus leaves them, so explorer file
+        // opens split the pane the user was just in (mouse clicks included).
+        if let Some(current) = self.pane_manager.active_pane() {
+            if current.view().is_some() && !current.is_floating {
+                *self.last_editor_pane = Some(current.pane_id);
+            }
         }
         self.pane_manager.set_active_pane(pane_id);
         self.pane_manager.bring_to_front(pane_id);

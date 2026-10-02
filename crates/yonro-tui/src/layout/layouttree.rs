@@ -1,5 +1,8 @@
 use crate::prelude::*;
+use crate::layout::sidebar::Sidebar;
 use std::io::Error;
+
+const MIN_PANE_SIZE: usize = 4; // minimum size to split is 2 * MIN_PANE_SIZE
 
 pub enum LayoutNode {
     Split {
@@ -36,6 +39,7 @@ pub struct SplitHandle {
 pub struct LayoutTree {
     root: LayoutNode,
     next_split_id: usize,
+    pub sidebar: Sidebar,
 }
 
 impl Default for LayoutTree {
@@ -43,7 +47,6 @@ impl Default for LayoutTree {
         Self::new(0, Rect::default())
     }
 }
-const MIN_PANE_SIZE: usize = 4; // minimum size to split is 2 * MIN_PANE_SIZE
 
 impl LayoutTree {
     // construction
@@ -54,12 +57,27 @@ impl LayoutTree {
                 rect,
             },
             next_split_id: 1,
+            sidebar: Sidebar::default(),
         }
     }
 
     // layout computation
     pub fn compute_layout(&mut self, rect: Rect) {
-        Self::compute_node_layout(&mut self.root, rect);
+        let available_rect = if self.sidebar.visible {
+            Rect {
+                position: Position {
+                    row: rect.position.row,
+                    col: rect.position.col,
+                },
+                size: Size {
+                    width: rect.size.width.saturating_sub(self.sidebar.width),
+                    height: rect.size.height,
+                },
+            }
+        } else {
+            rect
+        };
+        Self::compute_node_layout(&mut self.root, available_rect);
     }
 
     fn compute_node_layout(node: &mut LayoutNode, rect: Rect) {

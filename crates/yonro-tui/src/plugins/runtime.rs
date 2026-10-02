@@ -98,6 +98,17 @@ async fn plugin_worker(rx: Receiver<PluginMessage>, tx: Sender<PluginResponse>) 
                 }
             }
 
+            PluginMessage::PaneClosed {
+                plugin_name,
+                pane_id,
+            } => {
+                for plugin in &mut plugins {
+                    if plugin.name() == plugin_name {
+                        plugin.on_pane_closed(pane_id).await;
+                    }
+                }
+            }
+
             PluginMessage::Shutdown => {
                 for plugin in &mut plugins {
                     plugin.on_unload().await;

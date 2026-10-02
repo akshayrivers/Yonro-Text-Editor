@@ -6,7 +6,9 @@
 
 use super::UIComponent;
 use yonro_core::command::Move;
+use yonro_core::buffers::Buffer;
 use crate::prelude::*;
+use std::io::Error;
 
 /// What a mouse click on a plugin component resolved to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,6 +19,8 @@ pub enum ClickAction {
     Minimize,
     /// Normal click inside content (focus / select row etc.)
     None,
+    /// Double-click on a file entry - open the file
+    DoubleClick,
 }
 
 /// A UIComponent that also handles keyboard navigation and mouse clicks.
@@ -34,4 +38,17 @@ pub trait PluginComponent: UIComponent + Send {
 
     /// Set whether this component is active/focused.
     fn set_active(&mut self, active: bool);
+
+    /// Render only the content area (no border/title bar).
+    /// Called by Pane for tiled panes; floating panes use full render().
+    /// Default implementation does nothing (for backward compatibility).
+    fn render_content(&mut self, _rect: Rect) -> Result<(), Error> {
+        Ok(())
+    }
+
+    /// Update component state from a buffer (e.g., word count, syntax info).
+    /// Called when the associated buffer changes.
+    /// Default implementation does nothing.
+    fn update_from_buffer(&mut self, _buffer: &Buffer) {
+    }
 }

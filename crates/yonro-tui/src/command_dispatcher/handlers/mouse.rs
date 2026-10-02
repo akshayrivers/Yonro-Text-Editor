@@ -1,8 +1,9 @@
 use super::{CommandHandler, EditorContext};
-use yonro_core::command::{Command, MouseCommand};
-use crate::layout::PaneContent;
-use crate::uicomponents::FileExplorer;
+use crate::layout::SidebarKind;
+use crate::plugins::PluginResponse;
 use crate::prelude::*;
+use yonro_core::command::{Command, MouseCommand};
+
 pub struct MouseHandler;
 
 impl CommandHandler for MouseHandler {
@@ -27,29 +28,46 @@ impl CommandHandler for MouseHandler {
 }
 
 fn handle_left_click(position: Position, ctx: &mut EditorContext) {
-    // 0. Check if user clicked on the top bar (BufferBar)
+    // 0. Check if user clicked on the top bar (PaneBar)
     if position.row == 0 {
+        // Check pane tabs
         let clicked_tab = ctx
-            .buffer_bar
+            .pane_bar
             .tab_hitboxes
             .iter()
             .find(|&&(_, start, end)| position.col >= start && position.col < end)
             .map(|&(id, _, _)| id);
 
-        if let Some(buf_id) = clicked_tab {
-            if let Some(view) = ctx
-                .pane_manager
-                .active_pane_mut()
-                .and_then(|p| p.view_mut())
-            {
-                view.set_buffer_id(buf_id);
+        if let Some(pane_id) = clicked_tab {
+            ctx.set_active_pane(pane_id);
+            return;
+        }
+
+        // Check close buttons on tabs
+        let clicked_close = ctx
+            .pane_bar
+            .close_hitboxes
+            .iter()
+            .find(|&&(_, start, end)| position.col >= start && position.col < end)
+            .map(|&(id, _, _)| id);
+
+        if let Some(pane_id) = clicked_close {
+            // Close this pane
+            if let Some(pane) = ctx.pane_manager.get_pane(pane_id) {
+                if pane.is_floating {
+                    ctx.pane_manager.remove_pane(pane_id);
+                } else if ctx.layout_tree.remove_node(pane_id).is_ok() {
+                    ctx.pane_manager.remove_pane(pane_id);
+                    ctx.handle_resize(ctx.terminal_size);
+                }
                 ctx.mark_all_panes_for_redraw();
             }
             return;
         }
 
+        // Check minimized panes
         let clicked_min = ctx
-            .buffer_bar
+            .pane_bar
             .minimized_hitboxes
             .iter()
             .find(|&&(_, start, end)| position.col >= start && position.col < end)
@@ -62,6 +80,12 @@ fn handle_left_click(position: Position, ctx: &mut EditorContext) {
             }
             return;
         }
+        return;
+    }
+
+    // Sidebar (right strip when visible): title [x] closes, body focuses so
+    // the plugin emits MouseClickInPane next. Returns true if consumed.
+    if handle_sidebar_click(position, ctx) {
         return;
     }
 
@@ -163,8 +187,41 @@ fn handle_left_click(position: Position, ctx: &mut EditorContext) {
     }
 }
 
-fn handle_left_drag(position: Position, ctx: &mut EditorContext) {
-    if let Some(split_id) = *ctx.dragging_split {
+/// Sidebar hit-test for left clicks. Returns true when consumed.
+fn handle_sidebar_click(position: Position, ctx: &mut EditorContext) -> bool {
+    let sidebar = &ctx.layout_tree.sidebar;
+    if !sidebar.visible {
+        return false;
+    }
+    let Some(pane_id) = sidebar.pane_id else {
+        return false;
+    };
+    let term_width = ctx.terminal_size.width;
+    let term_height = ctx.terminal_size.height;
+    let sidebar_width = sidebar.width;
+    let sidebar_col = term_width.saturating_sub(sidebar_width);
+    let in_sidebar_col = position.col >= sidebar_col
+        && position.col < sidebar_col.saturating_add(sidebar_width);
+    let in_sidebar_row =
+        position.row >= 1 && position.row < 1_usize.saturating_add(term_height.saturating_sub(3));
+    if !(in_sidebar_col && in_sidebar_row) {
+        return false;
+    }
+    // Absolute close-button column (was `sidebar_width - 4`, which never hit).
+    let close_col = term_width.saturating_sub(4);
+    if position.row == 1
+        && position.col >= close_col
+        && position.col < close_col.saturating_add(3)
+    {
+        ctx.plugin_responses
+            .push(PluginResponse::CloseSidebar { kind: sidebar.kind });
+        return true;
+    }
+    ctx.set_active_pane(pane_id);
+    true
+}
+
+fn handle_left_drag(position: Position, ctx: &mut EditorContext) {    if let Some(split_id) = *ctx.dragging_split {
         ctx.layout_tree.resize_split(split_id, position);
         let size = ctx.terminal_size;
         ctx.handle_resize(size);
@@ -176,7 +233,12 @@ fn handle_left_drag(position: Position, ctx: &mut EditorContext) {
             let mut rect = pane.component().rect();
             rect.position.col = position.col.saturating_sub(ctx.drag_offset.col);
             rect.position.row = position.row.saturating_sub(ctx.drag_offset.row);
-            clamp_floating_rect(&mut rect, ctx.terminal_size);
+            let sidebar_width = if ctx.layout_tree.sidebar.visible {
+                ctx.layout_tree.sidebar.width
+            } else {
+                0
+            };
+            clamp_floating_rect(&mut rect, ctx.terminal_size, sidebar_width);
             pane.resize(rect);
         }
         ctx.mark_all_panes_for_redraw();
@@ -184,11 +246,12 @@ fn handle_left_drag(position: Position, ctx: &mut EditorContext) {
 }
 
 /// Keep floating panes inside the editor area: below `BufferBar` (row 0),
-/// above `StatusBar` (`height - 2`) and `CommandBar` (`height - 1`).
+/// above `StatusBar` (`height - 2`) and `CommandBar` (`height - 1`),
+/// and to the left of the sidebar if visible.
 /// `saturating_*` is mandatory: terminal sizes are `usize`, so plain `-`
 /// panics in debug / wraps in release on tiny terminals or oversized panes.
-fn clamp_floating_rect(rect: &mut Rect, term: Size) {
-    let max_col = term.width.saturating_sub(rect.size.width);
+fn clamp_floating_rect(rect: &mut Rect, term: Size, sidebar_width: usize) {
+    let max_col = term.width.saturating_sub(sidebar_width).saturating_sub(rect.size.width);
     rect.position.col = rect.position.col.min(max_col);
     let max_row = term
         .height
@@ -203,7 +266,7 @@ fn handle_left_release(ctx: &mut EditorContext) {
 }
 
 fn pane_scroll_up(ctx: &mut EditorContext) {
-    // Geting buffer_id immutably first
+    // Getting buffer_id immutably first
     let buffer_id = match ctx
         .pane_manager
         .active_pane()
@@ -256,6 +319,15 @@ fn pane_scroll_down(ctx: &mut EditorContext) {
 // Pane lifecycle
 
 pub fn close_pane(id: usize, ctx: &mut EditorContext) {
+    // Sidebar panes live outside `LayoutTree` — route through CloseSidebar so
+    // `Editor::apply_plugin_response` hides, refocuses, and sends PaneClosed.
+    if Some(id) == ctx.layout_tree.sidebar.pane_id {
+        let kind = ctx.layout_tree.sidebar.kind;
+        ctx.plugin_responses
+            .push(PluginResponse::CloseSidebar { kind });
+        ctx.update_message("Sidebar closed");
+        return;
+    }
     let is_floating = ctx
         .pane_manager
         .get_pane(id)
@@ -382,33 +454,10 @@ pub fn unfloat_pane(id: usize, ctx: &mut EditorContext) {
 }
 
 pub fn open_file_explorer(ctx: &mut EditorContext) {
-    // again an immutable borrow
-    let active_pane_id = match ctx.pane_manager.active_pane().map(|p| p.pane_id) {
-        Some(id) => id,
-        None => return,
-    };
-
-    let explorer = FileExplorer::default();
-    let new_pane_id = ctx
-        .pane_manager
-        .create_pane(PaneContent::Plugin(Box::new(explorer)));
-
-    if ctx
-        .layout_tree
-        .split_pane(
-            active_pane_id,
-            new_pane_id,
-            crate::layout::SplitDirection::Vertical,
-            0.2,
-        )
-        .is_err()
-    {
-        ctx.update_message("Failed to open explorer");
-        ctx.pane_manager.remove_pane(new_pane_id);
-        return;
-    }
-
-    let size = ctx.terminal_size;
-    ctx.handle_resize(size);
-    ctx.pane_manager.set_active_pane(new_pane_id);
+    // Unified path: the sidebar is the only explorer (Ctrl+E / ToggleSidebar).
+    // Legacy split-pane explorer created a second, untracked pane whose
+    // `open_pane_id` never matched, breaking Enter/Esc/click routing.
+    ctx.plugin_responses.push(PluginResponse::ToggleSidebar {
+        kind: SidebarKind::FileExplorer,
+    });
 }

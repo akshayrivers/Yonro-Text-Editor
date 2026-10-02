@@ -263,6 +263,27 @@ impl Buffer {
         self.rope.len_lines()
     }
 
+    /// Grapheme-correct manuscript stats for status bar + WordCount pane.
+    /// Per `AGENTS.md §2.1`: never treat byte/`char` as a visual character.
+    /// - `graphemes`: `graphemes(true)` count (emoji ZWJ + combining safe).
+    /// - `words`: `split_word_bounds` chunks containing an alphanumeric.
+    /// - `lines`: rope line count (`0` when the buffer is empty).
+    #[must_use]
+    pub fn word_count_stats(&self) -> (usize, usize, usize) {
+        if self.is_empty() {
+            return (0, 0, 0);
+        }
+        let text = self.rope.to_string();
+        let graphemes = text.graphemes(true).count();
+        let mut words: usize = 0;
+        for chunk in text.split_word_bounds() {
+            if chunk.chars().any(char::is_alphanumeric) {
+                words = words.saturating_add(1);
+            }
+        }
+        (words, graphemes, self.height())
+    }
+
     /// Get an immutable snapshot of the underlying rope as `Arc<Rope>`.
     /// This is O(1) — ropey uses copy-on-write, so cloning is just an Arc increment.
     pub fn rope(&self) -> Arc<Rope> {
