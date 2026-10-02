@@ -30,38 +30,32 @@ impl CommandHandler for MouseHandler {
 fn handle_left_click(position: Position, ctx: &mut EditorContext) {
     // 0. Check if user clicked on the top bar (PaneBar)
     if position.row == 0 {
-        // Check pane tabs
+        // Document tabs → switch tab (VS Code-style).
         let clicked_tab = ctx
             .pane_bar
             .tab_hitboxes
             .iter()
-            .find(|&&(_, start, end)| position.col >= start && position.col < end)
-            .map(|&(id, _, _)| id);
+            .find(|&&(_, _, start, end)| position.col >= start && position.col < end)
+            .map(|&(idx, _, _, _)| idx);
 
-        if let Some(pane_id) = clicked_tab {
-            ctx.set_active_pane(pane_id);
+        if let Some(tab_idx) = clicked_tab {
+            ctx.plugin_responses.push(PluginResponse::SwitchTab { index: tab_idx });
             return;
         }
 
-        // Check close buttons on tabs
+        // Close buttons on tabs → close that tab's pane (pruned by core).
         let clicked_close = ctx
             .pane_bar
             .close_hitboxes
             .iter()
-            .find(|&&(_, start, end)| position.col >= start && position.col < end)
-            .map(|&(id, _, _)| id);
+            .find(|&&(_, _, start, end)| position.col >= start && position.col < end)
+            .map(|&(_, pane_id, _, _)| pane_id);
 
         if let Some(pane_id) = clicked_close {
-            // Close this pane
-            if let Some(pane) = ctx.pane_manager.get_pane(pane_id) {
-                if pane.is_floating {
-                    ctx.pane_manager.remove_pane(pane_id);
-                } else if ctx.layout_tree.remove_node(pane_id).is_ok() {
-                    ctx.pane_manager.remove_pane(pane_id);
-                    ctx.handle_resize(ctx.terminal_size);
-                }
-                ctx.mark_all_panes_for_redraw();
-            }
+            // Route through the core so document tabs are pruned as well.
+            ctx.plugin_responses
+                .push(PluginResponse::ClosePane { pane_id });
+            ctx.update_message("Pane closed");
             return;
         }
 
@@ -328,33 +322,11 @@ pub fn close_pane(id: usize, ctx: &mut EditorContext) {
         ctx.update_message("Sidebar closed");
         return;
     }
-    let is_floating = ctx
-        .pane_manager
-        .get_pane(id)
-        .map_or(false, |p| p.is_floating);
-
-    let was_active = ctx
-        .pane_manager
-        .active_pane()
-        .map(|p| p.pane_id == id)
-        .unwrap_or(false);
-
-    if is_floating {
-        ctx.pane_manager.remove_pane(id);
-        ctx.update_message(&format!("Floating pane {} closed", id));
-    } else if ctx.layout_tree.remove_node(id).is_ok() {
-        ctx.pane_manager.remove_pane(id);
-        let size = ctx.terminal_size;
-        ctx.handle_resize(size);
-        ctx.update_message(&format!("Pane {} closed", id));
-    } else {
-        ctx.update_message("Cannot close the last tiled pane!");
-        return;
-    }
-
-    if was_active {
-        ctx.assign_active_pane();
-    }
+    // Route through the core so document tabs are pruned as well
+    // (direct removal here would strand tabs pointing at dead panes).
+    ctx.plugin_responses
+        .push(PluginResponse::ClosePane { pane_id: id });
+    ctx.update_message("Pane closed");
 }
 
 pub fn toggle_floating(id: usize, ctx: &mut EditorContext) {

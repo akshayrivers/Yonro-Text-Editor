@@ -12,7 +12,7 @@ use yonro_core::{
 
 pub use crate::command_dispatcher::{EditorContext, HandlerRegistry, PromptType};
 pub use crate::layout::{
-    LayoutNode, LayoutTree, Pane, PaneContent, PaneManager, SplitDirection, SplitHandle, SidebarKind,
+    DocTab, LayoutNode, LayoutTree, Pane, PaneContent, PaneManager, SplitDirection, SplitHandle, SidebarKind,
 };
 pub use crate::plugins::{
     builtin::{FileExplorerPlugin, WordCountPlugin}, BufferSnapshot, Plugin, PluginMessage, PluginResponse,
@@ -58,6 +58,11 @@ pub struct Editor {
 
     /// Track the last text editor pane that was focused (for opening files from sidebar)
     last_editor_pane: Option<usize>,
+
+    /// Open document tabs (VS Code-style). Only `active_tab` is installed in
+    /// the layout tree; the rest are stashed with their layouts intact.
+    doc_tabs: Vec<DocTab>,
+    active_tab: usize,
 }
 
 impl Editor {
@@ -100,6 +105,15 @@ impl Editor {
 
         let pane_manager = PaneManager::new(initial_pane);
         let layout_tree = LayoutTree::new(0, root_rect);
+        // Tab 0 mirrors the initial root layout (same value; the tree keeps
+        // the live one). Later tabs stash their layout here on switch.
+        let doc_tabs = vec![DocTab::new(
+            LayoutNode::Leaf {
+                pane_id: initial_pane_id,
+                rect: root_rect,
+            },
+            initial_pane_id,
+        )];
 
         // Spin up plugin runtime and register built-in plugins
         let plugin_runtime = PluginRuntime::new();
@@ -127,6 +141,8 @@ impl Editor {
             pending_events: Vec::new(),
             pending_plugin_responses: Vec::new(),
             last_editor_pane: None,
+            doc_tabs,
+            active_tab: 0,
         };
 
         editor.handle_resize_command(terminal_size);
@@ -411,6 +427,10 @@ impl Editor {
                 }
             }
 
+            PluginResponse::SwitchTab { index } => {
+                self.switch_tab(index);
+            }
+
             PluginResponse::ClosePane { pane_id } => {
                 // Sidebar panes live outside `LayoutTree` (right-strip, not a split),
                 // so `remove_node` would fail — hide the sidebar instead.
@@ -474,6 +494,8 @@ impl Editor {
                 } else if self.layout_tree.remove_node(pane_id).is_ok() {
                     self.pane_manager.remove_pane(pane_id);
                     self.handle_resize_command(self.terminal_size);
+                } else if !self.close_tab_pane(pane_id) {
+                    self.update_message("Cannot close the last tiled pane!");
                 }
 
                 if was_active {
@@ -482,6 +504,8 @@ impl Editor {
                         self.pane_manager.set_active_pane(*id);
                     }
                 }
+                // A removed pane may strand document tabs — prune them.
+                self.prune_tabs();
             }
 
             PluginResponse::UpdateMessage(msg) => {
@@ -561,7 +585,8 @@ impl Editor {
         let _ = self.pane_bar.render(
             &self.buffer_manager,
             &self.pane_manager,
-            self.layout_tree.sidebar.pane_id,
+            &self.doc_tabs,
+            self.active_tab,
         );
 
         if self.in_prompt() {
@@ -895,44 +920,37 @@ impl Editor {
             })
     }
 
-    /// Pane already showing `path`, if any (avoids duplicate panes).
-    fn find_pane_with_file(&self, path: &std::path::Path) -> Option<usize> {
-        self.pane_manager.iter().find_map(|pane| {
-            let view = pane.view()?;
-            let buffer = self.buffer_manager.get(view.buffer_id())?;
-            let open = buffer.get_file_info().get_path()?;
-            if open == path {
-                Some(pane.pane_id)
-            } else {
-                None
-            }
-        })
+    /// Clone of the live layout root (for stashing into document tabs).
+    fn layout_tree_root_clone(&self) -> LayoutNode {
+        self.layout_tree.clone_root()
     }
 
-    /// Open `path` in a NEW tiled sibling pane (side-by-side with the
-    /// current editor), keeping the previous file in place and the
-    /// explorer open. Falls back to an in-place open when the active
-    /// pane is too small to split.
+    /// Open `path` in a NEW document tab (VS Code-style): full editor area,
+    /// no splitting. The previous file keeps its tab; the explorer stays open.
     fn open_file_in_new_pane(&mut self, path: &std::path::Path) {
         let Some(file_name) = path.to_str() else {
             self.update_message("ERR: Could not open file (bad path)");
             return;
         };
-        // Already visible → just focus it, no duplicate pane.
-        if let Some(existing) = self.find_pane_with_file(path) {
-            self.pane_manager.set_active_pane(existing);
-            self.mark_all_panes_for_redraw();
-            return;
+        // Already open → switch to its tab, no duplicate.
+        for i in 0..self.doc_tabs.len() {
+            let shows = self
+                .pane_manager
+                .get_pane(self.doc_tabs[i].active_pane)
+                .and_then(|p| p.view())
+                .and_then(|v| self.buffer_manager.get(v.buffer_id()))
+                .and_then(|b| b.get_file_info().get_path())
+                .is_some_and(|p| p == path);
+            if shows {
+                self.switch_tab(i);
+                return;
+            }
         }
         let Ok(buffer) = Buffer::load(file_name) else {
             self.update_message(&format!("ERR: Could not open file: {file_name}"));
             return;
         };
         let buffer_id = self.buffer_manager.add(buffer);
-        let Some(target_id) = self.editor_target_pane() else {
-            self.update_message("ERR: No editor pane to split");
-            return;
-        };
 
         let mut view = View::default();
         view.set_buffer_id(buffer_id);
@@ -945,28 +963,196 @@ impl Editor {
             }
         }
 
-        if let Ok(()) = self.layout_tree.split_pane(
-            target_id,
+        // Stash the live layout into the current tab, then install a fresh
+        // single-pane root for the new tab. Never record the sidebar (or any
+        // plugin pane) as a tab's editor — it has no buffer and would corrupt
+        // titles and file-reuse lookup.
+        let live_root = self.layout_tree_root_clone();
+        let cur_editor = self
+            .pane_manager
+            .active_pane()
+            .filter(|p| p.view().is_some())
+            .map(|p| p.pane_id);
+        if let Some(tab) = self.doc_tabs.get_mut(self.active_tab) {
+            tab.root = live_root;
+            if let Some(cur) = cur_editor {
+                tab.active_pane = cur;
+            }
+        }
+        let new_tab_idx = self.doc_tabs.len();
+        self.doc_tabs.push(DocTab::new(
+            LayoutNode::Leaf {
+                pane_id: new_id,
+                rect: Rect::default(),
+            },
             new_id,
-            SplitDirection::Vertical,
-            0.5,
-        ) {
-            self.handle_resize_command(self.terminal_size);
-            self.set_active_editor_pane(new_id);
-            self.last_editor_pane = Some(new_id);
-            self.update_message(&format!("Opened {file_name} in pane {new_id}"));
-            self.update_word_count_if_open();
-        } else {
-            // Too small to split — open in place so the file still opens.
-            self.pane_manager.remove_pane(new_id);
-            if let Some(pane) = self.pane_manager.get_pane_mut(target_id) {
+        ));
+        self.layout_tree.set_root(LayoutNode::Leaf {
+            pane_id: new_id,
+            rect: Rect::default(),
+        });
+        self.active_tab = new_tab_idx;
+
+        self.handle_resize_command(self.terminal_size);
+        self.set_active_editor_pane(new_id);
+        self.last_editor_pane = Some(new_id);
+        self.update_message(&format!("Opened {file_name} in tab {new_tab_idx}"));
+        self.update_word_count_if_open();
+    }
+
+    /// Switch to document tab `index`, preserving each tab's layout.
+    fn switch_tab(&mut self, index: usize) {
+        if index >= self.doc_tabs.len() {
+            return;
+        }
+        if index == self.active_tab {
+            let pid = self.doc_tabs[index].active_pane;
+            if self.pane_manager.get_pane(pid).is_some() {
+                self.pane_manager.set_active_pane(pid);
+                self.mark_all_panes_for_redraw();
+            }
+            return;
+        }
+        // Stash live layout + focus into the outgoing tab (editor panes only —
+        // recording the sidebar would corrupt titles and file-reuse lookup).
+        let live_root = self.layout_tree_root_clone();
+        let cur_editor = self
+            .pane_manager
+            .active_pane()
+            .filter(|p| p.view().is_some())
+            .map(|p| p.pane_id);
+        if let Some(tab) = self.doc_tabs.get_mut(self.active_tab) {
+            tab.root = live_root;
+            if let Some(cur) = cur_editor {
+                tab.active_pane = cur;
+            }
+        }
+        // Install the incoming tab's layout.
+        let incoming = self.doc_tabs[index].root.clone();
+        self.layout_tree.set_root(incoming);
+        self.active_tab = index;
+        let pid = self.doc_tabs[index].active_pane;
+        if self.pane_manager.get_pane(pid).is_some() {
+            self.pane_manager.set_active_pane(pid);
+        } else if let Some((id, _)) = self
+            .layout_tree
+            .collect_leaf_layouts()
+            .iter()
+            .find(|(id, _)| self.pane_manager.get_pane(*id).is_some())
+        {
+            let id = *id;
+            self.doc_tabs[index].active_pane = id;
+            self.pane_manager.set_active_pane(id);
+        }
+        self.handle_resize_command(self.terminal_size);
+    }
+
+    /// Close `pane_id` when `remove_node` refused (last-leaf guard) or when
+    /// the pane lives in a stashed (inactive) tab. Returns true if handled.
+    /// - Last leaf + sibling tabs exist → switch to a neighbor, then remove
+    ///   the now-stashed pane.
+    /// - Stashed pane → excise from every tab root holding it, drop the pane.
+    /// - Single tab, single pane → false (refuse, nothing closes).
+    fn close_tab_pane(&mut self, pane_id: usize) -> bool {
+        let in_live_tree = self
+            .layout_tree
+            .collect_leaf_layouts()
+            .iter()
+            .any(|(id, _)| *id == pane_id);
+        if in_live_tree {
+            if self.doc_tabs.len() <= 1 {
+                return false;
+            }
+            let neighbor = if self.active_tab == 0 { 1 } else { self.active_tab - 1 };
+            self.switch_tab(neighbor);
+            // The doomed pane is now stashed — fall through below.
+        }
+        let mut found = false;
+        for tab in self.doc_tabs.iter_mut() {
+            if tab.pane_ids().contains(&pane_id) {
+                // `None` (emptied root) is left for `prune_tabs` to drop.
+                if let Some(new_root) = LayoutTree::remove_from_root(tab.root.clone(), pane_id)
+                {
+                    tab.root = new_root;
+                }
+                found = true;
+            }
+        }
+        if !found {
+            return false;
+        }
+        self.pane_manager.remove_pane(pane_id);
+        self.prune_tabs();
+        self.handle_resize_command(self.terminal_size);
+        true
+    }
+
+    /// Drop tabs whose layout references no live pane; repair focus.
+    /// Inactive tabs are read from accurate stashed layouts; the active tab
+    /// is always kept (its live layout is in the tree by construction).
+    fn prune_tabs(&mut self) {
+        let active = self.active_tab;
+        let mut shift = 0;
+        let mut kept = Vec::new();
+        for (i, tab) in std::mem::take(&mut self.doc_tabs).into_iter().enumerate() {
+            if i == active {
+                kept.push(tab);
+                continue;
+            }
+            let any_live = tab
+                .pane_ids()
+                .iter()
+                .any(|id| self.pane_manager.get_pane(*id).is_some());
+            if any_live {
+                kept.push(tab);
+            } else if i < active {
+                shift += 1;
+            }
+        }
+        self.doc_tabs = kept;
+        if self.doc_tabs.is_empty() {
+            // Unreachable in practice (last leaf can't close) — recover blank.
+            let buffer_id = self.buffer_manager.add(Buffer::default());
+            let mut view = View::default();
+            view.set_buffer_id(buffer_id);
+            let new_id = self
+                .pane_manager
+                .create_pane(PaneContent::TextView(view));
+            if let Some(pane) = self.pane_manager.get_pane_mut(new_id) {
                 if let Some(view) = pane.view_mut() {
-                    view.set_buffer_id(buffer_id);
+                    view.set_id(new_id);
                 }
             }
-            self.pane_manager.set_active_pane(target_id);
-            self.update_word_count_if_open();
-            self.update_message("Opened in current pane (no room to split)");
+            self.layout_tree.set_root(LayoutNode::Leaf {
+                pane_id: new_id,
+                rect: Rect::default(),
+            });
+            self.doc_tabs.push(DocTab::new(
+                LayoutNode::Leaf {
+                    pane_id: new_id,
+                    rect: Rect::default(),
+                },
+                new_id,
+            ));
+            self.active_tab = 0;
+            self.handle_resize_command(self.terminal_size);
+            self.pane_manager.set_active_pane(new_id);
+            return;
+        }
+        self.active_tab = active.saturating_sub(shift);
+        // Repair focus if the active tab's pane vanished.
+        let pid = self.doc_tabs[self.active_tab].active_pane;
+        if self.pane_manager.get_pane(pid).is_none() {
+            if let Some((id, _)) = self
+                .layout_tree
+                .collect_leaf_layouts()
+                .iter()
+                .find(|(id, _)| self.pane_manager.get_pane(*id).is_some())
+            {
+                let id = *id;
+                self.doc_tabs[self.active_tab].active_pane = id;
+                self.pane_manager.set_active_pane(id);
+            }
         }
     }
 }

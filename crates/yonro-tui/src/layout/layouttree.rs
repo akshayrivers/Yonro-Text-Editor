@@ -4,6 +4,7 @@ use std::io::Error;
 
 const MIN_PANE_SIZE: usize = 4; // minimum size to split is 2 * MIN_PANE_SIZE
 
+#[derive(Debug, Clone)]
 pub enum LayoutNode {
     Split {
         split_id: usize,
@@ -168,6 +169,18 @@ impl LayoutTree {
     }
 
     // mutation
+    /// Replace the live root (document tab open/switch). Prefer tab-aware
+    /// callers (`switch_tab`) over raw replacement so stashed layouts survive.
+    pub fn set_root(&mut self, root: LayoutNode) {
+        self.root = root;
+    }
+
+    /// Clone of the live root, for stashing into document tabs.
+    #[must_use]
+    pub fn clone_root(&self) -> LayoutNode {
+        self.root.clone()
+    }
+
     pub fn split_pane(
         &mut self,
         target_pane_id: usize,
@@ -277,7 +290,7 @@ impl LayoutTree {
                 rect: Rect::default(),
             },
         );
-        match self.remove_node_recursive(old_root, id) {
+        match Self::remove_node_recursive(old_root, id) {
             RemovalResult::Survived(new_root) => {
                 self.root = new_root;
                 Ok(())
@@ -287,10 +300,21 @@ impl LayoutTree {
         }
     }
 
+    /// Remove `pane_id` from an arbitrary (possibly stashed document-tab)
+    /// root. Returns the rebuilt root, or `None` when nothing is left.
+    /// Unlike `remove_node`, there is no last-leaf guard — the caller
+    /// (tab pruning) decides what an empty tab means.
+    pub fn remove_from_root(root: LayoutNode, pane_id: usize) -> Option<LayoutNode> {
+        match Self::remove_node_recursive(root, pane_id) {
+            RemovalResult::Survived(new_root) => Some(new_root),
+            RemovalResult::Deleted => None,
+        }
+    }
+
     /// Type-safe removal signal — replaces the old `Err(Error::other("DELETED"))`
     /// string-comparison hack (`PLAN.md Phase 1.6`). `io::Error` is for I/O
     /// failures, never for control flow.
-    fn remove_node_recursive(&self, node: LayoutNode, target_id: usize) -> RemovalResult {
+    fn remove_node_recursive(node: LayoutNode, target_id: usize) -> RemovalResult {
         match node {
             LayoutNode::Leaf { pane_id, rect } => {
                 if pane_id == target_id {
@@ -306,11 +330,11 @@ impl LayoutTree {
                 second,
                 rect,
             } => {
-                match self.remove_node_recursive(*first, target_id) {
+                match Self::remove_node_recursive(*first, target_id) {
                     // First child was (or contained) the target: sibling takes over.
                     RemovalResult::Deleted => RemovalResult::Survived(*second),
                     RemovalResult::Survived(new_first) => {
-                        match self.remove_node_recursive(*second, target_id) {
+                        match Self::remove_node_recursive(*second, target_id) {
                             RemovalResult::Deleted => {
                                 RemovalResult::Survived(new_first)
                             }

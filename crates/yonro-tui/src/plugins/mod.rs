@@ -92,6 +92,8 @@ pub enum PluginResponse {
     /// Hide a sidebar without toggling (Esc, [x] button, close command).
     /// No-op when the sidebar is already hidden.
     CloseSidebar { kind: crate::layout::SidebarKind },
+    /// Switch to document tab `index` (PaneBar click).
+    SwitchTab { index: usize },
 }
 
 impl std::fmt::Debug for PluginResponse {
@@ -112,6 +114,7 @@ impl std::fmt::Debug for PluginResponse {
             Self::RequestSnapshot { buffer_id } => write!(f, "RequestSnapshot({buffer_id})"),
             Self::ToggleSidebar { kind } => write!(f, "ToggleSidebar({kind:?})"),
             Self::CloseSidebar { kind } => write!(f, "CloseSidebar({kind:?})"),
+            Self::SwitchTab { index } => write!(f, "SwitchTab({index})"),
         }
     }
 }

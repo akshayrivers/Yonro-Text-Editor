@@ -1,6 +1,6 @@
 use super::UIComponent;
 use yonro_core::buffers::BufferManager;
-use crate::layout::PaneManager;
+use crate::layout::{DocTab, PaneManager};
 use crate::terminal::Terminal;
 use crate::prelude::*;
 use std::io::Error;
@@ -11,17 +11,22 @@ use unicode_segmentation::UnicodeSegmentation;
 pub struct PaneBar {
     rect: Rect,
     needs_redraw: bool,
-    pub tab_hitboxes: Vec<(usize, usize, usize)>, // (pane_id, start_col, end_col)
-    pub close_hitboxes: Vec<(usize, usize, usize)>, // (pane_id, start_col, end_col)
+    /// (tab index, tab's active pane, start_col, end_col)
+    pub tab_hitboxes: Vec<(usize, usize, usize, usize)>,
+    /// (tab index, tab's active pane, start_col, end_col)
+    pub close_hitboxes: Vec<(usize, usize, usize, usize)>,
     pub minimized_hitboxes: Vec<(usize, usize, usize)>, // (pane_id, start_col, end_col)
 }
 
 impl PaneBar {
+    /// Render document tabs (VS Code-style). The sidebar and floating panes
+    /// are never tabs; minimized panes keep their own section below.
     pub fn render(
         &mut self,
         buffer_manager: &BufferManager,
         pane_manager: &PaneManager,
-        sidebar_pane_id: Option<usize>,
+        tabs: &[DocTab],
+        active_tab: usize,
     ) -> Result<(), Error> {
         let width = self.rect.size.width;
         let mut current_col = 0;
@@ -32,19 +37,11 @@ impl PaneBar {
 
         Terminal::clear_rect_line(self.rect, self.rect.position.row)?;
 
-        // 1. Render Pane Tabs.
-        // The sidebar pane lives outside `LayoutTree` (right strip) — it is
-        // not a document tab, so never list it here (open or hidden).
-        // Otherwise opening the explorer looks like "a new pane" appeared.
-        let active_pane_id = pane_manager.active_pane().map(|p| p.pane_id);
-
-        for pane in pane_manager
-            .iter()
-            .filter(|p| !p.is_floating && !p.is_minimized)
-            .filter(|p| Some(p.pane_id) != sidebar_pane_id)
-        {
-            let buffer_name = pane
-                .view()
+        // 1. Render document tabs (one per open file, no splits).
+        for (tab_idx, tab) in tabs.iter().enumerate() {
+            let buffer_name = pane_manager
+                .get_pane(tab.active_pane)
+                .and_then(|p| p.view())
                 .and_then(|v| buffer_manager.get(v.buffer_id()))
                 .and_then(|b| {
                     b.get_file_info()
@@ -54,7 +51,7 @@ impl PaneBar {
                 })
                 .unwrap_or("untitled");
 
-            let tab_text = format!(" [{}: {}] ", pane.pane_id, buffer_name);
+            let tab_text = format!(" [{tab_idx}: {buffer_name}] ");
 
             if current_col >= width as usize {
                 break;
@@ -78,7 +75,7 @@ impl PaneBar {
                 &tab_text
             };
 
-            let is_active = Some(pane.pane_id) == active_pane_id;
+            let is_active = tab_idx == active_tab;
             let formatted = if is_active {
                 format!(
                     "{}{}{}",
@@ -92,14 +89,14 @@ impl PaneBar {
 
             let start_col = self.rect.position.col + current_col;
             let end_col = start_col + display_text.width();
-            self.tab_hitboxes.push((pane.pane_id, start_col, end_col));
+            self.tab_hitboxes.push((tab_idx, tab.active_pane, start_col, end_col));
 
-            // Close button inline: "✕" 
+            // Close button inline: "✕"
             let close_text = "✕";
             let close_start = end_col;
             let close_end = close_start + close_text.width();
             if close_end <= self.rect.position.col + width {
-                self.close_hitboxes.push((pane.pane_id, close_start, close_end));
+                self.close_hitboxes.push((tab_idx, tab.active_pane, close_start, close_end));
             }
 
             let full_text = format!("{}{}", formatted, if close_end <= self.rect.position.col + width { close_text } else { "" });
@@ -115,11 +112,10 @@ impl PaneBar {
             current_col += full_text.width();
         }
 
-        // 2. Render Minimized Panes (sidebar excluded — same reason as tabs).
+        // 2. Render Minimized Panes (sidebar is never minimized, no filter needed).
         let minimized_panes: Vec<_> = pane_manager
             .iter()
             .filter(|p| p.is_minimized && !p.is_floating)
-            .filter(|p| Some(p.pane_id) != sidebar_pane_id)
             .collect();
         if !minimized_panes.is_empty() {
             let min_label = String::from(" | MIN: ");
