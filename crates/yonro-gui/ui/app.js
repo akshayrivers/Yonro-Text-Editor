@@ -177,6 +177,8 @@ function bindSplitter(elmId, which) {
 function toggleZen(force) {
   const on = force !== undefined ? force : !document.body.classList.contains('zen');
   document.body.classList.toggle('zen', on);
+  if (typeof refreshTypewriterToggle === 'function') refreshTypewriterToggle();
+  if (typeof centerCaretSoon === 'function') centerCaretSoon();
 }
 
 document.getElementById('zen-toggle').addEventListener('click', () => toggleZen());
@@ -272,6 +274,29 @@ function bindProsePop() {
       }
     });
   }
+  if (!document.getElementById('autosave-toggle')) {
+    const label = document.createElement('label');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.id = 'autosave-toggle';
+    try {
+      box.checked = localStorage.getItem('yonro.autosave') !== '0';
+    } catch (err) {
+      void err;
+      box.checked = true;
+    }
+    box.addEventListener('change', () => {
+      try {
+        localStorage.setItem('yonro.autosave', box.checked ? '1' : '0');
+      } catch (err) {
+        void err;
+      }
+      setMessage(box.checked ? 'autosave on (3s idle)' : 'autosave off');
+    });
+    label.appendChild(box);
+    label.appendChild(document.createTextNode(' autosave (3s idle, tracked files only)'));
+    pop.appendChild(label);
+  }
 }
 
 /* ---------- overlays -------------------------------------------------------- */
@@ -289,6 +314,8 @@ function typingTarget(e) {
 /* ---------- global keymap --------------------------------------------------- */
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
+    const openDlg = document.querySelector('dialog[open]');
+    if (openDlg) return;
     const sheet = document.getElementById('shortcuts');
     const pop = document.getElementById('prose-pop');
     if (sheet && !sheet.hidden) {
@@ -341,7 +368,8 @@ document.addEventListener('keydown', (e) => {
       setMessage(e.shiftKey ? 'project search lands later.' : 'find in doc lands later — the editor keeps native find for now.');
     } else if (k === 's' && !typingTarget(e)) {
       e.preventDefault();
-      saveActive();
+      if (e.shiftKey && typeof saveAsFlow === 'function') saveAsFlow();
+      else saveActive();
     }
     return;
   }

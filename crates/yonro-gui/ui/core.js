@@ -16,8 +16,24 @@ const core = {
   timeline: () => core.invoke('get_timeline'),
   openFile: (path) => core.invoke('open_file', { path: path ?? null }),
   setText: (bufferId, text) => core.invoke('set_text', { bufferId, text }),
-  saveFile: (bufferId, path) => core.invoke('save_file', { bufferId, path: path ?? null }),
+  saveFile: (bufferId, path, overwrite) => core.invoke('save_file', { bufferId, path: path ?? null, overwrite: overwrite ?? false }),
   closeBuffer: (bufferId) => core.invoke('close_buffer', { bufferId }),
   undo: (bufferId) => core.invoke('undo_buffer', { bufferId }),
   redo: (bufferId) => core.invoke('redo_buffer', { bufferId }),
+  sweepRecovery: () => core.invoke('sweep_recovery'),
+  checkRecovery: (path) => core.invoke('check_recovery', { path: path ?? null }),
+  discardRecovery: (path) => core.invoke('discard_recovery', { path: path ?? null }),
+  onCloseRequested: (handler) => {
+    try {
+      const api = window.__TAURI__ && window.__TAURI__.window;
+      const win = api && typeof api.getCurrentWindow === 'function' ? api.getCurrentWindow() : null;
+      if (win && typeof win.onCloseRequested === 'function') {
+        return win.onCloseRequested((event) => handler(event));
+      }
+    } catch (err) {
+      void err;
+    }
+    window.addEventListener('beforeunload', handler);
+    return Promise.resolve(() => window.removeEventListener('beforeunload', handler));
+  },
 };

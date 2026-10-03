@@ -40,6 +40,8 @@ impl GuiBuffer {
             lines,
             reading_min: if words == 0 { 0 } else { words.div_ceil(200) },
             dirty: self.buffer.is_dirty(),
+            can_undo: !self.history.undo.is_empty(),
+            can_redo: !self.history.redo.is_empty(),
         }
     }
 }
@@ -89,6 +91,8 @@ struct TextStats {
     lines: usize,
     reading_min: usize,
     dirty: bool,
+    can_undo: bool,
+    can_redo: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -217,40 +221,223 @@ fn set_text(
     set_text_impl(&state, buffer_id, text)
 }
 
-fn save_file_impl(
-    state: &AppState,
+fn resolve_save_target(
+    root: &std::path::Path,
+    requested: Option<String>,
+    stored: Option<PathBuf>,
     buffer_id: usize,
-    path: Option<String>,
-) -> Result<String, String> {
-    let stored = {
-        let buffers = state.buffers.lock().unwrap_or_else(|e| e.into_inner());
-        buffers
-            .get(&buffer_id)
-            .and_then(|buf| buf.path.clone())
-            .map(|path| path.to_string_lossy().to_string())
-    };
-    let root = state.workspace_root();
-    let target = path.or(stored).unwrap_or_else(|| {
+    overwrite: bool,
+) -> Result<PathBuf, String> {
+    if let Some(raw) = requested {
+        let trimmed = raw.trim().to_string();
+        if trimmed.is_empty() {
+            return Err(format!("cannot save {raw}: filename is empty"));
+        }
+        if trimmed.contains("..") {
+            return Err(format!(
+                "cannot save {trimmed}: must stay inside workspace (no \"..\")"
+            ));
+        }
+        let lower = trimmed.to_lowercase();
+        if !(lower.ends_with(".md") || lower.ends_with(".txt")) {
+            return Err(format!("cannot save {trimmed}: must end with .md or .txt"));
+        }
+        let candidate = if PathBuf::from(&trimmed).is_absolute() {
+            PathBuf::from(&trimmed)
+        } else {
+            root.join(&trimmed)
+        };
+        for component in candidate.components() {
+            if matches!(component, std::path::Component::ParentDir) {
+                return Err(format!(
+                    "cannot save {trimmed}: must stay inside workspace (no \"..\")"
+                ));
+            }
+        }
+        let root_canon = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+        if !candidate.starts_with(&root_canon) && !candidate.starts_with(root) {
+            return Err(format!("cannot save {trimmed}: must stay inside workspace"));
+        }
+        let same_as_stored = stored.as_ref().is_some_and(|current| *current == candidate);
+        if !same_as_stored && candidate.exists() && !overwrite {
+            return Err(format!(
+                "cannot save {}: file exists (tick overwrite to replace)",
+                candidate.display()
+            ));
+        }
+        if let Some(parent) = candidate.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("cannot save {}: {err}", candidate.display()))?;
+        }
+        Ok(candidate)
+    } else if let Some(current) = stored {
+        Ok(current)
+    } else {
         let mut n = buffer_id;
         loop {
             let candidate = root.join(format!("untitled-{n}.md"));
             if !candidate.exists() {
-                break candidate.to_string_lossy().to_string();
+                return Ok(candidate);
             }
             n = n.saturating_add(1);
         }
-    });
+    }
+}
+
+fn recovery_dir(root: &std::path::Path) -> PathBuf {
+    root.join(".yonro/recovery")
+}
+
+fn recovery_name_for(buffer_id: usize, path: Option<&PathBuf>) -> String {
+    if let Some(path) = path {
+        if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+            return name.to_string();
+        }
+    }
+    format!("untitled-{buffer_id}.md")
+}
+
+fn write_bytes_atomic(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("cannot write {}: {err}", path.display()))?;
+    }
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, bytes).map_err(|err| format!("cannot write {}: {err}", tmp.display()))?;
+    let file = std::fs::File::open(&tmp)
+        .map_err(|err| format!("cannot write {}: {err}", tmp.display()))?;
+    file.sync_all()
+        .map_err(|err| format!("cannot write {}: {err}", tmp.display()))?;
+    drop(file);
+    std::fs::rename(&tmp, path).map_err(|err| format!("cannot write {}: {err}", path.display()))?;
+    Ok(())
+}
+
+fn clear_recovery_file(root: &std::path::Path, name: &str) {
+    let path = recovery_dir(root).join(name);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RecoveryDto {
+    name: String,
+    text: String,
+    newer: bool,
+}
+
+fn check_recovery_impl(
+    state: &AppState,
+    path: Option<String>,
+) -> Result<Option<RecoveryDto>, String> {
+    let Some(raw) = path else {
+        return Ok(None);
+    };
+    let original = if PathBuf::from(&raw).is_absolute() {
+        PathBuf::from(&raw)
+    } else {
+        state.workspace_root().join(&raw)
+    };
+    let Some(file_name) = original
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
+    else {
+        return Ok(None);
+    };
+    let recovery = recovery_dir(&state.workspace_root()).join(&file_name);
+    if !recovery.exists() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(&recovery)
+        .map_err(|err| format!("cannot read {}: {err}", recovery.display()))?;
+    let newer = match (
+        std::fs::metadata(&recovery).and_then(|meta| meta.modified()),
+        std::fs::metadata(&original).and_then(|meta| meta.modified()),
+    ) {
+        (_, Err(_)) => true,
+        (Ok(recovery_time), Ok(original_time)) => recovery_time > original_time,
+        (Err(_), Ok(_)) => false,
+    };
+    Ok(Some(RecoveryDto {
+        name: file_name,
+        text,
+        newer,
+    }))
+}
+
+fn discard_recovery_impl(state: &AppState, path: Option<String>) -> Result<(), String> {
+    let Some(raw) = path else {
+        return Ok(());
+    };
+    let original = if PathBuf::from(&raw).is_absolute() {
+        PathBuf::from(&raw)
+    } else {
+        state.workspace_root().join(&raw)
+    };
+    let Some(file_name) = original
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_string)
+    else {
+        return Ok(());
+    };
+    clear_recovery_file(&state.workspace_root(), &file_name);
+    Ok(())
+}
+
+fn sweep_recovery_impl(state: &AppState) -> Result<Vec<String>, String> {
+    let root = state.workspace_root();
+    let pending: Vec<(usize, String, String)> = {
+        let buffers = state.buffers.lock().unwrap_or_else(|e| e.into_inner());
+        buffers
+            .iter()
+            .filter(|(_, buf)| buf.buffer.is_dirty())
+            .map(|(id, buf)| {
+                (
+                    *id,
+                    recovery_name_for(*id, buf.path.as_ref()),
+                    buf.buffer.text(),
+                )
+            })
+            .collect()
+    };
+    let mut written = Vec::new();
+    for (buffer_id, name, text) in pending {
+        let dest = recovery_dir(&root).join(&name);
+        write_bytes_atomic(&dest, text.as_bytes())?;
+        written.push(format!("{buffer_id}:{name}"));
+        let _ = buffer_id;
+    }
+    Ok(written)
+}
+
+fn save_file_impl(
+    state: &AppState,
+    buffer_id: usize,
+    path: Option<String>,
+    overwrite: bool,
+) -> Result<String, String> {
+    let stored = {
+        let buffers = state.buffers.lock().unwrap_or_else(|e| e.into_inner());
+        buffers.get(&buffer_id).and_then(|buf| buf.path.clone())
+    };
+    let root = state.workspace_root();
+    let target = resolve_save_target(&root, path, stored, buffer_id, overwrite)?;
+    let target_string = target.to_string_lossy().to_string();
     let (saved, words) = with_buffer(state, buffer_id, |buf| {
         buf.buffer
-            .save_as(&target)
-            .map_err(|err| format!("cannot save {target}: {err}"))?;
-        buf.path = Some(PathBuf::from(&target));
-        Ok::<(String, usize), String>((target.clone(), buf.stats().words))
+            .save_as(&target_string)
+            .map_err(|err| format!("cannot save {target_string}: {err}"))?;
+        buf.path = Some(PathBuf::from(&target_string));
+        Ok::<(String, usize), String>((target_string.clone(), buf.stats().words))
     })??;
     let saved_path = PathBuf::from(&saved);
     let mut project = state.project.lock().unwrap_or_else(|e| e.into_inner());
     let _ = project.sync_scene_words(&saved_path, words);
     project.save().map_err(|err| err.to_string())?;
+    if let Some(name) = saved_path.file_name().and_then(|name| name.to_str()) {
+        clear_recovery_file(&state.workspace_root(), name);
+    }
     Ok(saved)
 }
 
@@ -262,8 +449,31 @@ fn save_file(
     state: tauri::State<'_, AppState>,
     buffer_id: usize,
     path: Option<String>,
+    overwrite: Option<bool>,
 ) -> Result<String, String> {
-    save_file_impl(&state, buffer_id, path)
+    save_file_impl(&state, buffer_id, path, overwrite.unwrap_or(false))
+}
+
+/// Write crash-recovery copies for every dirty buffer (atomic).
+#[tauri::command]
+fn sweep_recovery(state: tauri::State<'_, AppState>) -> Result<Vec<String>, String> {
+    sweep_recovery_impl(&state)
+}
+
+/// When `path` has a newer recovery copy, return it so the UI can offer
+/// [restore] [discard]. `None` means no recovery to consider.
+#[tauri::command]
+fn check_recovery(
+    state: tauri::State<'_, AppState>,
+    path: Option<String>,
+) -> Result<Option<RecoveryDto>, String> {
+    check_recovery_impl(&state, path)
+}
+
+/// Delete the recovery copy backing `path` (after restore or explicit discard).
+#[tauri::command]
+fn discard_recovery(state: tauri::State<'_, AppState>, path: Option<String>) -> Result<(), String> {
+    discard_recovery_impl(&state, path)
 }
 
 fn close_buffer_impl(state: &AppState, buffer_id: usize) -> Result<(), String> {
@@ -401,7 +611,10 @@ fn main() {
             undo_buffer,
             redo_buffer,
             get_graph,
-            get_timeline
+            get_timeline,
+            sweep_recovery,
+            check_recovery,
+            discard_recovery
         ])
         .run(tauri::generate_context!())
         .expect("error running yonro gui");
@@ -538,6 +751,126 @@ mod tests {
         let second = open_file_impl(&state, Some(path.to_string_lossy().to_string())).unwrap();
         assert_eq!(second.buffer_id, first.buffer_id);
         assert_eq!(second.text, "draft unsaved text here");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_rejects_dotdot_and_bad_extension() {
+        let (state, _path) = scene_workspace();
+        let dir = state.workspace_root();
+        let opened = open_file_impl(&state, None).unwrap();
+        let dotdot = save_file_impl(
+            &state,
+            opened.buffer_id,
+            Some("../evil.md".to_string()),
+            false,
+        );
+        assert!(dotdot.is_err());
+        assert!(dotdot.unwrap_err().contains("../evil.md"));
+        let bad_ext = save_file_impl(
+            &state,
+            opened.buffer_id,
+            Some("notes.pdf".to_string()),
+            false,
+        );
+        assert!(bad_ext.is_err());
+        assert!(bad_ext.unwrap_err().contains("notes.pdf"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_refuses_overwrite_without_flag() {
+        let (state, _path) = scene_workspace();
+        let dir = state.workspace_root();
+        std::fs::write(dir.join("taken.md"), "existing").unwrap();
+        let opened = open_file_impl(&state, None).unwrap();
+        set_text_impl(&state, opened.buffer_id, "new words here".to_string()).unwrap();
+        let refused = save_file_impl(
+            &state,
+            opened.buffer_id,
+            Some("taken.md".to_string()),
+            false,
+        );
+        assert!(refused.is_err());
+        assert!(refused.unwrap_err().contains("taken.md"));
+        let allowed =
+            save_file_impl(&state, opened.buffer_id, Some("taken.md".to_string()), true).unwrap();
+        assert!(allowed.ends_with("taken.md"));
+        assert_eq!(std::fs::read_to_string(&allowed).unwrap(), "new words here");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_rejects_absolute_path_outside_workspace() {
+        let (state, _path) = scene_workspace();
+        let dir = state.workspace_root();
+        let opened = open_file_impl(&state, None).unwrap();
+        let outside = std::env::temp_dir().join("yonro-outside-gui.md");
+        let err = save_file_impl(
+            &state,
+            opened.buffer_id,
+            Some(outside.to_string_lossy().to_string()),
+            true,
+        );
+        assert!(err.is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stats_reports_can_undo_can_redo() {
+        let (state, path) = scene_workspace();
+        let dir = state.workspace_root();
+        let opened = open_file_impl(&state, Some(path.to_string_lossy().to_string())).unwrap();
+        assert!(!opened.stats.can_undo);
+        set_text_impl(&state, opened.buffer_id, "burst one".to_string()).unwrap();
+        let buffers = state.buffers.lock().unwrap_or_else(|e| e.into_inner());
+        let buf = buffers.get(&opened.buffer_id).unwrap();
+        assert!(buf.stats().can_undo);
+        assert!(!buf.stats().can_redo);
+        drop(buffers);
+        undo_impl(&state, opened.buffer_id).unwrap();
+        let buffers = state.buffers.lock().unwrap_or_else(|e| e.into_inner());
+        let buf = buffers.get(&opened.buffer_id).unwrap();
+        assert!(buf.stats().can_redo);
+        drop(buffers);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recovery_sweep_check_and_clear() {
+        let (state, path) = scene_workspace();
+        let dir = state.workspace_root();
+        let opened = open_file_impl(&state, Some(path.to_string_lossy().to_string())).unwrap();
+        set_text_impl(&state, opened.buffer_id, "dirty recovery text".to_string()).unwrap();
+        let written = sweep_recovery_impl(&state).unwrap();
+        assert_eq!(written.len(), 1);
+        let found = check_recovery_impl(&state, Some(path.to_string_lossy().to_string())).unwrap();
+        assert!(found.is_some());
+        let found = found.unwrap();
+        assert!(found.newer);
+        assert_eq!(found.text, "dirty recovery text");
+        discard_recovery_impl(&state, Some(path.to_string_lossy().to_string())).unwrap();
+        let gone = check_recovery_impl(&state, Some(path.to_string_lossy().to_string())).unwrap();
+        assert!(gone.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_clears_recovery_copy() {
+        let (state, _path) = scene_workspace();
+        let dir = state.workspace_root();
+        let opened = open_file_impl(&state, None).unwrap();
+        set_text_impl(&state, opened.buffer_id, "fresh draft".to_string()).unwrap();
+        sweep_recovery_impl(&state).unwrap();
+        let saved = save_file_impl(
+            &state,
+            opened.buffer_id,
+            Some("fresh.md".to_string()),
+            false,
+        )
+        .unwrap();
+        assert!(saved.ends_with("fresh.md"));
+        assert!(!recovery_dir(&dir).join("fresh.md").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
