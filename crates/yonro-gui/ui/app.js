@@ -1,365 +1,386 @@
-/* Yonro GUI frontend — vanilla JS, no build step.
- *
- * ADAPTER SEAM (the important part): every backend read/write below goes
- * through `core`, a tiny wrapper over Tauri commands. A future pure-web
- * build keeps this whole file and reimplements `core` over WASM — nothing
- * else changes.
+/* Yonro shell bootstrap. Classic script, loaded last.
+ * Owns nav, binder/inspector panels, zen, keymap, prose prefs.
+ * Calls show('write') on boot. No backend access except via core.
  */
-const core = {
-  async invoke(cmd, args = {}) {
-    // Tauri v2 exposes the API globally; the npm package is just typing.
-    return window.__TAURI__.core.invoke(cmd, args);
-  },
-  outline: () => core.invoke('get_outline'),
-  stats: () => core.invoke('get_stats'),
-  lore: () => core.invoke('get_lore'),
-  graph: () => core.invoke('get_graph'),
-  timeline: () => core.invoke('get_timeline'),
-  openFile: (path) => core.invoke('open_file', { path: path ?? null }),
-  setText: (bufferId, text) => core.invoke('set_text', { bufferId, text }),
-  saveFile: (bufferId, path) => core.invoke('save_file', { bufferId, path: path ?? null }),
-  closeBuffer: (bufferId) => core.invoke('close_buffer', { bufferId }),
-  undo: (bufferId) => core.invoke('undo_buffer', { bufferId }),
-  redo: (bufferId) => core.invoke('redo_buffer', { bufferId }),
-};
 
-const esc = (s) =>
-  String(s ?? '').replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
-
-/* ---------- nav ---------- */
 const views = ['write', 'outline', 'graph', 'timeline', 'lore'];
+
 function show(name) {
   for (const v of views) {
-    document.getElementById(`view-${v}`).classList.toggle('hidden', v !== name);
+    const sec = document.getElementById(`view-${v}`);
+    if (sec) sec.classList.toggle('hidden', v !== name);
   }
   for (const btn of document.querySelectorAll('#topnav [data-view]')) {
-    btn.classList.toggle('active', btn.dataset.view === name);
+    const on = btn.dataset.view === name;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+    btn.tabIndex = on ? 0 : -1;
   }
-  if (name === 'outline') loadOutline();
-  if (name === 'graph') loadGraph();
-  if (name === 'timeline') loadTimeline();
-  if (name === 'lore') loadLore();
+  if (name === 'outline' && typeof loadOutline === 'function') loadOutline();
+  if (name === 'graph' && typeof loadGraph === 'function') loadGraph();
+  if (name === 'timeline' && typeof loadTimeline === 'function') loadTimeline();
+  if (name === 'lore' && typeof loadLore === 'function') loadLore();
+  syncDrawers();
 }
+
 for (const btn of document.querySelectorAll('#topnav [data-view]')) {
   btn.addEventListener('click', () => show(btn.dataset.view));
 }
-document.getElementById('zen-toggle').addEventListener('click', () => {
-  document.body.classList.toggle('zen');
-});
 
-/* ---------- write view ---------- */
-const docs = new Map(); // bufferId -> { path, dirty }
-const docCache = new Map(); // bufferId -> last known text
-let activeDoc = null;
-let applyingRemote = false;
-
-const editor = document.getElementById('editor');
-const docTabs = document.getElementById('doc-tabs');
-const docName = document.getElementById('doc-name');
-const docStatus = document.getElementById('doc-status');
-
-function shortName(path) {
-  if (!path) return 'untitled';
-  const parts = path.split('/');
-  return parts[parts.length - 1] || 'untitled';
-}
-
-function renderTabs() {
-  docTabs.innerHTML = '';
-  for (const [id, doc] of docs) {
-    const tab = document.createElement('span');
-    tab.className = 'tab' + (id === activeDoc ? ' active' : '');
-    tab.setAttribute('role', 'tab');
-    tab.innerHTML = `${esc(shortName(doc.path))}${doc.dirty ? ' <span class="dirty">●</span>' : ''}`;
-    tab.addEventListener('click', () => activateDoc(id));
-    docTabs.appendChild(tab);
-  }
-}
-
-function renderStatus(stats) {
-  const doc = docs.get(activeDoc);
-  docName.textContent = doc ? `${shortName(doc.path)}${doc.dirty ? ' ●' : ''}` : 'No document — open one from Outline, or start typing below.';
-  docStatus.textContent = stats
-    ? `${stats.words} words · ${stats.chars} chars · ${stats.lines} lines · ~${stats.reading_min} min${stats.dirty ? ' · modified' : ''}`
-    : '';
-}
-
-async function openDoc(path) {
-  try {
-    const opened = await core.openFile(path);
-    docs.set(opened.buffer_id, { path: opened.path, dirty: opened.stats.dirty });
-    docCache.set(opened.buffer_id, opened.text);
-    activeDoc = opened.buffer_id;
-    applyingRemote = true;
-    editor.value = opened.text;
-    applyingRemote = false;
-    renderTabs();
-    renderStatus(opened.stats);
-    show('write');
-  } catch (err) {
-    docStatus.textContent = `Could not open: ${err}`;
-  }
-}
-
-async function activateDoc(id) {
-  if (!docs.has(id)) return;
-  activeDoc = id;
-  renderTabs();
-  // Text was synced to the backend on every keystroke; the local cache is
-  // the source of truth for instant tab switches.
-  const cached = docCache.get(id);
-  if (cached !== undefined) {
-    applyingRemote = true;
-    editor.value = cached;
-    applyingRemote = false;
-  }
-  editor.focus();
-}
-
-editor.addEventListener('input', async () => {
-  if (applyingRemote || activeDoc === null) return;
-  const text = editor.value;
-  docCache.set(activeDoc, text);
-  try {
-    const stats = await core.setText(activeDoc, text);
-    const doc = docs.get(activeDoc);
-    if (doc) doc.dirty = stats.dirty;
-    renderTabs();
-    renderStatus(stats);
-  } catch (err) {
-    docStatus.textContent = `Sync failed: ${err}`;
-  }
-});
-
-editor.addEventListener('keydown', async (e) => {
-  if (e.key === 'Tab') {
-    e.preventDefault();
-    const { selectionStart: s, selectionEnd: t } = editor;
-    editor.setRangeText('\t', s, t, 'end');
-    editor.dispatchEvent(new Event('input'));
-  }
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-    e.preventDefault();
-    await saveActive();
-  }
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
-    e.preventDefault();
-    await historyStep('undo');
-  }
-  if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
-    e.preventDefault();
-    await historyStep('redo');
-  }
-});
-
-async function historyStep(which) {
-  if (activeDoc === null) return;
-  try {
-    const res = await core[which](activeDoc);
-    applyingRemote = true;
-    editor.value = res.text;
-    applyingRemote = false;
-    docCache.set(activeDoc, res.text);
-    const doc = docs.get(activeDoc);
-    if (doc) doc.dirty = res.stats.dirty;
-    renderTabs();
-    renderStatus(res.stats);
-  } catch (err) {
-    docStatus.textContent = `History failed: ${err}`;
-  }
-}
-
-async function saveActive() {
-  if (activeDoc === null) return;
-  try {
-    // No path argument: the backend saves in place, or auto-names
-    // `untitled-<id>.md` inside the workspace for new drafts.
-    const saved = await core.saveFile(activeDoc, null);
-    const doc = docs.get(activeDoc);
-    if (doc) {
-      doc.path = saved;
-      doc.dirty = false;
-    }
-    renderTabs();
-    docStatus.textContent = `Saved ${saved}`;
-  } catch (err) {
-    docStatus.textContent = `Save failed: ${err}`;
-  }
-}
-
-document.getElementById('btn-save').addEventListener('click', saveActive);
-document.getElementById('btn-undo').addEventListener('click', () => historyStep('undo'));
-document.getElementById('btn-redo').addEventListener('click', () => historyStep('redo'));
-document.getElementById('btn-new').addEventListener('click', () => openDoc(null));
-document.getElementById('btn-close').addEventListener('click', async () => {
-  if (activeDoc === null) return;
-  const doc = docs.get(activeDoc);
-  if (doc && doc.dirty && !window.confirm('Close without saving?')) return;
-  try {
-    await core.closeBuffer(activeDoc);
-  } catch (err) {
-    docStatus.textContent = `Close failed: ${err}`;
-    return;
-  }
-  docs.delete(activeDoc);
-  docCache.delete(activeDoc);
-  activeDoc = docs.size ? [...docs.keys()].pop() : null;
-  if (activeDoc !== null) {
-    applyingRemote = true;
-    editor.value = docCache.get(activeDoc) ?? '';
-    applyingRemote = false;
-  } else {
-    editor.value = '';
-  }
-  renderTabs();
-  renderStatus(null);
-});
-
-/* ---------- outline section ---------- */
-function renderNode(node, openScene) {
-  const meta =
-    node.kind === 'scene' && node.target > 0
-      ? `<span class="meta">${node.words}/${node.target} words</span>`
-      : node.kind === 'scene' && node.words > 0
-        ? `<span class="meta">${node.words} words</span>`
-        : '';
-  const bar =
-    node.kind !== 'project' && node.target > 0
-      ? `<div class="pbar"><div style="width:${Math.min(100, Math.round((node.words / node.target) * 100))}%"></div></div>`
-      : '';
-  const kids = (node.children || []).map((k) => renderNode(k, openScene)).join('');
-  const clickable = node.kind === 'scene' && node.file ? ` data-file="${esc(node.file)}"` : '';
-  return `<div class="node" data-kind="${esc(node.kind)}"><div class="row"${clickable}>${esc(node.title)}${meta}${bar}</div>${
-    kids ? `<div class="children">${kids}</div>` : ''
-  }</div>`;
-}
-
-async function loadOutline() {
+/* ---------- binder (read-only outline tree + files; editing lands later) --- */
+async function refreshBinder() {
+  const box = document.getElementById('binder-outline');
   try {
     const outline = await core.outline();
+    const title = document.getElementById('project-title');
+    if (title) title.textContent = outline.title || 'untitled';
+    if (!box) return;
     const kids = (outline.children || []).map((k) => renderNode(k, true)).join('');
-    const el = document.getElementById('outline');
-    el.innerHTML =
-      `<div class="node" data-kind="project"><div class="row">✎ ${esc(outline.title)}</div>` +
-      (kids ? `<div class="children">${kids}</div>` : '') +
-      `</div>`;
-    el.querySelectorAll('[data-file]').forEach((row) => {
-      row.addEventListener('click', () => openDoc(row.dataset.file));
+    if (!kids) {
+      box.innerHTML = '<p class="muted">no scenes yet. add acts in the terminal outline.</p>';
+      return;
+    }
+    box.innerHTML = kids;
+    box.querySelectorAll('[data-file]').forEach((row) => {
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+      row.addEventListener('click', () => {
+        openDoc(row.dataset.file);
+        closeDrawersOnNarrow();
+      });
+      row.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          openDoc(row.dataset.file);
+          closeDrawersOnNarrow();
+        }
+      });
     });
   } catch (err) {
-    document.getElementById('outline').innerHTML = `<p class="muted">Outline unavailable: ${esc(err)}</p>`;
+    if (box) box.innerHTML = `<p class="muted">binder unavailable: ${esc(err)}</p>`;
   }
 }
 
-/* ---------- graph section ---------- */
-let graphSpotlight = null;
+function laterMsg(what) {
+  setMessage(`${what} lands after P1 — outline editing stays in the terminal for now.`);
+}
 
-async function loadGraph() {
+/* ---------- panels: collapse + draggable widths + drawers ------------------ */
+function applyPanelPrefs() {
   try {
-    const graph = await core.graph();
-    renderGraph(graph);
+    const bw = localStorage.getItem('yonro.binderW');
+    const iw = localStorage.getItem('yonro.inspectorW');
+    if (bw) document.documentElement.style.setProperty('--binder-w', `${clampW(Number(bw))}px`);
+    if (iw) document.documentElement.style.setProperty('--inspector-w', `${clampW(Number(iw))}px`);
+    if (localStorage.getItem('yonro.binderHidden') === '1') document.body.classList.add('hide-binder');
+    if (localStorage.getItem('yonro.inspectorHidden') === '1') document.body.classList.add('hide-inspector');
   } catch (err) {
-    document.getElementById('graph-legend').textContent = `Graph unavailable: ${err}`;
+    void err;
   }
 }
 
-function renderGraph(graph) {
-  const svg = document.getElementById('graph');
-  const W = 900;
-  const H = 480;
-  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-  const nodes = graph.nodes || [];
-  const edges = graph.edges || [];
-  if (!nodes.length) {
-    svg.innerHTML = '';
-    document.getElementById('graph-legend').textContent = 'No linked entities yet — set scene POVs and write @mentions.';
+function clampW(n) {
+  if (!Number.isFinite(n)) return 260;
+  return Math.min(420, Math.max(200, Math.round(n)));
+}
+
+function toggleBinder() {
+  document.body.classList.toggle('hide-binder');
+  try {
+    localStorage.setItem('yonro.binderHidden', document.body.classList.contains('hide-binder') ? '1' : '0');
+  } catch (err) {
+    void err;
+  }
+  syncDrawers();
+}
+
+function toggleInspector() {
+  document.body.classList.toggle('hide-inspector');
+  try {
+    localStorage.setItem('yonro.inspectorHidden', document.body.classList.contains('hide-inspector') ? '1' : '0');
+  } catch (err) {
+    void err;
+  }
+  syncDrawers();
+}
+
+function isNarrowInspector() {
+  return window.matchMedia && window.matchMedia('(max-width: 999px)').matches;
+}
+
+function isNarrowBinder() {
+  return window.matchMedia && window.matchMedia('(max-width: 799px)').matches;
+}
+
+function syncDrawers() {
+  const scrim = document.getElementById('scrim');
+  if (!scrim) return;
+  const binderOpen = !document.body.classList.contains('hide-binder');
+  const inspOpen = !document.body.classList.contains('hide-inspector');
+  const need = (isNarrowInspector() && inspOpen) || (isNarrowBinder() && binderOpen);
+  scrim.hidden = !need;
+}
+
+function closeDrawersOnNarrow() {
+  if (isNarrowBinder() && !document.body.classList.contains('hide-binder')) toggleBinder();
+  else if (isNarrowInspector() && !document.body.classList.contains('hide-inspector')) toggleInspector();
+  syncDrawers();
+}
+
+function bindSplitter(elmId, which) {
+  const split = document.getElementById(elmId);
+  if (!split) return;
+  let startX = 0;
+  let startW = 0;
+  const prop = which === 'binder' ? '--binder-w' : '--inspector-w';
+  const key = which === 'binder' ? 'yonro.binderW' : 'yonro.inspectorW';
+  const cur = () => {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(prop);
+    return clampW(parseFloat(v) || 260);
+  };
+  split.addEventListener('pointerdown', (e) => {
+    startX = e.clientX;
+    startW = cur();
+    split.setPointerCapture(e.pointerId);
+    const move = (ev) => {
+      const dx = ev.clientX - startX;
+      const w = clampW(startW + (which === 'binder' ? dx : -dx));
+      document.documentElement.style.setProperty(prop, `${w}px`);
+    };
+    const up = () => {
+      split.removeEventListener('pointermove', move);
+      split.removeEventListener('pointerup', up);
+      try {
+        localStorage.setItem(key, String(cur()));
+      } catch (err) {
+        void err;
+      }
+    };
+    split.addEventListener('pointermove', move);
+    split.addEventListener('pointerup', up);
+  });
+  split.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const d = e.key === 'ArrowRight' ? 10 : -10;
+    const w = clampW(cur() + (which === 'binder' ? d : -d));
+    document.documentElement.style.setProperty(prop, `${w}px`);
+    try {
+      localStorage.setItem(key, String(w));
+    } catch (err) {
+      void err;
+    }
+  });
+}
+
+/* ---------- zen ------------------------------------------------------------ */
+function toggleZen(force) {
+  const on = force !== undefined ? force : !document.body.classList.contains('zen');
+  document.body.classList.toggle('zen', on);
+}
+
+document.getElementById('zen-toggle').addEventListener('click', () => toggleZen());
+
+/* ---------- theme + prose prefs -------------------------------------------- */
+function bindThemeToggle() {
+  const btn = document.getElementById('theme-toggle');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    cycleTheme();
+    refreshThemeButton(getTheme());
+  });
+  refreshThemeButton(getTheme());
+}
+
+function applyProsePrefs() {
+  let size = 18;
+  let measure = 70;
+  let leading = 1.7;
+  try {
+    const s = Number(localStorage.getItem('yonro.proseSize'));
+    const m = Number(localStorage.getItem('yonro.proseMeasure'));
+    const l = Number(localStorage.getItem('yonro.proseLeading'));
+    if (Number.isFinite(s)) size = Math.min(24, Math.max(16, Math.round(s)));
+    if (Number.isFinite(m)) measure = Math.min(84, Math.max(56, Math.round(m)));
+    if (l === 1.5 || l === 1.7 || l === 1.9) leading = l;
+  } catch (err) {
+    void err;
+  }
+  const root = document.documentElement.style;
+  root.setProperty('--prose-size', `${size}px`);
+  root.setProperty('--measure', `${measure}ch`);
+  root.setProperty('--leading', String(leading));
+  const sv = document.getElementById('prose-size-val');
+  const mv = document.getElementById('prose-measure-val');
+  const sr = document.getElementById('prose-size');
+  const mr = document.getElementById('prose-measure');
+  if (sv) sv.textContent = `${size}px`;
+  if (mv) mv.textContent = `${measure}ch`;
+  if (sr) sr.value = String(size);
+  if (mr) mr.value = String(measure);
+  for (const b of document.querySelectorAll('#prose-pop [data-leading]')) {
+    b.classList.toggle('active', Number(b.dataset.leading) === leading);
+  }
+}
+
+function bindProsePop() {
+  const toggle = document.getElementById('prose-toggle');
+  const pop = document.getElementById('prose-pop');
+  if (!toggle || !pop) return;
+  toggle.addEventListener('click', () => {
+    pop.hidden = !pop.hidden;
+  });
+  const size = document.getElementById('prose-size');
+  const measure = document.getElementById('prose-measure');
+  if (size) {
+    size.addEventListener('input', () => {
+      const v = Math.min(24, Math.max(16, Math.round(Number(size.value) || 18)));
+      document.documentElement.style.setProperty('--prose-size', `${v}px`);
+      const lab = document.getElementById('prose-size-val');
+      if (lab) lab.textContent = `${v}px`;
+      try {
+        localStorage.setItem('yonro.proseSize', String(v));
+      } catch (err) {
+        void err;
+      }
+    });
+  }
+  if (measure) {
+    measure.addEventListener('input', () => {
+      const v = Math.min(84, Math.max(56, Math.round(Number(measure.value) || 70)));
+      document.documentElement.style.setProperty('--measure', `${v}ch`);
+      const lab = document.getElementById('prose-measure-val');
+      if (lab) lab.textContent = `${v}ch`;
+      try {
+        localStorage.setItem('yonro.proseMeasure', String(v));
+      } catch (err) {
+        void err;
+      }
+    });
+  }
+  for (const b of document.querySelectorAll('#prose-pop [data-leading]')) {
+    b.addEventListener('click', () => {
+      const v = b.dataset.leading;
+      document.documentElement.style.setProperty('--leading', v);
+      try {
+        localStorage.setItem('yonro.proseLeading', v);
+      } catch (err) {
+        void err;
+      }
+      for (const x of document.querySelectorAll('#prose-pop [data-leading]')) {
+        x.classList.toggle('active', x === b);
+      }
+    });
+  }
+}
+
+/* ---------- overlays -------------------------------------------------------- */
+function toggleShortcuts(force) {
+  const sheet = document.getElementById('shortcuts');
+  if (!sheet) return;
+  sheet.hidden = force !== undefined ? !force : !sheet.hidden;
+}
+
+function typingTarget(e) {
+  const t = e.target;
+  return Boolean(t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable));
+}
+
+/* ---------- global keymap --------------------------------------------------- */
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const sheet = document.getElementById('shortcuts');
+    const pop = document.getElementById('prose-pop');
+    if (sheet && !sheet.hidden) {
+      toggleShortcuts(false);
+      return;
+    }
+    if (pop && !pop.hidden) {
+      pop.hidden = true;
+      return;
+    }
+    if (document.body.classList.contains('zen')) {
+      toggleZen(false);
+      return;
+    }
+    const scrim = document.getElementById('scrim');
+    if (scrim && !scrim.hidden) {
+      closeDrawersOnNarrow();
+      return;
+    }
     return;
   }
-  const cx = W / 2;
-  const cy = H / 2;
-  const radius = Math.min(W, H) / 2 - 60;
-  const pos = {};
-  nodes.forEach((n, i) => {
-    const angle = (2 * Math.PI * i) / nodes.length - Math.PI / 2;
-    pos[n.id] = { x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) };
-  });
-  const neighborIds = new Set();
-  if (graphSpotlight !== null) {
-    neighborIds.add(graphSpotlight);
-    for (const e of edges) {
-      if (e.a === graphSpotlight) neighborIds.add(e.b);
-      if (e.b === graphSpotlight) neighborIds.add(e.a);
+  if (e.key === 'F11') {
+    e.preventDefault();
+    toggleZen();
+    return;
+  }
+  if (isMod(e) && (e.key === '.' || e.key.toLowerCase() === 'p' || e.key.toLowerCase() === 'j' || e.key.toLowerCase() === 'o' || e.key.toLowerCase() === 'e' || e.key.toLowerCase() === 'n' || e.key.toLowerCase() === 's' || e.key.toLowerCase() === 'f')) {
+    const k = e.key.toLowerCase();
+    if (k === '.') {
+      e.preventDefault();
+      toggleZen();
+    } else if (k === 'o') {
+      e.preventDefault();
+      toggleBinder();
+    } else if (k === 'j') {
+      e.preventDefault();
+      toggleInspector();
+    } else if (k === 'e') {
+      e.preventDefault();
+      const b = document.getElementById('binder');
+      if (b) b.focus();
+    } else if (k === 'n') {
+      e.preventDefault();
+      openDoc(null);
+    } else if (k === 'p' && !typingTarget(e)) {
+      e.preventDefault();
+      setMessage(e.shiftKey ? 'command mode lands later — outline opens scenes for now.' : 'palette lands later — pick a scene in the binder.');
+    } else if (k === 'f' && !typingTarget(e)) {
+      e.preventDefault();
+      setMessage(e.shiftKey ? 'project search lands later.' : 'find in doc lands later — the editor keeps native find for now.');
+    } else if (k === 's' && !typingTarget(e)) {
+      e.preventDefault();
+      saveActive();
+    }
+    return;
+  }
+  if (isMod(e) && e.key >= '1' && e.key <= '5') {
+    e.preventDefault();
+    show(views[Number(e.key) - 1]);
+    return;
+  }
+  if (e.ctrlKey && e.key === 'Tab') {
+    e.preventDefault();
+    if (typeof cycleDoc === 'function') cycleDoc(e.shiftKey ? -1 : 1);
+    return;
+  }
+  if (!isMod(e) && !typingTarget(e) && (e.key === '?' || e.key === 'h')) {
+    if (e.key === '?') {
+      e.preventDefault();
+      toggleShortcuts();
     }
   }
-  const dim = (id) => (graphSpotlight === null || neighborIds.has(id) ? '' : ' class="dim"');
-  const dimEdge = (e) =>
-    graphSpotlight === null || e.a === graphSpotlight || e.b === graphSpotlight ? '' : ' class="dim"';
-  let html = '';
-  for (const e of edges) {
-    const a = pos[e.a];
-    const b = pos[e.b];
-    if (!a || !b) continue;
-    const w = 1 + Math.min(6, e.weight);
-    const color = (e.kinds || []).includes('mention') ? '#d6a35c' : '#785f3c';
-    html += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="${color}" stroke-width="${w}"${dimEdge(e)}><title>${e.shared} shared · ${e.mentions} mentions</title></line>`;
-  }
-  for (const n of nodes) {
-    const p = pos[n.id];
-    html += `<g data-id="${n.id}"${dim(n.id)} style="cursor:pointer"><circle cx="${p.x}" cy="${p.y}" r="16" fill="#292524" stroke="#d6a35c" stroke-width="2"/><text x="${p.x}" y="${p.y + 4}" text-anchor="middle">${esc(n.label.slice(0, 10))}</text><title>${esc(n.label)} (${esc(n.kind)})</title></g>`;
-  }
-  svg.innerHTML = html;
-  svg.querySelectorAll('g[data-id]').forEach((g) => {
-    g.addEventListener('click', () => {
-      const id = Number(g.dataset.id);
-      graphSpotlight = graphSpotlight === id ? null : id;
-      renderGraph(graph);
-    });
-  });
-  const shown = graphSpotlight === null ? edges.length : edges.filter((e) => e.a === graphSpotlight || e.b === graphSpotlight).length;
-  document.getElementById('graph-legend').textContent =
-    `${nodes.length} entities · ${edges.length} links (${shown} shown). Gold = @mention link, bronze = shared scene.`;
-}
+});
 
-/* ---------- timeline section ---------- */
-async function loadTimeline() {
-  try {
-    const timeline = await core.timeline();
-    const notes = timeline.notes || [];
-    document.getElementById('continuity').innerHTML = notes.length
-      ? notes.map((n) => `<div class="note">⚠ ${esc(n.message)}</div>`).join('')
-      : '<p class="muted">No continuity notes — every POV/setting transition reads clean.</p>';
-    document.getElementById('timeline').innerHTML = (timeline.entries || [])
-      .map(
-        (e) =>
-          `<li><strong>${esc(e.title)}</strong> <span class="when">#${e.index + 1} · ${esc(e.chapter)} · ${esc(e.pov) || 'no POV'} · ${esc(e.setting) || 'no setting'}${e.story_date ? ` · ${esc(e.story_date)}` : ''} · ${e.words}w</span></li>`,
-      )
-      .join('');
-  } catch (err) {
-    document.getElementById('timeline').innerHTML = `<p class="muted">Timeline unavailable: ${esc(err)}</p>`;
+/* Binder key hints (TUI parity): navigation works, creation waits for backend. */
+document.addEventListener('keydown', (e) => {
+  const binder = document.getElementById('binder');
+  if (!binder || !binder.contains(document.activeElement)) return;
+  if (e.key === 'a' || e.key === 'c' || e.key === 's' || e.key === 'Delete' || e.key === 'F2') {
+    e.preventDefault();
+    laterMsg('outline editing');
   }
-}
+});
 
-/* ---------- lore section ---------- */
-async function loadLore() {
-  try {
-    const entities = await core.lore();
-    if (!entities.length) return; // keep the helpful placeholder
-    document.getElementById('lore').innerHTML = entities
-      .map(
-        (e) => `<div class="entity"><h3>${esc(e.name)}<span class="kind">${esc(e.kind)}</span></h3>` +
-          (e.aliases && e.aliases.length
-            ? `<p class="aliases">Also known as: ${esc(e.aliases.join(', '))}</p>`
-            : '') +
-          (e.sheet ? `<p class="sheet">${esc(e.sheet)}</p>` : '') +
-          (e.pov_scenes && e.pov_scenes.length
-            ? `<p class="povs">POV in: ${esc(e.pov_scenes.join(', '))}</p>`
-            : '') +
-          `</div>`,
-      )
-      .join('');
-  } catch (err) {
-    document.getElementById('lore').innerHTML = `<p class="muted">Lore unavailable: ${esc(err)}</p>`;
-  }
-}
+/* ---------- boot ------------------------------------------------------------ */
+applyPanelPrefs();
+bindSplitter('split-binder', 'binder');
+bindSplitter('split-inspector', 'inspector');
+bindThemeToggle();
+bindProsePop();
+applyProsePrefs();
+refreshBinder();
+show('write');
+syncDrawers();
+window.addEventListener('resize', debounce(syncDrawers, 120));

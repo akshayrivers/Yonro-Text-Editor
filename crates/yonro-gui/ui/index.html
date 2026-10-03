@@ -1,61 +1,130 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Yonro — Narrative Studio</title>
+  <link rel="stylesheet" href="themes.css" />
   <link rel="stylesheet" href="styles.css" />
+  <script src="theme.js"></script>
 </head>
 <body>
   <nav id="topnav" aria-label="Views">
-    <span class="brand">Yonro</span>
-    <button data-view="write" class="active">Write</button>
-    <button data-view="outline">Outline</button>
-    <button data-view="graph">Graph</button>
-    <button data-view="timeline">Timeline</button>
-    <button data-view="lore">Lore</button>
+    <span class="brand">yonro</span>
+    <span id="project-title" class="muted">untitled</span>
+    <button data-view="write" class="active" role="tab" aria-selected="true" tabindex="0">Write</button>
+    <button data-view="outline" role="tab" aria-selected="false" tabindex="-1">Outline</button>
+    <button data-view="graph" role="tab" aria-selected="false" tabindex="-1">Graph</button>
+    <button data-view="timeline" role="tab" aria-selected="false" tabindex="-1">Timeline</button>
+    <button data-view="lore" role="tab" aria-selected="false" tabindex="-1">Lore</button>
     <span class="spacer"></span>
-    <button id="zen-toggle" title="Distraction-free (document only)">Zen</button>
+    <span class="muted hide-narrow">mod+P</span>
+    <button id="prose-toggle" title="Prose settings (size, measure, leading)">Aa</button>
+    <button id="theme-toggle" title="Cycle theme: dark, light, system" aria-label="theme: dark">dark</button>
+    <button id="zen-toggle" title="Distraction-free (F11 or mod+.)">Zen</button>
   </nav>
 
-  <section id="view-write" class="view">
-    <div id="doc-tabs" role="tablist" aria-label="Open documents"></div>
-    <div id="editor-bar">
-      <span id="doc-name" class="muted">No document — open one from Outline, or start typing below.</span>
-      <span class="spacer"></span>
-      <button id="btn-save" title="Save (Ctrl+S)">Save</button>
-      <button id="btn-undo" title="Undo (Ctrl+Z)">Undo</button>
-      <button id="btn-redo" title="Redo (Ctrl+Shift+Z)">Redo</button>
-      <button id="btn-new" title="New untitled document">New</button>
-      <button id="btn-close" title="Close current document">Close</button>
+  <div id="prose-pop" hidden>
+    <label for="prose-size">font size <span id="prose-size-val">18px</span></label>
+    <input id="prose-size" type="range" min="16" max="24" step="1" value="18" />
+    <label for="prose-measure">measure <span id="prose-measure-val">70ch</span></label>
+    <input id="prose-measure" type="range" min="56" max="84" step="1" value="70" />
+    <label>line height</label>
+    <div class="lead-row">
+      <button data-leading="1.5">compact</button>
+      <button data-leading="1.7" class="active">roomy</button>
+      <button data-leading="1.9">airy</button>
     </div>
-    <textarea id="editor" spellcheck="true" placeholder="Once upon a time…"></textarea>
-    <div id="doc-status" class="muted" aria-label="Document statistics"></div>
-  </section>
+  </div>
 
-  <section id="view-outline" class="view hidden">
-    <h2>Outline</h2>
-    <div id="outline"><p class="muted">No manuscript yet — build one in the terminal (<code>Ctrl+O</code>, then <code>a</code> <code>c</code> <code>s</code>).</p></div>
-  </section>
+  <div id="shell">
+    <aside id="binder" aria-label="Binder" tabindex="-1">
+      <div id="binder-outline"></div>
+      <div class="files-label">files</div>
+      <div id="binder-files"></div>
+    </aside>
+    <div class="splitter" id="split-binder" role="separator" aria-label="Resize binder" tabindex="0"></div>
+    <main id="center">
+      <section id="view-write" class="view">
+        <div id="doc-tabs" role="tablist" aria-label="Open documents"></div>
+        <div id="editor-bar">
+          <span id="doc-name" class="muted">No document — open one from Outline, or start typing below.</span>
+          <span class="spacer"></span>
+          <button id="btn-save" title="Save (Ctrl+S)">Save</button>
+          <button id="btn-undo" title="Undo (Ctrl+Z)">Undo</button>
+          <button id="btn-redo" title="Redo (Ctrl+Shift+Z)">Redo</button>
+          <button id="btn-new" title="New untitled document">New</button>
+          <button id="btn-close" title="Close current document">Close</button>
+        </div>
+        <textarea id="editor" spellcheck="true" placeholder="Once upon a time…"></textarea>
+        <div id="doc-status" class="muted" aria-label="Document statistics"></div>
+        <div id="zen-count" class="muted" aria-label="Word count"></div>
+      </section>
 
-  <section id="view-graph" class="view hidden">
-    <h2>Character graph</h2>
-    <p class="muted">Nodes are lore entities; edge width is combined weight (shared scenes + @mentions). Click a node to spotlight its neighborhood.</p>
-    <svg id="graph" role="img" aria-label="Relationship graph"></svg>
-    <div id="graph-legend" class="muted"></div>
-  </section>
+      <section id="view-outline" class="view hidden">
+        <h2>Outline</h2>
+        <div id="outline"><p class="muted">No manuscript yet — build one in the terminal (<code>Ctrl+O</code>, then <code>a</code> <code>c</code> <code>s</code>).</p></div>
+      </section>
 
-  <section id="view-timeline" class="view hidden">
-    <h2>Timeline</h2>
-    <div id="continuity"></div>
-    <ol id="timeline"></ol>
-  </section>
+      <section id="view-graph" class="view hidden">
+        <h2>Character graph</h2>
+        <p class="muted">Nodes are lore entities; edge width is combined weight (shared scenes + @mentions). Click a node to spotlight its neighborhood.</p>
+        <svg id="graph" role="img" aria-label="Relationship graph"></svg>
+        <div id="graph-legend" class="muted"></div>
+      </section>
 
-  <section id="view-lore" class="view hidden">
-    <h2>Lore</h2>
-    <div id="lore"><p class="muted">No entities yet — they seed from scene POVs.</p></div>
-  </section>
+      <section id="view-timeline" class="view hidden">
+        <h2>Timeline</h2>
+        <div id="continuity"></div>
+        <ol id="timeline"></ol>
+      </section>
 
-  <script src="app.js"></script>
+      <section id="view-lore" class="view hidden">
+        <h2>Lore</h2>
+        <div id="lore"><p class="muted">No entities yet — they seed from scene POVs.</p></div>
+      </section>
+    </main>
+    <div class="splitter" id="split-inspector" role="separator" aria-label="Resize inspector" tabindex="0"></div>
+    <aside id="inspector" aria-label="Inspector">
+      <p class="muted">select a scene to see its meta.</p>
+    </aside>
+  </div>
+
+  <div id="scrim" hidden></div>
+
+  <div id="shortcuts" hidden>
+    <h2>shortcuts</h2>
+    <ul>
+      <li>mod+S save · mod+N new draft · mod+Z undo · mod+Shift+Z redo</li>
+      <li>mod+1..5 Write/Outline/Graph/Timeline/Lore · Ctrl+Tab cycle docs</li>
+      <li>mod+O binder · mod+E files · mod+J inspector</li>
+      <li>F11 or mod+. zen · Esc exits zen or closes overlays</li>
+      <li>? this sheet (outside the editor)</li>
+    </ul>
+  </div>
+
+  <footer id="statusline">
+    <span id="st-file">—</span>
+    <span class="sep">|</span>
+    <span id="st-words">—</span>
+    <span class="sep">|</span>
+    <span id="st-session">—</span>
+    <span id="st-goal">—</span>
+    <span class="sep">|</span>
+    <span id="st-min">—</span>
+    <span class="sep">|</span>
+    <span id="st-pos">Ln 1, Col 1</span>
+    <span class="spacer"></span>
+    <span id="st-msg" aria-live="polite"></span>
+  </footer>
+
+  <script src="core.js" defer></script>
+  <script src="util.js" defer></script>
+  <script src="editor.js" defer></script>
+  <script src="outline.js" defer></script>
+  <script src="graph.js" defer></script>
+  <script src="timeline.js" defer></script>
+  <script src="lore.js" defer></script>
+  <script src="app.js" defer></script>
 </body>
 </html>

@@ -1,0 +1,38 @@
+:root, [data-theme="dark"] {
+  color-scheme: dark;
+  --bg:#1c1917; --panel:#292524; --panel-2:#221f1d; --ink:#e7e5e4; --muted:#a8a29e;
+  --accent:#d6a35c; --accent-dim:#785f3c; --accent-ink:#1c1917; --line:#44403c;
+  --mention:#d6a35c; --shared:#a8844f;            /* graph edges; both >=3:1 on --panel */
+  --badge-bg:#5c4a2f; --badge-ink:#f0dcb8;
+  --danger:#e06c5f; --warn:#e0b84f; --ok:#8fb573;
+  --focus:#f0c27a; --selection:#4a3a24; --scrim:#000000b3;
+  --k-character:#d6a35c; --k-place:#8fb573; --k-faction:#c28fd1; --k-item:#7fb4d6; --k-lore:#a8a29e;
+  --radius:10px; --radius-sm:6px;
+  --font-ui: ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  --font-prose: "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  --prose-size:1.15rem; --leading:1.7; --measure:70ch;
+  --binder-w:260px; --inspector-w:300px;
+}
+[data-theme="light"] {
+  color-scheme: light;
+  --bg:#f5efe3; --panel:#fbf7ee; --panel-2:#efe7d6; --ink:#2a2521; --muted:#675e55;
+  --accent:#8f5410; --accent-dim:#c8a56f; --accent-ink:#fbf7ee; --line:#d9cdb8;
+  --mention:#8f5410; --shared:#8a6a3a;
+  --badge-bg:#e8d6b4; --badge-ink:#4a3210;
+  --danger:#b3392e; --warn:#8a6200; --ok:#4f7a35;
+  --focus:#6b3a05; --selection:#ead3a6; --scrim:#2a252199;
+  --k-character:#8f5410; --k-place:#4f7a35; --k-faction:#7a3d8c; --k-item:#1f5f8c; --k-lore:#675e55;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+    --bg:#f5efe3; --panel:#fbf7ee; --panel-2:#efe7d6; --ink:#2a2521; --muted:#675e55;
+    --accent:#8f5410; --accent-dim:#c8a56f; --accent-ink:#fbf7ee; --line:#d9cdb8;
+    --mention:#8f5410; --shared:#8a6a3a;
+    --badge-bg:#e8d6b4; --badge-ink:#4a3210;
+    --danger:#b3392e; --warn:#8a6200; --ok:#4f7a35;
+    --focus:#6b3a05; --selection:#ead3a6; --scrim:#2a252199;
+    --k-character:#8f5410; --k-place:#4f7a35; --k-faction:#7a3d8c; --k-item:#1f5f8c; --k-lore:#675e55;
+  }
+}
+/* Theme choice values in localStorage "yonro.theme": "dark" (default) | "light" | "system". For "system", theme.js sets data-theme from matchMedia and listens for changes. */
