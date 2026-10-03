@@ -25,7 +25,9 @@ pub use crate::uicomponents::{
     UIComponent, View, WordCount,
 };
 pub use yonro_core::{
-    manuscript::{Manuscript, NodeKind}, MarkDownSyntaxHighlighter, RustSyntaxHighlighter, SearchResultHighlighter, SyntaxHighlighter,
+    manuscript::{Manuscript, NodeKind},
+    lore::LoreBook,
+    MarkDownSyntaxHighlighter, RustSyntaxHighlighter, SearchResultHighlighter, SyntaxHighlighter,
     TextSyntaxHighlighter,
 };
 
@@ -79,6 +81,10 @@ pub struct Editor {
     /// Scenes. Rendered by the outline sidebar; scene word counts sync here
     /// from live buffers.
     manuscript: Manuscript,
+
+    /// World bible for `@mentions` (`PLAN.md Phase 4.5`): characters, places
+    /// and lore, auto-seeded from scene POVs/settings as structure is added.
+    lore: LoreBook,
 }
 
 impl Editor {
@@ -176,6 +182,7 @@ impl Editor {
             last_z_press: None,
             clipboard: SystemClipboard::new(),
             manuscript,
+            lore: LoreBook::new(),
         };
 
         editor.handle_resize_command(terminal_size);
@@ -1195,6 +1202,8 @@ impl Editor {
         };
         match result {
             Ok(new_id) => {
+                // New POVs/settings become @-completable entities (deduped).
+                self.lore.seed_from_manuscript(&self.manuscript);
                 if let Some(sidebar_id) = sidebar_id {
                     if let Some(pane) = self.pane_manager.get_pane_mut(sidebar_id) {
                         if let PaneContent::Plugin(component) = &mut pane.content {
