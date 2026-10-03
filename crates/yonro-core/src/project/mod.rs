@@ -71,6 +71,8 @@ pub enum ProjectError {
     Structure(String),
     /// Filesystem or serialization failure (message already includes the file).
     Io(String),
+    /// Lore entity failure (readable error message).
+    Lore(String),
 }
 
 impl fmt::Display for ProjectError {
@@ -84,7 +86,9 @@ impl fmt::Display for ProjectError {
                 "unknown node kind {kind:?}: expected act, chapter, or scene"
             ),
             Self::EmptyTitle => write!(formatter, "title cannot be empty"),
-            Self::Structure(message) | Self::Io(message) => write!(formatter, "{message}"),
+            Self::Structure(message) | Self::Io(message) | Self::Lore(message) => {
+                write!(formatter, "{message}")
+            }
         }
     }
 }
@@ -556,6 +560,51 @@ impl Project {
         }
         None
     }
+
+    /// Add a lore entity and persist immediately.
+    ///
+    /// # Errors
+    /// `BadKind`, `Lore` on duplicate/empty name, or `Io` on save.
+    pub fn add_entity(&mut self, kind: &str, name: &str) -> Result<usize, ProjectError> {
+        let parsed_kind = super::lore::EntityKind::parse(kind)
+            .ok_or_else(|| ProjectError::BadKind(kind.to_string()))?;
+        let id = self
+            .lore
+            .add(parsed_kind, name)
+            .map_err(|err| ProjectError::Lore(super::lore::lore_error_message(&err)))?;
+        self.save()?;
+        Ok(id)
+    }
+
+    /// Update a lore entity's name, aliases, and/or sheet and persist immediately.
+    ///
+    /// # Errors
+    /// `Lore` on duplicate name/alias or missing entity, or `Io` on save.
+    pub fn update_entity(
+        &mut self,
+        id: usize,
+        name: Option<&str>,
+        aliases: Option<&[String]>,
+        sheet: Option<&str>,
+    ) -> Result<(), ProjectError> {
+        self.lore
+            .update(id, name, aliases, sheet)
+            .map_err(|err| ProjectError::Lore(super::lore::lore_error_message(&err)))?;
+        self.save()?;
+        Ok(())
+    }
+
+    /// Remove a lore entity and persist immediately.
+    ///
+    /// # Errors
+    /// `Lore` on unknown/inactive entity, or `Io` on save.
+    pub fn remove_entity(&mut self, id: usize) -> Result<(), ProjectError> {
+        self.lore
+            .remove(id)
+            .map_err(|err| ProjectError::Lore(super::lore::lore_error_message(&err)))?;
+        self.save()?;
+        Ok(())
+    }
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), ProjectError> {
@@ -961,6 +1010,60 @@ mod tests {
             project.remove_node(999),
             Err(ProjectError::UnknownNode(999))
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn lore_entity_mutations_persist_and_validate() {
+        let dir = unique_dir("lore_mutations");
+        let mut project = sample_project(&dir);
+        project.save().unwrap();
+
+        // Add
+        let id = project.add_entity("character", "Corin").unwrap();
+        assert_eq!(project.lore.get(id).unwrap().name, "Corin");
+
+        // Duplicate rejection
+        assert_eq!(
+            project
+                .add_entity("character", "corin")
+                .unwrap_err()
+                .to_string(),
+            "name already in use: corin"
+        );
+        // Bad kind rejection
+        assert_eq!(
+            project.add_entity("spaceship", "Apollo").unwrap_err(),
+            ProjectError::BadKind("spaceship".to_string())
+        );
+
+        // Update
+        project
+            .update_entity(
+                id,
+                Some("Corin the Bold"),
+                Some(&["Bold Corin".to_string()]),
+                Some("Protagonist."),
+            )
+            .unwrap();
+        assert_eq!(project.lore.get(id).unwrap().name, "Corin the Bold");
+        assert_eq!(project.lore.get(id).unwrap().aliases, vec!["Bold Corin"]);
+        assert_eq!(project.lore.get(id).unwrap().sheet, "Protagonist.");
+
+        // Reload from disk to verify persistence
+        let reloaded = Project::load(&dir);
+        let reloaded_entity = reloaded.lore.get(id).unwrap();
+        assert_eq!(reloaded_entity.name, "Corin the Bold");
+        assert_eq!(reloaded_entity.aliases, vec!["Bold Corin"]);
+        assert_eq!(reloaded_entity.sheet, "Protagonist.");
+
+        // Remove
+        project.remove_entity(id).unwrap();
+        assert!(project.lore.get(id).is_none());
+
+        let reloaded2 = Project::load(&dir);
+        assert!(reloaded2.lore.get(id).is_none());
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

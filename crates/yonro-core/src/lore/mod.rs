@@ -23,6 +23,22 @@ pub enum EntityKind {
     Lore,
 }
 
+impl EntityKind {
+    /// Parse a frontend `kind` string (`"character"`, `"place"`,
+    /// `"faction"`, `"item"`, `"lore"`; case-insensitive, trimmed).
+    #[must_use]
+    pub fn parse(kind: &str) -> Option<Self> {
+        match kind.trim().to_lowercase().as_str() {
+            "character" => Some(Self::Character),
+            "place" => Some(Self::Place),
+            "faction" => Some(Self::Faction),
+            "item" => Some(Self::Item),
+            "lore" => Some(Self::Lore),
+            _ => None,
+        }
+    }
+}
+
 /// One named world element with an optional lore sheet.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Entity {
@@ -43,6 +59,8 @@ pub enum LoreError {
     InactiveEntity(EntityId),
     EmptyName,
     DuplicateName(String),
+    /// `kind` was not a known entity kind.
+    BadKind(String),
 }
 
 impl fmt::Display for LoreError {
@@ -54,11 +72,30 @@ impl fmt::Display for LoreError {
             Self::DuplicateName(name) => {
                 write!(formatter, "lore entity {name:?} already exists")
             }
+            Self::BadKind(kind) => write!(
+                formatter,
+                "unknown entity kind {kind:?}: expected character, place, faction, item, or lore"
+            ),
         }
     }
 }
 
 impl std::error::Error for LoreError {}
+
+/// Human-readable error for the GUI (`DuplicateName` names the clash:
+/// `"name already in use: Mara"`).
+#[must_use]
+pub fn lore_error_message(err: &LoreError) -> String {
+    match err {
+        LoreError::DuplicateName(name) => format!("name already in use: {name}"),
+        LoreError::EmptyName => "name cannot be empty".to_string(),
+        LoreError::UnknownEntity(id) => format!("unknown lore entity {id}"),
+        LoreError::InactiveEntity(id) => format!("removed lore entity {id}"),
+        LoreError::BadKind(kind) => {
+            format!("unknown kind {kind:?}: expected character, place, faction, item, or lore")
+        }
+    }
+}
 
 /// An `@mention` span inside draft text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,6 +198,98 @@ impl LoreBook {
             Some(_) => Err(LoreError::InactiveEntity(id)),
             None => Err(LoreError::UnknownEntity(id)),
         }
+    }
+
+    /// Rename an entity (shorthand for `update` with only a name).
+    ///
+    /// # Errors
+    /// `UnknownEntity`/`InactiveEntity`, `EmptyName`, `DuplicateName`.
+    pub fn rename(&mut self, id: EntityId, name: &str) -> Result<(), LoreError> {
+        self.update(id, Some(name), None, None)
+    }
+
+    /// Replace an entity's alias list wholesale (shorthand for `update`).
+    ///
+    /// # Errors
+    /// `UnknownEntity`/`InactiveEntity`, `EmptyName`, `DuplicateName`.
+    pub fn set_aliases(&mut self, id: EntityId, aliases: &[String]) -> Result<(), LoreError> {
+        self.update(id, None, Some(aliases), None)
+    }
+
+    /// Update an entity's name, aliases, and/or sheet in one atomic step:
+    /// every `Some(...)` field is validated first, so a failure changes
+    /// nothing. `None` leaves that field untouched; `Some(list)` replaces
+    /// the whole alias list.
+    ///
+    /// # Errors
+    /// `UnknownEntity`/`InactiveEntity`, `EmptyName` for blank names or
+    /// aliases, `DuplicateName` on any collision (case-insensitive,
+    /// including an alias matching the entity's own new name).
+    pub fn update(
+        &mut self,
+        id: EntityId,
+        name: Option<&str>,
+        aliases: Option<&[String]>,
+        sheet: Option<&str>,
+    ) -> Result<(), LoreError> {
+        let current = match self.entities.get(id) {
+            Some(entity) if entity.alive => entity.clone(),
+            Some(_) => return Err(LoreError::InactiveEntity(id)),
+            None => return Err(LoreError::UnknownEntity(id)),
+        };
+        // Validate the new name (if any) against every other live entity.
+        let next_name: String = match name {
+            Some(raw) => {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    return Err(LoreError::EmptyName);
+                }
+                if self
+                    .claimed(Some(id))
+                    .iter()
+                    .any(|taken| taken == &trimmed.to_lowercase())
+                {
+                    return Err(LoreError::DuplicateName(trimmed.to_string()));
+                }
+                trimmed.to_string()
+            }
+            None => current.name.clone(),
+        };
+        // Validate the new alias list (if any): trimmed, non-empty,
+        // unique within itself, and colliding with nothing else —
+        // including the entity's own (possibly new) name.
+        let next_aliases: Vec<String> = match aliases {
+            Some(list) => {
+                let mut clean: Vec<String> = Vec::new();
+                for raw in list {
+                    let trimmed = raw.trim();
+                    if trimmed.is_empty() {
+                        return Err(LoreError::EmptyName);
+                    }
+                    if clean.iter().any(|seen| Self::same_name(seen, trimmed))
+                        || Self::same_name(&next_name, trimmed)
+                        || self
+                            .claimed(Some(id))
+                            .iter()
+                            .any(|taken| taken == &trimmed.to_lowercase())
+                    {
+                        return Err(LoreError::DuplicateName(trimmed.to_string()));
+                    }
+                    clean.push(trimmed.to_string());
+                }
+                clean
+            }
+            None => current.aliases.clone(),
+        };
+        // All checks passed: apply.
+        if let Some(entity) = self.entities.get_mut(id) {
+            entity.name = next_name;
+            entity.aliases = next_aliases;
+            if let Some(text) = sheet {
+                entity.sheet = text.to_string();
+            }
+        }
+        Ok(())
     }
 
     /// Replace an entity's lore sheet.
@@ -492,5 +621,56 @@ mod tests {
         // Second seed imports nothing new.
         assert_eq!(book.seed_from_manuscript(&ms), 0);
         assert_eq!(book.live_count(), 2);
+    }
+
+    #[test]
+    fn update_validates_and_applies() {
+        let mut book = stocked();
+        let id = book.resolve("Mara Stone").unwrap().id;
+        book.update(
+            id,
+            Some("Mara the Bold"),
+            Some(&["Bold Mara".to_string()]),
+            Some("A legendary explorer."),
+        )
+        .unwrap();
+        let entity = book.get(id).unwrap();
+        assert_eq!(entity.name, "Mara the Bold");
+        assert_eq!(entity.aliases, vec!["Bold Mara"]);
+        assert_eq!(entity.sheet, "A legendary explorer.");
+
+        // Duplicate name rejection against other entity
+        assert_eq!(
+            book.update(id, Some("Mill farm"), None, None),
+            Err(LoreError::DuplicateName("Mill farm".to_string()))
+        );
+        // Duplicate alias rejection against own name
+        assert_eq!(
+            book.update(id, None, Some(&["Mara the Bold".to_string()]), None),
+            Err(LoreError::DuplicateName("Mara the Bold".to_string()))
+        );
+        // Empty name rejection
+        assert_eq!(
+            book.update(id, Some("   "), None, None),
+            Err(LoreError::EmptyName)
+        );
+    }
+
+    #[test]
+    fn lore_error_formatting_and_kind_parse() {
+        assert_eq!(
+            lore_error_message(&LoreError::DuplicateName("Mara".to_string())),
+            "name already in use: Mara"
+        );
+        assert_eq!(
+            lore_error_message(&LoreError::EmptyName),
+            "name cannot be empty"
+        );
+        assert_eq!(EntityKind::parse("Character"), Some(EntityKind::Character));
+        assert_eq!(EntityKind::parse(" place "), Some(EntityKind::Place));
+        assert_eq!(EntityKind::parse("faction"), Some(EntityKind::Faction));
+        assert_eq!(EntityKind::parse("item"), Some(EntityKind::Item));
+        assert_eq!(EntityKind::parse("lore"), Some(EntityKind::Lore));
+        assert_eq!(EntityKind::parse("invalid"), None);
     }
 }

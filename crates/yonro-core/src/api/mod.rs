@@ -556,7 +556,11 @@ mod tests {
     }
 
     fn detail_project() -> (Project, usize) {
-        let dir = std::env::temp_dir().join(format!("yonro-api-detail-{}", std::process::id()));
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("yonro-api-detail-{}-{id}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let (ms, lore) = seed_story();
