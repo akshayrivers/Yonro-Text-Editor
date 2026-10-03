@@ -417,25 +417,39 @@ async function sweepRecoveryTick() {
   }
 }
 
+function adoptOpened(opened) {
+  docs.set(opened.buffer_id, { path: opened.path, dirty: opened.stats.dirty });
+  docCache.set(opened.buffer_id, opened.text);
+  docStats.set(opened.buffer_id, opened.stats);
+  activeDoc = opened.buffer_id;
+  applyingRemote = true;
+  editor.value = opened.text;
+  applyingRemote = false;
+  syncPending = false;
+  renderTabs();
+  renderStatus(opened.stats);
+  show('write');
+  if (typeof refreshBinder === 'function') refreshBinder();
+  if (opened.path) maybeOfferRecovery(opened.buffer_id, opened.path);
+}
+
 async function openDoc(path) {
   try {
     await flushSync();
     const opened = await core.openFile(path);
-    docs.set(opened.buffer_id, { path: opened.path, dirty: opened.stats.dirty });
-    docCache.set(opened.buffer_id, opened.text);
-    docStats.set(opened.buffer_id, opened.stats);
-    activeDoc = opened.buffer_id;
-    applyingRemote = true;
-    editor.value = opened.text;
-    applyingRemote = false;
-    syncPending = false;
-    renderTabs();
-    renderStatus(opened.stats);
-    show('write');
-    if (typeof refreshBinder === 'function') refreshBinder();
-    if (opened.path) maybeOfferRecovery(opened.buffer_id, opened.path);
+    adoptOpened(opened);
   } catch (err) {
     setMessage(`could not open: ${err}`, { error: true });
+  }
+}
+
+async function openSceneDoc(id) {
+  try {
+    await flushSync();
+    const opened = await core.openScene(id);
+    adoptOpened(opened);
+  } catch (err) {
+    setMessage(`could not open scene: ${err}`, { error: true });
   }
 }
 

@@ -27,42 +27,14 @@ for (const btn of document.querySelectorAll('#topnav [data-view]')) {
   btn.addEventListener('click', () => show(btn.dataset.view));
 }
 
-/* ---------- binder (read-only outline tree + files; editing lands later) --- */
+/* ---------- binder (outline tree; full controller lives in outline.js) ------ */
 async function refreshBinder() {
-  const box = document.getElementById('binder-outline');
-  try {
-    const outline = await core.outline();
-    const title = document.getElementById('project-title');
-    if (title) title.textContent = outline.title || 'untitled';
-    if (!box) return;
-    const kids = (outline.children || []).map((k) => renderNode(k, true)).join('');
-    if (!kids) {
-      box.innerHTML = '<p class="muted">no scenes yet. add acts in the terminal outline.</p>';
-      return;
-    }
-    box.innerHTML = kids;
-    box.querySelectorAll('[data-file]').forEach((row) => {
-      row.tabIndex = 0;
-      row.setAttribute('role', 'button');
-      row.addEventListener('click', () => {
-        openDoc(row.dataset.file);
-        closeDrawersOnNarrow();
-      });
-      row.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          openDoc(row.dataset.file);
-          closeDrawersOnNarrow();
-        }
-      });
-    });
-  } catch (err) {
-    if (box) box.innerHTML = `<p class="muted">binder unavailable: ${esc(err)}</p>`;
+  if (typeof loadBinder === 'function') {
+    await loadBinder();
+    return;
   }
-}
-
-function laterMsg(what) {
-  setMessage(`${what} lands after P1 — outline editing stays in the terminal for now.`);
+  const box = document.getElementById('binder-outline');
+  if (box) box.textContent = 'binder loading…';
 }
 
 /* ---------- panels: collapse + draggable widths + drawers ------------------ */
@@ -355,8 +327,12 @@ document.addEventListener('keydown', (e) => {
       toggleInspector();
     } else if (k === 'e') {
       e.preventDefault();
-      const b = document.getElementById('binder');
-      if (b) b.focus();
+      if (document.body.classList.contains('hide-binder')) toggleBinder();
+      const files = document.getElementById('binder-files');
+      if (files) {
+        files.tabIndex = -1;
+        files.focus();
+      }
     } else if (k === 'n') {
       e.preventDefault();
       openDoc(null);
@@ -388,16 +364,6 @@ document.addEventListener('keydown', (e) => {
       e.preventDefault();
       toggleShortcuts();
     }
-  }
-});
-
-/* Binder key hints (TUI parity): navigation works, creation waits for backend. */
-document.addEventListener('keydown', (e) => {
-  const binder = document.getElementById('binder');
-  if (!binder || !binder.contains(document.activeElement)) return;
-  if (e.key === 'a' || e.key === 'c' || e.key === 's' || e.key === 'Delete' || e.key === 'F2') {
-    e.preventDefault();
-    laterMsg('outline editing');
   }
 });
 
