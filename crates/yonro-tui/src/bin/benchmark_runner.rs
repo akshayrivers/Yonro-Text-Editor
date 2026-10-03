@@ -328,7 +328,7 @@ fn main() {
         let mut view = View::default();
         let mut buffer = Buffer::default();
         for ch in "fn test_function_with_long_identifier() { return; }".chars() {
-            view.handle_edit_command(Edit::Insert(ch), &mut buffer);
+            view.handle_edit_command(Edit::Insert(ch), &mut buffer, &mut yonro_tui::MemClipboard::default());
         }
         for _ in 0..50 { view.undo(&mut buffer); }
         for _ in 0..50 { view.redo(&mut buffer); }
@@ -338,8 +338,8 @@ fn main() {
     let mut nav_buf = Buffer::default();
     for i in 0..100 {
         for ch in format!("line {i} code here\n").chars() {
-            if ch == '\n' { nav_view.handle_edit_command(Edit::InsertNewLine, &mut nav_buf); }
-            else { nav_view.handle_edit_command(Edit::Insert(ch), &mut nav_buf); }
+            if ch == '\n' { nav_view.handle_edit_command(Edit::InsertNewLine, &mut nav_buf, &mut yonro_tui::MemClipboard::default()); }
+            else { nav_view.handle_edit_command(Edit::Insert(ch), &mut nav_buf, &mut yonro_tui::MemClipboard::default()); }
         }
     }
     results.push(run_benchmark("View", "cursor_movement across 100 lines", None, duration, || {
@@ -370,6 +370,7 @@ fn main() {
     let mut d_pane = None;
     let mut d_offset = Position::default();
     let mut l_editor: Option<usize> = None;
+    let mut l_clip = yonro_tui::MemClipboard::default();
     let mut reg = HandlerRegistry::default();
     let cmd_down = Command::Move(Move::Down);
 
@@ -391,6 +392,7 @@ fn main() {
             drag_offset: &mut d_offset,
             buffer_changed: None,
             plugin_responses: &mut plugin_responses,
+            clipboard: &mut l_clip,
             last_editor_pane: &mut l_editor,
         };
         let _ = reg.dispatch(&cmd_down, &mut ctx);
@@ -442,7 +444,7 @@ fn main() {
         let _ = buf_ref.search_forward("compute_step_25", Location { line_idx: 0, grapheme_idx: 0 });
 
         let mut buf_mut = b_mgr.get_mut(b_id).unwrap();
-        view.handle_edit_command(Edit::Insert('X'), &mut buf_mut);
+        view.handle_edit_command(Edit::Insert('X'), &mut buf_mut, &mut l_clip);
 
         let mut highlighter = RustSyntaxHighlighter::default();
         for idx in 0..30 {
@@ -489,7 +491,7 @@ fn main() {
                 if let Some(view) = pane.view_mut() {
                     let buf_id = view.buffer_id();
                     if let Some(buf) = b_mgr.get_mut(buf_id) {
-                        view.handle_edit_command(Edit::Insert('A'), buf);
+                        view.handle_edit_command(Edit::Insert('A'), buf, &mut l_clip);
                     }
                 }
             }

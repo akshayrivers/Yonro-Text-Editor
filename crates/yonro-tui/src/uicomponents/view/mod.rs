@@ -112,13 +112,90 @@ impl View {
             self.mark_redraw(true);
         }
     }
-    pub fn handle_edit_command(&mut self, command: Edit, buffer: &mut Buffer) {
+    pub fn handle_edit_command(
+        &mut self,
+        command: Edit,
+        buffer: &mut Buffer,
+        clipboard: &mut dyn crate::clipboard::Clipboard,
+    ) {
         match command {
             Edit::Insert(character) => self.insert_char(character, buffer),
             Edit::Delete => self.delete(buffer),
             Edit::DeleteBackward => self.delete_backward(buffer),
             Edit::InsertNewLine => self.insert_newline(buffer),
+            Edit::Copy => self.copy_current_line(buffer, clipboard),
+            Edit::Cut => self.cut_current_line(buffer, clipboard),
+            Edit::Paste => {
+                self.paste(buffer, clipboard);
+            }
         }
+    }
+
+    /// Copy the current line (text only, no newline) to the clipboard.
+    /// Line-based: the editor has no visual selection model yet.
+    fn copy_current_line(
+        &mut self,
+        buffer: &Buffer,
+        clipboard: &mut dyn crate::clipboard::Clipboard,
+    ) {
+        let text = buffer
+            .get_line(self.text_location.line_idx)
+            .map(|line| line.to_string())
+            .unwrap_or_default();
+        clipboard.set(text);
+        self.mark_redraw(true);
+    }
+
+    /// Cut the current line: copy it, then delete its content and join with
+    /// the next line (unless it is the last). Undoable, one op per grapheme.
+    fn cut_current_line(
+        &mut self,
+        buffer: &mut Buffer,
+        clipboard: &mut dyn crate::clipboard::Clipboard,
+    ) {
+        self.copy_current_line(buffer, clipboard);
+        let line_idx = self.text_location.line_idx;
+        self.text_location = Location {
+            line_idx,
+            grapheme_idx: 0,
+        };
+        let count = buffer.grapheme_count(line_idx);
+        for _ in 0..count {
+            self.delete(buffer);
+        }
+        // Remove the emptied line itself (join), unless it is the last one.
+        self.text_location = Location {
+            line_idx,
+            grapheme_idx: 0,
+        };
+        self.delete(buffer);
+        self.scroll_text_location_into_view(buffer);
+        self.mark_redraw(true);
+    }
+
+    /// Insert clipboard contents at the cursor (`\n` splits lines, `\r`
+    /// dropped so CRLF pastes cleanly). Returns false when empty.
+    fn paste(
+        &mut self,
+        buffer: &mut Buffer,
+        clipboard: &mut dyn crate::clipboard::Clipboard,
+    ) -> bool {
+        let Some(text) = clipboard.get() else {
+            return false;
+        };
+        if text.is_empty() {
+            return false;
+        }
+        for ch in text.chars() {
+            if ch == '\n' {
+                self.insert_newline(buffer);
+            } else if ch != '\r' {
+                self.insert_char(ch, buffer);
+            }
+        }
+        self.scroll_text_location_into_view(buffer);
+        self.mark_redraw(true);
+        true
     }
     pub fn handle_move_command(&mut self, command: Move, buffer: &Buffer) {
         // This match moves the positon, but does not check for all boundaries.
@@ -923,9 +1000,9 @@ mod tests {
         });
         for ch in text.chars() {
             if ch == '\n' {
-                view.handle_edit_command(Edit::InsertNewLine, &mut buffer);
+                view.handle_edit_command(Edit::InsertNewLine, &mut buffer, &mut crate::clipboard::MemClipboard::default());
             } else {
-                view.handle_edit_command(Edit::Insert(ch), &mut buffer);
+                view.handle_edit_command(Edit::Insert(ch), &mut buffer, &mut crate::clipboard::MemClipboard::default());
             }
         }
         view.undo_stack.clear();
@@ -941,7 +1018,7 @@ mod tests {
     fn undo_single_insert() {
         let mut view = View::default();
         let mut buffer = Buffer::default();
-        view.handle_edit_command(Edit::Insert('a'), &mut buffer);
+        view.handle_edit_command(Edit::Insert('a'), &mut buffer, &mut crate::clipboard::MemClipboard::default());
         assert_eq!(buffer.grapheme_count(0), 1);
 
         view.undo(&mut buffer);
@@ -952,7 +1029,7 @@ mod tests {
     fn redo_single_insert() {
         let mut view = View::default();
         let mut buffer = Buffer::default();
-        view.handle_edit_command(Edit::Insert('a'), &mut buffer);
+        view.handle_edit_command(Edit::Insert('a'), &mut buffer, &mut crate::clipboard::MemClipboard::default());
         view.undo(&mut buffer);
         view.redo(&mut buffer);
         assert_eq!(buffer.grapheme_count(0), 1);
@@ -963,7 +1040,7 @@ mod tests {
         let mut view = View::default();
         let mut buffer = Buffer::default();
         for ch in "hello".chars() {
-            view.handle_edit_command(Edit::Insert(ch), &mut buffer);
+            view.handle_edit_command(Edit::Insert(ch), &mut buffer, &mut crate::clipboard::MemClipboard::default());
         }
         assert_eq!(buffer.grapheme_count(0), 5);
 
@@ -978,9 +1055,9 @@ mod tests {
         let mut view = View::default();
         let mut buffer = Buffer::default();
         for ch in "hello".chars() {
-            view.handle_edit_command(Edit::Insert(ch), &mut buffer);
+            view.handle_edit_command(Edit::Insert(ch), &mut buffer, &mut crate::clipboard::MemClipboard::default());
         }
-        view.handle_edit_command(Edit::InsertNewLine, &mut buffer);
+        view.handle_edit_command(Edit::InsertNewLine, &mut buffer, &mut crate::clipboard::MemClipboard::default());
         assert_eq!(buffer.height(), 2);
 
         view.undo(&mut buffer);
@@ -991,7 +1068,7 @@ mod tests {
     #[test]
     fn delete_undo_redo() {
         let (mut view, mut buffer) = setup_view_and_buffer("hi");
-        view.handle_edit_command(Edit::Delete, &mut buffer);
+        view.handle_edit_command(Edit::Delete, &mut buffer, &mut crate::clipboard::MemClipboard::default());
         assert_eq!(buffer.grapheme_count(0), 1);
 
         view.undo(&mut buffer);
@@ -1006,7 +1083,7 @@ mod tests {
         let mut view = View::default();
         let mut buffer = Buffer::default();
         for ch in "hello".chars() {
-            view.handle_edit_command(Edit::Insert(ch), &mut buffer);
+            view.handle_edit_command(Edit::Insert(ch), &mut buffer, &mut crate::clipboard::MemClipboard::default());
             view.last_insert_time = Some(std::time::Instant::now());
             view.last_insert_location = Some(view.text_location);
         }
@@ -1157,7 +1234,6 @@ mod tests {
         assert_eq!(view.scroll_offset.row, 9);
         assert!(!view.needs_redraw());
     }
-
     #[test]
     fn typewriter_near_top_clamps_to_zero() {
         let text = (0..30).map(|_| "x").collect::<Vec<_>>().join("\n");
@@ -1168,5 +1244,81 @@ mod tests {
         };
         view.apply_typewriter(&buffer);
         assert_eq!(view.scroll_offset.row, 0);
+    }
+
+    // Clipboard tests (`PLAN.md Phase 4.4`, line-based: no selection model).
+    #[test]
+    fn copy_line_preserves_buffer() {
+        let (mut view, mut buffer) = setup_view_and_buffer("hello\nworld");
+        let mut clip = crate::clipboard::MemClipboard::default();
+        view.text_location = Location {
+            line_idx: 1,
+            grapheme_idx: 0,
+        };
+        view.handle_edit_command(Edit::Copy, &mut buffer, &mut clip);
+        assert_eq!(clip.text(), Some("world"));
+        assert_eq!(buffer.height(), 2);
+    }
+
+    #[test]
+    fn cut_first_line_joins_next() {
+        let (mut view, mut buffer) = setup_view_and_buffer("hello\nworld");
+        let mut clip = crate::clipboard::MemClipboard::default();
+        view.text_location = Location {
+            line_idx: 0,
+            grapheme_idx: 2,
+        };
+        view.handle_edit_command(Edit::Cut, &mut buffer, &mut clip);
+        assert_eq!(clip.text(), Some("hello"));
+        assert_eq!(buffer.height(), 1);
+        assert_eq!(buffer.get_line(0).unwrap().to_string(), "world");
+    }
+
+    #[test]
+    fn cut_last_line_leaves_empty_line() {
+        let (mut view, mut buffer) = setup_view_and_buffer("hello\nworld");
+        let mut clip = crate::clipboard::MemClipboard::default();
+        view.text_location = Location {
+            line_idx: 1,
+            grapheme_idx: 0,
+        };
+        view.handle_edit_command(Edit::Cut, &mut buffer, &mut clip);
+        assert_eq!(clip.text(), Some("world"));
+        assert_eq!(buffer.height(), 2);
+        assert_eq!(buffer.get_line(1).unwrap().to_string(), "");
+    }
+
+    #[test]
+    fn paste_inserts_inline() {
+        let (mut view, mut buffer) = setup_view_and_buffer("abcd");
+        let mut clip = crate::clipboard::MemClipboard::with_text("XY");
+        view.text_location = Location {
+            line_idx: 0,
+            grapheme_idx: 1,
+        };
+        view.handle_edit_command(Edit::Paste, &mut buffer, &mut clip);
+        assert_eq!(buffer.get_line(0).unwrap().to_string(), "aXYbcd");
+    }
+
+    #[test]
+    fn paste_splits_lines() {
+        let (mut view, mut buffer) = setup_view_and_buffer("abcd");
+        let mut clip = crate::clipboard::MemClipboard::with_text("X\nY");
+        view.text_location = Location {
+            line_idx: 0,
+            grapheme_idx: 1,
+        };
+        view.handle_edit_command(Edit::Paste, &mut buffer, &mut clip);
+        assert_eq!(buffer.height(), 2);
+        assert_eq!(buffer.get_line(0).unwrap().to_string(), "aX");
+        assert_eq!(buffer.get_line(1).unwrap().to_string(), "Ybcd");
+    }
+
+    #[test]
+    fn paste_empty_clipboard_is_noop() {
+        let (mut view, mut buffer) = setup_view_and_buffer("abcd");
+        let mut clip = crate::clipboard::MemClipboard::default();
+        assert!(!view.paste(&mut buffer, &mut clip));
+        assert_eq!(buffer.get_line(0).unwrap().to_string(), "abcd");
     }
 }

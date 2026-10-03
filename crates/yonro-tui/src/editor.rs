@@ -11,6 +11,7 @@ use yonro_core::{
 };
 
 pub use crate::command_dispatcher::{EditorContext, HandlerRegistry, PromptType};
+pub use crate::clipboard::SystemClipboard;
 pub use crate::layout::{
     DocTab, LayoutNode, LayoutTree, Pane, PaneContent, PaneManager, SplitDirection, SplitHandle, SidebarKind,
 };
@@ -70,6 +71,9 @@ pub struct Editor {
     sidebar_was_visible: bool,
     /// Last `Ctrl+Z` press (double-press toggles Zen; single still undoes).
     last_z_press: Option<Instant>,
+
+    /// System clipboard for Copy/Cut/Paste (`PLAN.md Phase 4.4`).
+    clipboard: SystemClipboard,
 
     /// Story structure (`PLAN.md Phase 4.3`): Project → Acts → Chapters →
     /// Scenes. Rendered by the outline sidebar; scene word counts sync here
@@ -170,12 +174,13 @@ impl Editor {
             zen_mode: false,
             sidebar_was_visible: false,
             last_z_press: None,
+            clipboard: SystemClipboard::new(),
             manuscript,
         };
 
         editor.handle_resize_command(terminal_size);
         editor.update_message(
-            "HELP: Ctrl-F = find | Ctrl-S = save | Ctrl-Q = quit | Ctrl-E = explorer | Ctrl-O = outline | F11/Ctrl-ZZ = zen",
+            "HELP: Ctrl-F = find | Ctrl-S = save | Ctrl-Q = quit | Ctrl-E = explorer | Ctrl-O = outline | F11/Ctrl-ZZ = zen | Ctrl-C/X/V = clip",
         );
 
         let args: Vec<String> = env::args().collect();
@@ -347,6 +352,7 @@ impl Editor {
             drag_offset: &mut self.drag_offset,
             buffer_changed: None,
             plugin_responses: &mut self.pending_plugin_responses,
+            clipboard: &mut self.clipboard,
             last_editor_pane: &mut self.last_editor_pane,
         }
     }

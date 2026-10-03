@@ -68,6 +68,14 @@ pub fn key_to_command(key: KeyInput) -> Result<Command, String> {
     //Ctrl combos
     if modifiers.ctrl && !modifiers.shift && !modifiers.alt {
         if let KeyCode::Char(c) = key_code {
+            // Clipboard (`PLAN.md Phase 4.4`): plain `Edit` commands.
+            // Raw mode already disables SIGINT, so `Ctrl+C` is safe to take.
+            match c {
+                'c' => return Ok(Command::Edit(Edit::Copy)),
+                'x' => return Ok(Command::Edit(Edit::Cut)),
+                'v' => return Ok(Command::Edit(Edit::Paste)),
+                _ => {}
+            }
             let system = match c {
                 'q' => System::Quit,
                 's' => System::Save,

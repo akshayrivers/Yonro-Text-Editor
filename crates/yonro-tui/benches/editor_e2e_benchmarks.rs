@@ -8,6 +8,7 @@ use yonro_tui::{
 };
 use yonro_core::highlighter::{RustSyntaxHighlighter, SyntaxHighlighter};
 use yonro_tui::prelude::*;
+use yonro_tui::MemClipboard;
 
 fn simulate_e2e_editing_session() {
     let screen_rect = Rect {
@@ -39,7 +40,7 @@ fn simulate_e2e_editing_session() {
 
     // 3. Edit at target location
     let mut buf_mut = buffer_manager.get_mut(buffer_id).unwrap();
-    view.handle_edit_command(Edit::Insert('X'), &mut buf_mut);
+    view.handle_edit_command(Edit::Insert('X'), &mut buf_mut, &mut MemClipboard::default());
 
     // 4. Highlight viewport
     let mut highlighter = RustSyntaxHighlighter::default();
@@ -94,7 +95,7 @@ fn simulate_multi_pane_workflow() {
             if let Some(view) = pane.view_mut() {
                 let buf_id = view.buffer_id();
                 if let Some(buf) = buffer_manager.get_mut(buf_id) {
-                    view.handle_edit_command(Edit::Insert('A'), buf);
+                    view.handle_edit_command(Edit::Insert('A'), buf, &mut MemClipboard::default());
                 }
             }
         }

@@ -6,6 +6,7 @@ use yonro_tui::{
     uicomponents::{BufferBar, CommandBar, MessageBar, UIComponent, View},
 };
 use yonro_tui::prelude::*;
+use yonro_tui::MemClipboard;
 
 fn create_view_with_buffer(lines_count: usize) -> (View, Buffer) {
     let mut view = View::default();
@@ -18,9 +19,9 @@ fn create_view_with_buffer(lines_count: usize) -> (View, Buffer) {
     for i in 0..lines_count {
         for ch in format!("fn line_{i}() {{ compute_data({i}); }}\n").chars() {
             if ch == '\n' {
-                view.handle_edit_command(Edit::InsertNewLine, &mut buffer);
+                view.handle_edit_command(Edit::InsertNewLine, &mut buffer, &mut MemClipboard::default());
             } else {
-                view.handle_edit_command(Edit::Insert(ch), &mut buffer);
+                view.handle_edit_command(Edit::Insert(ch), &mut buffer, &mut MemClipboard::default());
             }
         }
     }
@@ -41,7 +42,7 @@ fn bench_view_operations(c: &mut Criterion) {
 
             // Type 50 characters
             for ch in "fn test_function_with_long_identifier() { return; }".chars() {
-                view.handle_edit_command(Edit::Insert(ch), &mut buffer);
+                view.handle_edit_command(Edit::Insert(ch), &mut buffer, &mut MemClipboard::default());
             }
 
             // Undo all

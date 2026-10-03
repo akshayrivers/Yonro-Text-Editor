@@ -13,6 +13,7 @@
 //! layout/panes, rendering components, and the editor event loop.
 
 pub mod command_dispatcher;
+pub mod clipboard;
 pub mod editor;
 pub mod input;
 pub mod layout;
@@ -24,6 +25,7 @@ pub mod uicomponents;
 pub use yonro_core::prelude;
 
 pub use editor::Editor;
+pub use clipboard::{Clipboard, MemClipboard, SystemClipboard};
 pub use uicomponents::view::EditOperation;
 pub use yonro_core::{
     AnnotatedString, Annotation, AnnotationType, Buffer, BufferManager, Command, DocumentStatus,

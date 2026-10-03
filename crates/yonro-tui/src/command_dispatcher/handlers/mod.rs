@@ -154,7 +154,7 @@ fn handle_search_prompt(command: &Command, ctx: &mut EditorContext) {
         }
 
         Command::Edit(edit_cmd) => {
-            ctx.command_bar.handle_edit_command(*edit_cmd);
+            ctx.command_bar.handle_edit_command(*edit_cmd, ctx.clipboard);
             let query = ctx.command_bar.value();
 
             let buffer_id = ctx
@@ -236,7 +236,7 @@ fn handle_save_prompt(command: &Command, ctx: &mut EditorContext) {
         }
 
         Command::Edit(edit_cmd) => {
-            ctx.command_bar.handle_edit_command(*edit_cmd);
+            ctx.command_bar.handle_edit_command(*edit_cmd, ctx.clipboard);
         }
 
         _ => {}
@@ -258,7 +258,7 @@ fn handle_pane_prompt(command: &Command, ctx: &mut EditorContext) {
         }
 
         Command::Edit(edit_cmd) => {
-            ctx.command_bar.handle_edit_command(*edit_cmd);
+            ctx.command_bar.handle_edit_command(*edit_cmd, ctx.clipboard);
         }
 
         _ => {}

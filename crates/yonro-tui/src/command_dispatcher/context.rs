@@ -4,6 +4,7 @@ use crate::{
     uicomponents::{CommandBar, MessageBar, PaneBar, UIComponent},
 };
 use yonro_core::buffers::BufferManager;
+use crate::clipboard::Clipboard;
 use crate::prelude::*;
 
 /// Thin view into Editor's state for handlers
@@ -25,6 +26,8 @@ pub struct EditorContext<'a> {
 
     pub buffer_changed: Option<usize>,
     pub plugin_responses: &'a mut Vec<PluginResponse>,
+    /// System clipboard (Copy/Cut/Paste target).
+    pub clipboard: &'a mut dyn Clipboard,
     /// Tracks the last focused text editor (for explorer file opens).
     /// Mirrors `Editor::last_editor_pane`; handlers must keep it fresh.
     pub last_editor_pane: &'a mut Option<usize>,

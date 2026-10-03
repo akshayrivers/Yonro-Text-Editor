@@ -1,3 +1,4 @@
+use crate::clipboard::Clipboard;
 use crate::terminal::Terminal;
 use yonro_core::{command::Edit, Line};
 use super::UIComponent;
@@ -15,13 +16,27 @@ pub struct CommandBar {
 }
 
 impl CommandBar {
-    pub fn handle_edit_command(&mut self, command: Edit) {
+    pub fn handle_edit_command(&mut self, command: Edit, clipboard: &mut dyn Clipboard) {
         match command {
             Edit::Insert(character) => self.value.append_char(character),
 
             Edit::Delete | Edit::InsertNewLine => {}
 
             Edit::DeleteBackward => self.value.delete_last(),
+
+            // Prompts hold no buffer: copy/cut are no-ops, paste inserts the
+            // first clipboard line.
+            Edit::Copy | Edit::Cut => {}
+            Edit::Paste => {
+                if let Some(text) = clipboard.get() {
+                    for ch in text.chars() {
+                        if ch == '\n' || ch == '\r' {
+                            break;
+                        }
+                        self.value.append_char(ch);
+                    }
+                }
+            }
         }
 
         self.mark_redraw(true);
