@@ -277,3 +277,87 @@ function refreshViewsAfterMeta() {
   if (visible('view-timeline') && typeof loadTimeline === 'function') loadTimeline();
   if (visible('view-lore') && typeof loadLore === 'function') loadLore();
 }
+
+async function showEntityInspector(id, graphNode) {
+  inspectorId = id;
+  const box = document.getElementById('inspector');
+  if (!box) return;
+  try {
+    const detail = await core.getEntity(id);
+    if (inspectorId !== id) return;
+    renderEntityInspector(box, detail, graphNode && graphNode.neighbors ? graphNode.neighbors : null);
+  } catch (err) {
+    inspectorPlaceholder(`entity unavailable: ${err}`);
+  }
+}
+
+function renderEntityInspector(box, detail, neighbors) {
+  box.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'inspector-entity-head';
+
+  const title = document.createElement('h3');
+  title.textContent = detail.name;
+  head.appendChild(title);
+
+  const badge = document.createElement('span');
+  badge.className = `badge k-${detail.kind}`;
+  badge.textContent = detail.kind;
+  head.appendChild(badge);
+
+  box.appendChild(head);
+
+  if (detail.aliases && detail.aliases.length > 0) {
+    const aliases = document.createElement('p');
+    aliases.className = 'muted';
+    aliases.textContent = `also: ${detail.aliases.join(', ')}`;
+    box.appendChild(aliases);
+  }
+
+  const sheetHeading = document.createElement('div');
+  sheetHeading.className = 'inspector-subhead';
+  sheetHeading.textContent = 'lore sheet';
+  box.appendChild(sheetHeading);
+
+  const sheetText = document.createElement('p');
+  sheetText.className = 'inspector-sheet-prose';
+  sheetText.textContent = detail.sheet || 'no sheet yet.';
+  box.appendChild(sheetText);
+
+  if (neighbors && neighbors.length > 0) {
+    const nbHeading = document.createElement('div');
+    nbHeading.className = 'inspector-subhead';
+    nbHeading.textContent = `ranked neighbors (${neighbors.length})`;
+    box.appendChild(nbHeading);
+
+    const nbList = document.createElement('div');
+    nbList.className = 'scene-links-list';
+    for (const nb of neighbors) {
+      const nbBtn = document.createElement('button');
+      nbBtn.className = 'scene-link-btn';
+      nbBtn.textContent = `${nb.name} (${nb.weight})`;
+      nbBtn.addEventListener('click', () => {
+        showEntityInspector(nb.id);
+      });
+      nbList.appendChild(nbBtn);
+    }
+    box.appendChild(nbList);
+  } else {
+    const mentionCount = (detail.mention_scenes || []).length;
+    const povCount = (detail.pov_scene_links || []).length;
+    const stats = document.createElement('p');
+    stats.className = 'muted';
+    stats.textContent = `POV in ${povCount} scenes · mentioned in ${mentionCount} scenes`;
+    box.appendChild(stats);
+  }
+
+  const openLoreBtn = document.createElement('button');
+  openLoreBtn.className = 'btn';
+  openLoreBtn.textContent = 'open in Lore';
+  openLoreBtn.style.marginTop = '12px';
+  openLoreBtn.addEventListener('click', () => {
+    if (typeof show === 'function') show('lore');
+    if (typeof selectLoreEntity === 'function') selectLoreEntity(detail.id);
+  });
+  box.appendChild(openLoreBtn);
+}
