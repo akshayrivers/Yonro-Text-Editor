@@ -263,8 +263,235 @@ document.getElementById('binder-outline').addEventListener('keydown', (e) => {
     if (!node) return;
     binderSelect(id);
     if (node.kind === 'scene') openSceneDoc(id);
+  } else if (e.key === 'F2') {
+    if (id === null || id === undefined) return;
+    e.preventDefault();
+    binderBeginRename(id);
+  } else if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (id === null || id === undefined) return;
+    e.preventDefault();
+    binderRemove(id);
+  } else if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'a' || e.key === 'c' || e.key === 's')) {
+    e.preventDefault();
+    const target = id !== null && id !== undefined && !Number.isNaN(id) ? id : binderFocusId;
+    binderBeginAdd(e.key, target);
   }
 });
+
+/* Inline structure editing: F2 renames, Del removes, a/c/s add.
+ * Commits go through core and reload from truth; Esc/blur cancels.
+ */
+
+function binderEditing() {
+  const box = document.getElementById('binder-outline');
+  return box ? box.querySelector('.inline-edit') : null;
+}
+
+function binderInlineInput(row, initial, placeholder, commit) {
+  const label = row.querySelector('.label');
+  if (!label) return;
+  if (binderEditing()) return;
+  label.style.display = 'none';
+  const input = document.createElement('input');
+  input.className = 'inline-edit';
+  input.type = 'text';
+  input.value = initial;
+  input.placeholder = placeholder;
+  input.setAttribute('aria-label', placeholder);
+  let done = false;
+  const cancel = () => {
+    if (done) return;
+    done = true;
+    const adding = row.closest('.node.adding');
+    if (adding) adding.remove();
+    input.remove();
+    label.style.display = '';
+    const back = binderRowFor(binderFocusId);
+    if (back) back.focus();
+  };
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      if (done) return;
+      done = true;
+      const value = input.value;
+      input.remove();
+      label.style.display = '';
+      commit(value);
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      cancel();
+    } else if (ev.key === ' ' || ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') {
+      ev.stopPropagation();
+    }
+  });
+  input.addEventListener('blur', cancel);
+  row.appendChild(input);
+  input.focus();
+  input.select();
+}
+
+function binderNearestAncestor(id, kind) {
+  let cursor = binderFind(id);
+  while (cursor) {
+    if (cursor.kind === kind) return cursor.id;
+    const parent = binderParentOf(cursor.id);
+    cursor = parent;
+  }
+  return null;
+}
+
+function binderBeginRename(id) {
+  const node = binderFind(id);
+  const row = binderRowFor(id);
+  if (!node || !row) return;
+  binderFocus(id, false);
+  binderInlineInput(row, node.title, 'rename', async (value) => {
+    const title = value.trim();
+    if (!title) {
+      setMessage('title cannot be empty', { error: true });
+      binderBeginRename(id);
+      return;
+    }
+    try {
+      await core.renameNode(id, title);
+      await loadBinder();
+      binderFocus(id, true);
+      binderSelect(id);
+      setMessage(`renamed to ${title}`);
+    } catch (err) {
+      setMessage(`rename failed: ${err}`, { error: true });
+      binderFocus(id, true);
+    }
+  });
+}
+
+function binderBeginAdd(which, focusId) {
+  const kind = which === 'a' ? 'act' : which === 'c' ? 'chapter' : 'scene';
+  let parent = null;
+  if (kind === 'chapter') {
+    parent = focusId === null ? null : binderNearestAncestor(focusId, 'act');
+    if (parent === null) {
+      setMessage('chapters live in acts. press a to add an act first.', { error: true });
+      return;
+    }
+  } else if (kind === 'scene') {
+    parent = focusId === null ? null : binderNearestAncestor(focusId, 'chapter');
+    if (parent === null) {
+      setMessage('scenes live in chapters.', { error: true });
+      return;
+    }
+  }
+  const box = document.getElementById('binder-outline');
+  if (!box) return;
+  if (binderEditing()) return;
+  let container = box;
+  if (parent !== null) {
+    const wrap = box.querySelector(`.node[data-id="${parent}"]`);
+    container = (wrap && wrap.querySelector('.children')) || box;
+  }
+  const temp = document.createElement('div');
+  temp.className = 'node adding';
+  const row = document.createElement('div');
+  row.className = 'row';
+  const label = document.createElement('span');
+  label.className = 'label';
+  label.style.display = 'none';
+  row.appendChild(label);
+  temp.appendChild(row);
+  container.appendChild(temp);
+  binderInlineInput(row, '', `new ${kind} title`, async (value) => {
+    const title = value.trim();
+    if (!title) {
+      setMessage('title cannot be empty', { error: true });
+      temp.remove();
+      return;
+    }
+    try {
+      const res = await core.addNode(parent, kind, title);
+      binderTree = res.outline;
+      const titleElm = document.getElementById('project-title');
+      if (titleElm) titleElm.textContent = res.outline.title || 'untitled';
+      renderBinderTree();
+      binderFocus(res.new_id, true);
+      binderSelect(res.new_id);
+      setMessage(`added ${kind} ${title}`);
+    } catch (err) {
+      setMessage(`add failed: ${err}`, { error: true });
+      temp.remove();
+    }
+  });
+}
+
+function binderCountScenes(node) {
+  let count = node.kind === 'scene' ? 1 : 0;
+  for (const child of node.children || []) count += binderCountScenes(child);
+  return count;
+}
+
+async function binderRemove(id) {
+  const node = binderFind(id);
+  if (!node) return;
+  const kids = (node.children || []).length;
+  const needsConfirm = kids > 0 || (node.kind === 'scene' && node.words > 0);
+  if (!needsConfirm) {
+    await binderDoRemove(id);
+    return;
+  }
+  const dlg = ensureDialog('binder-confirm', 'delete');
+  dlg.innerHTML = '';
+  const h = document.createElement('h2');
+  h.textContent = 'delete';
+  dlg.appendChild(h);
+  const p = document.createElement('p');
+  if (kids > 0) {
+    p.textContent = `"${node.title}" holds ${kids} item${kids === 1 ? '' : 's'}. drafts stay on disk; snapshots go to history.`;
+  } else {
+    p.textContent = `"${node.title}" has ${node.words} words. the draft stays on disk; a snapshot goes to history.`;
+  }
+  dlg.appendChild(p);
+  const row = document.createElement('div');
+  const del = document.createElement('button');
+  del.textContent = 'delete';
+  const cancel = document.createElement('button');
+  cancel.textContent = 'cancel';
+  row.appendChild(del);
+  row.appendChild(cancel);
+  dlg.appendChild(row);
+  del.addEventListener('click', async () => {
+    dlg.close();
+    await binderDoRemove(id);
+  }, { once: true });
+  cancel.addEventListener('click', () => dlg.close(), { once: true });
+  dlg.addEventListener('cancel', () => {
+    const back = binderRowFor(id);
+    if (back) back.focus();
+  }, { once: true });
+  if (typeof dlg.showModal === 'function') dlg.showModal();
+  cancel.focus();
+}
+
+async function binderDoRemove(id) {
+  const parent = binderParentOf(id);
+  try {
+    const res = await core.removeNode(id);
+    if (binderSelectedId === id) binderSelectedId = null;
+    binderTree = res.outline;
+    const titleElm = document.getElementById('project-title');
+    if (titleElm) titleElm.textContent = res.outline.title || 'untitled';
+    renderBinderTree();
+    const next = parent ? parent.id : null;
+    if (next !== null && binderFind(next)) {
+      binderFocus(next, true);
+      binderSelect(next);
+    }
+    setMessage(res.message);
+  } catch (err) {
+    setMessage(`delete failed: ${err}`, { error: true });
+    binderFocus(id, true);
+  }
+}
 
 async function loadOutline() {
   try {
