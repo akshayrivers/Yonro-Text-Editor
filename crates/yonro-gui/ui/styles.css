@@ -205,6 +205,32 @@ dialog h2 { margin: 0 0 8px; font-size: 1rem; }
 dialog p { margin: 0 0 12px; }
 dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
 
+/* Inspector */
+#inspector h3 { margin: 0 0 4px; font-size: 1rem; }
+#inspector .crumb { margin: 0 0 6px; font-size: 12px; }
+#inspector .counts { margin: 0 0 4px; }
+#inspector .pbar { margin-bottom: 10px; }
+.inspect-form label {
+  display: block;
+  margin: 8px 0 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.inspect-form .field {
+  display: block;
+  width: 100%;
+  margin-top: 2px;
+  background: var(--panel-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  font: inherit;
+}
+.inspect-form .field:focus { border-color: var(--accent); outline: none; }
+.inspect-form textarea.field { resize: vertical; min-height: 3em; }
+.field-error { color: var(--danger); font-size: 12px; margin: 8px 0 0; }
+
 /* Lore */
 .entity {
   background: var(--panel);
