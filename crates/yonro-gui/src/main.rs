@@ -436,7 +436,9 @@ fn save_file_impl(
     let _ = project.sync_scene_words(&saved_path, words);
     project.save().map_err(|err| err.to_string())?;
     if let Some(name) = saved_path.file_name().and_then(|name| name.to_str()) {
-        clear_recovery_file(&state.workspace_root(), name);
+        // NOTE: `root` (not `workspace_root()`) — the project lock above
+        // is still held and `Mutex` is not reentrant.
+        clear_recovery_file(&root, name);
     }
     Ok(saved)
 }
