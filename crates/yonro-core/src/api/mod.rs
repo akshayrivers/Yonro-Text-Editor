@@ -105,6 +105,43 @@ pub struct TimelineDto {
     pub notes: Vec<ContinuityNoteDto>,
 }
 
+/// Scene metadata for the inspector form.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SceneMetaDto {
+    pub pov: String,
+    pub setting: String,
+    pub story_date: String,
+    pub story_time: String,
+    pub synopsis: String,
+    pub target_words: usize,
+}
+
+/// One scene with everything the inspector shows.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SceneDetailDto {
+    pub id: usize,
+    pub title: String,
+    pub breadcrumb: Vec<String>,
+    pub meta: SceneMetaDto,
+    pub file: Option<String>,
+    pub words: usize,
+    pub target: usize,
+}
+
+/// `add_node` result: the fresh tree plus the new node's id.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AddNodeDto {
+    pub outline: OutlineNodeDto,
+    pub new_id: usize,
+}
+
+/// `remove_node` result: the fresh tree plus the kept-on-disk message.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RemoveNodeDto {
+    pub outline: OutlineNodeDto,
+    pub message: String,
+}
+
 fn kind_label(kind: super::manuscript::NodeKind) -> &'static str {
     match kind {
         super::manuscript::NodeKind::Project => "project",
@@ -345,6 +382,41 @@ pub fn timeline_dto(manuscript: &Manuscript) -> TimelineDto {
     }
 }
 
+/// Scene detail for the inspector: breadcrumb, meta, file, live counts.
+///
+/// # Errors
+/// `UnknownNode` for a bad id, `NotAScene` for structural nodes.
+pub fn scene_detail_dto(
+    project: &Project,
+    id: NodeId,
+) -> Result<SceneDetailDto, super::project::ProjectError> {
+    use super::project::ProjectError;
+    let node = project
+        .manuscript
+        .get(id)
+        .ok_or(ProjectError::UnknownNode(id))?;
+    if node.kind != super::manuscript::NodeKind::Scene {
+        return Err(ProjectError::NotAScene(id));
+    }
+    let meta = node.meta.clone().unwrap_or_default();
+    Ok(SceneDetailDto {
+        id,
+        title: node.title.clone(),
+        breadcrumb: project.manuscript.breadcrumb(id).unwrap_or_default(),
+        meta: SceneMetaDto {
+            pov: meta.pov.clone(),
+            setting: meta.setting.clone(),
+            story_date: meta.story_date.clone(),
+            story_time: meta.story_time.clone(),
+            synopsis: meta.synopsis.clone(),
+            target_words: meta.target_words,
+        },
+        file: meta.file.map(|path| path.to_string_lossy().to_string()),
+        words: project.manuscript.subtree_words(id),
+        target: project.manuscript.subtree_target(id),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,5 +537,55 @@ mod tests {
         let texts = gather_scene_texts(&project, &open);
         assert_eq!(texts.get(&sc).map(String::as_str), Some("draft text"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn detail_project() -> (Project, usize) {
+        let dir = std::env::temp_dir().join(format!("yonro-api-detail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (ms, lore) = seed_story();
+        let scene = ms.children(ms.children(ms.root())[0].id)[0].id;
+        let scene = ms.children(scene)[0].id;
+        let project = Project {
+            root: dir,
+            manuscript: ms,
+            lore,
+            warnings: Vec::new(),
+        };
+        (project, scene)
+    }
+
+    #[test]
+    fn scene_detail_carries_breadcrumb_meta_and_counts() {
+        let (project, scene) = detail_project();
+        let dto = scene_detail_dto(&project, scene).unwrap();
+        assert_eq!(dto.id, scene);
+        assert_eq!(dto.title, "The gate");
+        assert_eq!(
+            dto.breadcrumb,
+            vec!["Probe", "Act I", "Chapter 1", "The gate"]
+        );
+        assert_eq!(dto.meta.pov, "Mara");
+        assert_eq!(dto.meta.target_words, 1000);
+        assert_eq!(dto.words, 250);
+        assert_eq!(dto.target, 1000);
+        assert_eq!(dto.file, None);
+        let _ = std::fs::remove_dir_all(&project.root);
+    }
+
+    #[test]
+    fn scene_detail_rejects_structural_and_unknown_ids() {
+        use crate::ProjectError;
+        let (project, _) = detail_project();
+        let root = project.manuscript.root();
+        assert_eq!(
+            scene_detail_dto(&project, root).unwrap_err(),
+            ProjectError::NotAScene(root)
+        );
+        assert_eq!(
+            scene_detail_dto(&project, 999).unwrap_err(),
+            ProjectError::UnknownNode(999)
+        );
+        let _ = std::fs::remove_dir_all(&project.root);
     }
 }
