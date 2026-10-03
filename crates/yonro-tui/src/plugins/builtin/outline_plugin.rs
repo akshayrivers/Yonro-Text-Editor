@@ -2,13 +2,13 @@
 // outline sidebar. Arrow keys are sync-dispatched by `MoveHandler` (same
 // single-path rule as the explorer: never emit `MoveInPane`, or every press
 // moves twice). Structural adds (`a`/`c`/`s`) go through `ManuscriptAdd`.
+use crate::layout::SidebarKind;
+use crate::plugins::{BufferSnapshot, Plugin, PluginResponse};
+use async_trait::async_trait;
 use yonro_core::events::keyboard::{KeyCode, KeyModifiers};
 use yonro_core::events::mouse::{MouseAction, MouseButton};
 use yonro_core::events::EditorEvent;
 use yonro_core::manuscript::NodeKind;
-use crate::layout::SidebarKind;
-use crate::plugins::{BufferSnapshot, Plugin, PluginResponse};
-use async_trait::async_trait;
 
 pub struct OutlinePlugin {
     open_pane_id: Option<usize>,
@@ -45,13 +45,19 @@ impl Plugin for OutlinePlugin {
         }
     }
 
-    async fn on_event(&mut self, event: &EditorEvent, active_pane_id: usize) -> Option<PluginResponse> {
+    async fn on_event(
+        &mut self,
+        event: &EditorEvent,
+        active_pane_id: usize,
+    ) -> Option<PluginResponse> {
         match event {
             // ── Ctrl+O — toggle outline sidebar ─────────────────────────────
             EditorEvent::Key(key)
                 if key.modifiers == KeyModifiers::CTRL && key.key_code == KeyCode::Char('o') =>
             {
-                return Some(PluginResponse::ToggleSidebar { kind: SidebarKind::Outline });
+                return Some(PluginResponse::ToggleSidebar {
+                    kind: SidebarKind::Outline,
+                });
             }
 
             // Other events only when the outline is the active pane.
@@ -66,27 +72,41 @@ impl Plugin for OutlinePlugin {
                                 }
                                 KeyCode::Esc => {
                                     self.open_pane_id = None;
-                                    return Some(PluginResponse::CloseSidebar { kind: SidebarKind::Outline });
+                                    return Some(PluginResponse::CloseSidebar {
+                                        kind: SidebarKind::Outline,
+                                    });
                                 }
                                 // Structural adds (core applies + selects).
                                 KeyCode::Char('a') => {
-                                    return Some(PluginResponse::ManuscriptAdd { child: NodeKind::Act });
+                                    return Some(PluginResponse::ManuscriptAdd {
+                                        child: NodeKind::Act,
+                                    });
                                 }
                                 KeyCode::Char('c') => {
-                                    return Some(PluginResponse::ManuscriptAdd { child: NodeKind::Chapter });
+                                    return Some(PluginResponse::ManuscriptAdd {
+                                        child: NodeKind::Chapter,
+                                    });
                                 }
                                 KeyCode::Char('s') => {
-                                    return Some(PluginResponse::ManuscriptAdd { child: NodeKind::Scene });
+                                    return Some(PluginResponse::ManuscriptAdd {
+                                        child: NodeKind::Scene,
+                                    });
                                 }
                                 // Field prompts: rename, POV, word target.
                                 KeyCode::Char('r') => {
-                                    return Some(PluginResponse::ManuscriptPrompt { field: crate::plugins::OutlineField::Rename });
+                                    return Some(PluginResponse::ManuscriptPrompt {
+                                        field: crate::plugins::OutlineField::Rename,
+                                    });
                                 }
                                 KeyCode::Char('p') => {
-                                    return Some(PluginResponse::ManuscriptPrompt { field: crate::plugins::OutlineField::Pov });
+                                    return Some(PluginResponse::ManuscriptPrompt {
+                                        field: crate::plugins::OutlineField::Pov,
+                                    });
                                 }
                                 KeyCode::Char('t') => {
-                                    return Some(PluginResponse::ManuscriptPrompt { field: crate::plugins::OutlineField::Target });
+                                    return Some(PluginResponse::ManuscriptPrompt {
+                                        field: crate::plugins::OutlineField::Target,
+                                    });
                                 }
                                 // Delete removes the selected node (files kept).
                                 KeyCode::Delete => {

@@ -1,5 +1,5 @@
-use crate::prelude::*;
 use crate::layout::sidebar::Sidebar;
+use crate::prelude::*;
 use std::io::Error;
 
 const MIN_PANE_SIZE: usize = 4; // minimum size to split is 2 * MIN_PANE_SIZE
@@ -335,9 +335,7 @@ impl LayoutTree {
                     RemovalResult::Deleted => RemovalResult::Survived(*second),
                     RemovalResult::Survived(new_first) => {
                         match Self::remove_node_recursive(*second, target_id) {
-                            RemovalResult::Deleted => {
-                                RemovalResult::Survived(new_first)
-                            }
+                            RemovalResult::Deleted => RemovalResult::Survived(new_first),
                             RemovalResult::Survived(new_second) => {
                                 // neither was the target, so we rebuild the split
                                 RemovalResult::Survived(LayoutNode::Split {
@@ -438,7 +436,10 @@ impl LayoutTree {
                             let min_width = MIN_PANE_SIZE;
                             let max_width = rect.size.width.saturating_sub(MIN_PANE_SIZE);
                             if max_width >= min_width && rect.size.width > 0 {
-                                let local_col = mouse.col.saturating_sub(rect.position.col).clamp(min_width, max_width);
+                                let local_col = mouse
+                                    .col
+                                    .saturating_sub(rect.position.col)
+                                    .clamp(min_width, max_width);
                                 let new_ratio = local_col as f32 / rect.size.width as f32;
 
                                 #[cfg(debug_assertions)]
@@ -452,7 +453,10 @@ impl LayoutTree {
                             let min_height = MIN_PANE_SIZE;
                             let max_height = rect.size.height.saturating_sub(MIN_PANE_SIZE);
                             if max_height >= min_height && rect.size.height > 0 {
-                                let local_row = mouse.row.saturating_sub(rect.position.row).clamp(min_height, max_height);
+                                let local_row = mouse
+                                    .row
+                                    .saturating_sub(rect.position.row)
+                                    .clamp(min_height, max_height);
                                 let new_ratio = local_row as f32 / rect.size.height as f32;
 
                                 #[cfg(debug_assertions)]

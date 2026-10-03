@@ -5,8 +5,50 @@
       "kind": "Project",
       "title": "yonro_text_editor",
       "parent": null,
-      "children": [],
+      "children": [
+        1
+      ],
       "meta": null,
+      "alive": true
+    },
+    {
+      "id": 1,
+      "kind": "Act",
+      "title": "Act 1",
+      "parent": 0,
+      "children": [
+        2
+      ],
+      "meta": null,
+      "alive": true
+    },
+    {
+      "id": 2,
+      "kind": "Chapter",
+      "title": "Chapter 1",
+      "parent": 1,
+      "children": [
+        3
+      ],
+      "meta": null,
+      "alive": true
+    },
+    {
+      "id": 3,
+      "kind": "Scene",
+      "title": "scene 3",
+      "parent": 2,
+      "children": [],
+      "meta": {
+        "pov": "p",
+        "setting": "",
+        "story_date": "",
+        "story_time": "",
+        "synopsis": "",
+        "target_words": 0,
+        "current_words": 0,
+        "file": "/Users/vinodakshat/Desktop/yonro_text_editor/scene-3.md"
+      },
       "alive": true
     }
   ],

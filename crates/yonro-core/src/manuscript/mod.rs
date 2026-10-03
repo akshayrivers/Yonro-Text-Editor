@@ -236,11 +236,7 @@ impl Manuscript {
     ///
     /// # Errors
     /// `UnknownNode`/`InactiveNode` for a bad act, `InvalidParent` otherwise.
-    pub fn add_chapter(
-        &mut self,
-        act_id: NodeId,
-        title: &str,
-    ) -> Result<NodeId, ManuscriptError> {
+    pub fn add_chapter(&mut self, act_id: NodeId, title: &str) -> Result<NodeId, ManuscriptError> {
         self.push_child(act_id, NodeKind::Chapter, title)
     }
 
@@ -282,11 +278,7 @@ impl Manuscript {
     ///
     /// # Errors
     /// `UnknownNode`/`InactiveNode`/`NotAScene` as applicable.
-    pub fn set_scene_words(
-        &mut self,
-        id: NodeId,
-        words: usize,
-    ) -> Result<(), ManuscriptError> {
+    pub fn set_scene_words(&mut self, id: NodeId, words: usize) -> Result<(), ManuscriptError> {
         let node = self.get_mut(id)?;
         match node.meta.as_mut() {
             Some(meta) if node.kind == NodeKind::Scene => {
@@ -302,11 +294,7 @@ impl Manuscript {
     ///
     /// # Errors
     /// `UnknownNode`/`InactiveNode`/`InvalidParent`/`Cycle`/`CannotRemoveProject`.
-    pub fn move_node(
-        &mut self,
-        id: NodeId,
-        new_parent: NodeId,
-    ) -> Result<(), ManuscriptError> {
+    pub fn move_node(&mut self, id: NodeId, new_parent: NodeId) -> Result<(), ManuscriptError> {
         let kind = self.get_mut(id)?.kind;
         if id == self.root {
             return Err(ManuscriptError::CannotRemoveProject);
@@ -328,9 +316,7 @@ impl Manuscript {
         }
         let old_parent = self.get_mut(id)?.parent;
         if let Some(old) = old_parent {
-            self.get_mut(old)?
-                .children
-                .retain(|child| *child != id);
+            self.get_mut(old)?.children.retain(|child| *child != id);
         }
         self.get_mut(id)?.parent = Some(new_parent);
         self.get_mut(new_parent)?.children.push(id);

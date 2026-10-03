@@ -1,27 +1,41 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use yonro_core::{command::{Command, Edit, Move}, Buffer, BufferManager};
+use yonro_core::{
+    command::{Command, Edit, Move},
+    Buffer, BufferManager,
+};
+use yonro_tui::prelude::*;
+use yonro_tui::MemClipboard;
 use yonro_tui::{
     command_dispatcher::{EditorContext, HandlerRegistry, PromptType},
     layout::{LayoutTree, Pane, PaneContent, PaneManager},
     uicomponents::{BufferBar, CommandBar, MessageBar, UIComponent, View},
 };
-use yonro_tui::prelude::*;
-use yonro_tui::MemClipboard;
 
 fn create_view_with_buffer(lines_count: usize) -> (View, Buffer) {
     let mut view = View::default();
     let mut buffer = Buffer::default();
     view.set_size(Rect {
         position: Position { row: 1, col: 0 },
-        size: Size { height: 40, width: 120 },
+        size: Size {
+            height: 40,
+            width: 120,
+        },
     });
 
     for i in 0..lines_count {
         for ch in format!("fn line_{i}() {{ compute_data({i}); }}\n").chars() {
             if ch == '\n' {
-                view.handle_edit_command(Edit::InsertNewLine, &mut buffer, &mut MemClipboard::default());
+                view.handle_edit_command(
+                    Edit::InsertNewLine,
+                    &mut buffer,
+                    &mut MemClipboard::default(),
+                );
             } else {
-                view.handle_edit_command(Edit::Insert(ch), &mut buffer, &mut MemClipboard::default());
+                view.handle_edit_command(
+                    Edit::Insert(ch),
+                    &mut buffer,
+                    &mut MemClipboard::default(),
+                );
             }
         }
     }
@@ -37,12 +51,19 @@ fn bench_view_operations(c: &mut Criterion) {
             let mut buffer = Buffer::default();
             view.set_size(Rect {
                 position: Position { row: 1, col: 0 },
-                size: Size { height: 40, width: 120 },
+                size: Size {
+                    height: 40,
+                    width: 120,
+                },
             });
 
             // Type 50 characters
             for ch in "fn test_function_with_long_identifier() { return; }".chars() {
-                view.handle_edit_command(Edit::Insert(ch), &mut buffer, &mut MemClipboard::default());
+                view.handle_edit_command(
+                    Edit::Insert(ch),
+                    &mut buffer,
+                    &mut MemClipboard::default(),
+                );
             }
 
             // Undo all
@@ -94,7 +115,10 @@ fn bench_command_dispatcher(c: &mut Criterion) {
 
     let screen_rect = Rect {
         position: Position { row: 1, col: 0 },
-        size: Size { height: 40, width: 120 },
+        size: Size {
+            height: 40,
+            width: 120,
+        },
     };
 
     group.bench_function("dispatch_move_commands", |b| {

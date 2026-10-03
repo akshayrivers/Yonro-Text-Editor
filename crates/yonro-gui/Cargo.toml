@@ -1,0 +1,21 @@
+[package]
+name = "yonro-gui"
+version = "1.0.0"
+edition = "2021"
+
+# Tauri v2 desktop shell over `yonro-core`. The web UI is dependency-free
+# static files (`ui/`): no npm, no bundler — `cargo run -p yonro-gui` is the
+# whole dev loop. (`cargo tauri` CLI only matters for OS bundlers later.)
+
+[dependencies]
+yonro-core = { path = "../yonro-core" }
+tauri = { version = "2", features = [] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[build-dependencies]
+tauri-build = "2"
+
+[[bin]]
+name = "yonro-gui"
+path = "src/main.rs"

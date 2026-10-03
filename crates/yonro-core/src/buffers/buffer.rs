@@ -33,7 +33,9 @@ impl Buffer {
             return stripped;
         }
         // `ropey` with default `unicode_lines` can break on these as well.
-        for suffix in ["\n", "\r", "\u{85}", "\u{2028}", "\u{2029}", "\u{0B}", "\u{0C}"] {
+        for suffix in [
+            "\n", "\r", "\u{85}", "\u{2028}", "\u{2029}", "\u{0B}", "\u{0C}",
+        ] {
             if let Some(stripped) = text.strip_suffix(suffix) {
                 return stripped;
             }
@@ -95,7 +97,8 @@ impl Buffer {
             .map_or(0, |s| s.graphemes(true).count())
     }
     pub fn width_until(&self, idx: LineIdx, until: GraphemeIdx) -> GraphemeIdx {
-        self.line_to_line(idx).map_or(0, |line| line.width_until(until))
+        self.line_to_line(idx)
+            .map_or(0, |line| line.width_until(until))
     }
     /// Owned `Line` — the old `&Line` borrow cannot exist without a `Vec`.
     pub fn get_line(&self, idx: LineIdx) -> Option<Line> {
@@ -171,8 +174,7 @@ impl Buffer {
         None
     }
     pub fn get_char_at(&self, at: Location) -> Option<char> {
-        self.line_to_line(at.line_idx)?
-            .get_char_at(at.grapheme_idx)
+        self.line_to_line(at.line_idx)?.get_char_at(at.grapheme_idx)
     }
     pub fn search_backward(&self, query: &str, from: Location) -> Option<Location> {
         if query.is_empty() {
@@ -184,11 +186,7 @@ impl Buffer {
         }
         let mut is_first = true;
         for offset in 0..height {
-            let line_idx = from
-                .line_idx
-                .saturating_add(height)
-                .saturating_sub(offset)
-                % height;
+            let line_idx = from.line_idx.saturating_add(height).saturating_sub(offset) % height;
             let Some(line) = self.line_to_line(line_idx) else {
                 is_first = false;
                 continue;
@@ -258,6 +256,18 @@ impl Buffer {
     }
     pub const fn is_file_loaded(&self) -> bool {
         self.file_info.has_path()
+    }
+    /// Replace the whole text (GUI whole-text sync, `PLAN.md Phase 5`).
+    /// Marks the buffer dirty. Prefer granular ops when undo granularity
+    /// matters — this is one atomic replacement.
+    pub fn set_text(&mut self, text: &str) {
+        self.rope = Rope::from(text);
+        self.dirty = true;
+    }
+    /// Current full text.
+    #[must_use]
+    pub fn text(&self) -> String {
+        self.rope.to_string()
     }
     pub fn height(&self) -> LineIdx {
         // Ropey semantics: trailing `\n` creates a real empty last line.

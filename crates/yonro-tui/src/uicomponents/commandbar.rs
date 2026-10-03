@@ -1,7 +1,7 @@
+use super::UIComponent;
 use crate::clipboard::Clipboard;
 use crate::terminal::Terminal;
 use yonro_core::{command::Edit, Line};
-use super::UIComponent;
 
 use crate::prelude::*;
 

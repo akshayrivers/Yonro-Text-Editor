@@ -1,10 +1,10 @@
+use super::UIComponent;
+use crate::prelude::*;
 use crate::terminal::Terminal;
+use std::io::Error;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 use yonro_core::DocumentStatus;
-use super::UIComponent;
-use crate::prelude::*;
-use std::io::Error;
 #[derive(Default)]
 pub struct StatusBar {
     current_status: DocumentStatus,
@@ -44,8 +44,7 @@ impl UIComponent for StatusBar {
 
         let beginning = format!(
             "{} - {line_count} {} words {modified_indicator}",
-            self.current_status.file_name,
-            self.current_status.word_count
+            self.current_status.file_name, self.current_status.word_count
         );
         // Assemble the back part
         let position_indicator = self.current_status.position_indicator_to_string();

@@ -12,8 +12,8 @@
 //! Owns everything `crossterm`-adjacent: raw terminal, input adapter,
 //! layout/panes, rendering components, and the editor event loop.
 
-pub mod command_dispatcher;
 pub mod clipboard;
+pub mod command_dispatcher;
 pub mod editor;
 pub mod input;
 pub mod layout;
@@ -25,8 +25,8 @@ pub mod workspace;
 // Re-export the core prelude under the old path so moved files keep working.
 pub use yonro_core::prelude;
 
-pub use editor::Editor;
 pub use clipboard::{Clipboard, MemClipboard, SystemClipboard};
+pub use editor::Editor;
 pub use uicomponents::view::EditOperation;
 pub use yonro_core::{
     AnnotatedString, Annotation, AnnotationType, Buffer, BufferManager, Command, DocumentStatus,

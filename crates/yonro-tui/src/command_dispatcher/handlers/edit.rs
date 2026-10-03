@@ -1,6 +1,6 @@
 use super::{CommandHandler, EditorContext};
-use yonro_core::command::{Command, Edit};
 use crate::layout::PaneContent;
+use yonro_core::command::{Command, Edit};
 
 pub struct EditHandler;
 

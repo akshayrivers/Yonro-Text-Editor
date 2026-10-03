@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Yonro — Narrative Studio</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <nav id="topnav" aria-label="Views">
+    <span class="brand">Yonro</span>
+    <button data-view="write" class="active">Write</button>
+    <button data-view="outline">Outline</button>
+    <button data-view="graph">Graph</button>
+    <button data-view="timeline">Timeline</button>
+    <button data-view="lore">Lore</button>
+    <span class="spacer"></span>
+    <button id="zen-toggle" title="Distraction-free (document only)">Zen</button>
+  </nav>
+
+  <section id="view-write" class="view">
+    <div id="doc-tabs" role="tablist" aria-label="Open documents"></div>
+    <div id="editor-bar">
+      <span id="doc-name" class="muted">No document — open one from Outline, or start typing below.</span>
+      <span class="spacer"></span>
+      <button id="btn-save" title="Save (Ctrl+S)">Save</button>
+      <button id="btn-undo" title="Undo (Ctrl+Z)">Undo</button>
+      <button id="btn-redo" title="Redo (Ctrl+Shift+Z)">Redo</button>
+      <button id="btn-new" title="New untitled document">New</button>
+      <button id="btn-close" title="Close current document">Close</button>
+    </div>
+    <textarea id="editor" spellcheck="true" placeholder="Once upon a time…"></textarea>
+    <div id="doc-status" class="muted" aria-label="Document statistics"></div>
+  </section>
+
+  <section id="view-outline" class="view hidden">
+    <h2>Outline</h2>
+    <div id="outline"><p class="muted">No manuscript yet — build one in the terminal (<code>Ctrl+O</code>, then <code>a</code> <code>c</code> <code>s</code>).</p></div>
+  </section>
+
+  <section id="view-graph" class="view hidden">
+    <h2>Character graph</h2>
+    <p class="muted">Nodes are lore entities; edge width is combined weight (shared scenes + @mentions). Click a node to spotlight its neighborhood.</p>
+    <svg id="graph" role="img" aria-label="Relationship graph"></svg>
+    <div id="graph-legend" class="muted"></div>
+  </section>
+
+  <section id="view-timeline" class="view hidden">
+    <h2>Timeline</h2>
+    <div id="continuity"></div>
+    <ol id="timeline"></ol>
+  </section>
+
+  <section id="view-lore" class="view hidden">
+    <h2>Lore</h2>
+    <div id="lore"><p class="muted">No entities yet — they seed from scene POVs.</p></div>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>

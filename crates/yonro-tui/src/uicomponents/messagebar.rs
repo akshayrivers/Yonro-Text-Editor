@@ -1,6 +1,6 @@
-use crate::terminal::Terminal;
 use super::UIComponent;
 use crate::prelude::*;
+use crate::terminal::Terminal;
 use std::{
     io::Error,
     time::{Duration, Instant},

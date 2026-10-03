@@ -1,7 +1,7 @@
 use super::context::EditorContext;
-use yonro_core::command::{Command, Edit, Move, System};
 use crate::command_dispatcher::PromptType;
 use crate::plugins::{OutlineField, PluginResponse};
+use yonro_core::command::{Command, Edit, Move, System};
 
 pub mod edit;
 pub mod mouse;
@@ -158,7 +158,8 @@ fn handle_search_prompt(command: &Command, ctx: &mut EditorContext) {
         }
 
         Command::Edit(edit_cmd) => {
-            ctx.command_bar.handle_edit_command(*edit_cmd, ctx.clipboard);
+            ctx.command_bar
+                .handle_edit_command(*edit_cmd, ctx.clipboard);
             let query = ctx.command_bar.value();
 
             let buffer_id = ctx
@@ -240,7 +241,8 @@ fn handle_save_prompt(command: &Command, ctx: &mut EditorContext) {
         }
 
         Command::Edit(edit_cmd) => {
-            ctx.command_bar.handle_edit_command(*edit_cmd, ctx.clipboard);
+            ctx.command_bar
+                .handle_edit_command(*edit_cmd, ctx.clipboard);
         }
 
         _ => {}
@@ -262,7 +264,8 @@ fn handle_pane_prompt(command: &Command, ctx: &mut EditorContext) {
         }
 
         Command::Edit(edit_cmd) => {
-            ctx.command_bar.handle_edit_command(*edit_cmd, ctx.clipboard);
+            ctx.command_bar
+                .handle_edit_command(*edit_cmd, ctx.clipboard);
         }
 
         _ => {}
@@ -290,7 +293,8 @@ fn handle_outline_prompt(command: &Command, ctx: &mut EditorContext) {
             ctx.set_prompt(PromptType::None);
         }
         Command::Edit(edit_cmd) => {
-            ctx.command_bar.handle_edit_command(*edit_cmd, ctx.clipboard);
+            ctx.command_bar
+                .handle_edit_command(*edit_cmd, ctx.clipboard);
         }
         _ => {}
     }
@@ -337,6 +341,8 @@ fn execute_pane_command(input: &str, ctx: &mut EditorContext) {
             }
         }
         ["explore"] => open_file_explorer(ctx),
-        _ => ctx.update_message("Commands: focus <id> (or just <id>), close [<id>], float, unfloat, explore"),
+        _ => ctx.update_message(
+            "Commands: focus <id> (or just <id>), close [<id>], float, unfloat, explore",
+        ),
     }
 }

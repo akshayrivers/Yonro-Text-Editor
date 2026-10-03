@@ -597,7 +597,8 @@ mod tests {
     }
 
     #[test]
-    fn grapheme_idx_to_byte_idx_at_eol_returns_len() {        // PLAN.md Phase 1.4: `grapheme_idx == count` (cursor at EOL) must
+    fn grapheme_idx_to_byte_idx_at_eol_returns_len() {
+        // PLAN.md Phase 1.4: `grapheme_idx == count` (cursor at EOL) must
         // return one-past-end instead of panicking (debug) / returning 0 (release).
         let line = Line::from("hello");
         assert_eq!(line.grapheme_idx_to_byte_idx(5), line.len());
@@ -608,7 +609,10 @@ mod tests {
 
         // Multibyte: "aé" where é = e + combining acute (2 chars, 1 grapheme).
         let uni = Line::from("aé");
-        assert_eq!(uni.grapheme_idx_to_byte_idx(uni.grapheme_count()), uni.len());
+        assert_eq!(
+            uni.grapheme_idx_to_byte_idx(uni.grapheme_count()),
+            uni.len()
+        );
     }
 
     // Soft-wrap tests (PLAN.md Phase 4.1)

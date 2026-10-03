@@ -118,7 +118,11 @@ impl LoreBook {
         if name.is_empty() {
             return Err(LoreError::EmptyName);
         }
-        if self.claimed(None).iter().any(|taken| taken == &name.to_lowercase()) {
+        if self
+            .claimed(None)
+            .iter()
+            .any(|taken| taken == &name.to_lowercase())
+        {
             return Err(LoreError::DuplicateName(name.to_string()));
         }
         let id = self.entities.len();
@@ -142,7 +146,11 @@ impl LoreBook {
         if alias.is_empty() {
             return Err(LoreError::EmptyName);
         }
-        if self.claimed(Some(id)).iter().any(|taken| taken == &alias.to_lowercase()) {
+        if self
+            .claimed(Some(id))
+            .iter()
+            .any(|taken| taken == &alias.to_lowercase())
+        {
             return Err(LoreError::DuplicateName(alias.to_string()));
         }
         match self.entities.get_mut(id) {
@@ -192,7 +200,10 @@ impl LoreBook {
         self.entities.iter().find(|entity| {
             entity.alive
                 && (Self::same_name(&entity.name, name)
-                    || entity.aliases.iter().any(|alias| Self::same_name(alias, name)))
+                    || entity
+                        .aliases
+                        .iter()
+                        .any(|alias| Self::same_name(alias, name)))
         })
     }
 
@@ -224,28 +235,25 @@ impl LoreBook {
     pub fn seed_from_manuscript(&mut self, manuscript: &Manuscript) -> usize {
         let mut added: usize = 0;
         let mut seen: Vec<String> = Vec::new();
-        let mut consider = |book: &mut Self, name: &str, kind: EntityKind, seen: &mut Vec<String>| {
-            let name = name.trim();
-            if name.is_empty() || seen.iter().any(|s| Self::same_name(s, name)) {
-                return;
-            }
-            seen.push(name.to_string());
-            if book.add(kind, name).is_ok() {
-                added = added.saturating_add(1);
-            }
-        };
+        let mut consider =
+            |book: &mut Self, name: &str, kind: EntityKind, seen: &mut Vec<String>| {
+                let name = name.trim();
+                if name.is_empty() || seen.iter().any(|s| Self::same_name(s, name)) {
+                    return;
+                }
+                seen.push(name.to_string());
+                if book.add(kind, name).is_ok() {
+                    added = added.saturating_add(1);
+                }
+            };
         // Walk the whole tree (acts → chapters → scenes) via children().
         let root = manuscript.root();
         let acts: Vec<usize> = manuscript.children(root).iter().map(|n| n.id).collect();
         for act in acts {
-            let chapters: Vec<usize> =
-                manuscript.children(act).iter().map(|n| n.id).collect();
+            let chapters: Vec<usize> = manuscript.children(act).iter().map(|n| n.id).collect();
             for chapter in chapters {
-                let scenes: Vec<usize> = manuscript
-                    .children(chapter)
-                    .iter()
-                    .map(|n| n.id)
-                    .collect();
+                let scenes: Vec<usize> =
+                    manuscript.children(chapter).iter().map(|n| n.id).collect();
                 for scene in scenes {
                     if let Some(node) = manuscript.get(scene) {
                         if let Some(meta) = node.meta.as_ref() {
@@ -287,15 +295,15 @@ impl LoreBook {
             // names may not align with multibyte boundaries in `rest`).
             let mut best: Option<(usize, EntityId, String)> = None;
             for entity in self.entities.iter().filter(|e| e.alive) {
-                for candidate in
-                    std::iter::once(&entity.name).chain(entity.aliases.iter())
-                {
+                for candidate in std::iter::once(&entity.name).chain(entity.aliases.iter()) {
                     let prefix = rest.get(..candidate.len());
                     let tail = rest.get(candidate.len()..);
                     if let (Some(head), Some(tail)) = (prefix, tail) {
                         if head.eq_ignore_ascii_case(candidate)
                             && is_word_end(tail)
-                            && best.as_ref().is_none_or(|(len, _, _)| candidate.len() > *len)
+                            && best
+                                .as_ref()
+                                .is_none_or(|(len, _, _)| candidate.len() > *len)
                         {
                             best = Some((candidate.len(), entity.id, candidate.clone()));
                         }
@@ -348,11 +356,13 @@ pub fn is_mention_char(ch: char) -> bool {
 }
 
 /// A registered name match must end on a word boundary (end of text,
-/// whitespace, or punctuation that cannot extend the name).
+/// whitespace, or punctuation that cannot extend the name). A trailing `.`
+/// is sentence punctuation, not part of the name (`@Joren.` mentions Joren);
+/// `-`/`'`/`_` stay boundary-sensitive (`Anne-Marie`, `O'Brien`).
 fn is_word_end(rest: &str) -> bool {
-    rest.chars().next().is_none_or(|ch| {
-        !(ch.is_alphanumeric() || matches!(ch, '_' | '\'' | '-' | '.'))
-    })
+    rest.chars()
+        .next()
+        .is_none_or(|ch| !(ch.is_alphanumeric() || matches!(ch, '_' | '\'' | '-')))
 }
 
 #[cfg(test)]
@@ -384,7 +394,10 @@ mod tests {
     #[test]
     fn resolve_hits_names_and_aliases() {
         let book = stocked();
-        assert_eq!(book.resolve("mara stone").unwrap().kind, EntityKind::Character);
+        assert_eq!(
+            book.resolve("mara stone").unwrap().kind,
+            EntityKind::Character
+        );
         assert_eq!(book.resolve("MARA").unwrap().name, "Mara Stone");
         assert_eq!(book.resolve("mill FARM").unwrap().kind, EntityKind::Place);
         assert!(book.resolve("Gandalf").is_none());
@@ -393,9 +406,17 @@ mod tests {
     #[test]
     fn prefix_search_ranks_names_before_aliases() {
         let book = stocked();
-        let hits: Vec<&str> = book.find_by_prefix("mar").into_iter().map(|e| e.name.as_str()).collect();
+        let hits: Vec<&str> = book
+            .find_by_prefix("mar")
+            .into_iter()
+            .map(|e| e.name.as_str())
+            .collect();
         assert_eq!(hits, vec!["Mara Stone"]);
-        let hits: Vec<&str> = book.find_by_prefix("mill").into_iter().map(|e| e.name.as_str()).collect();
+        let hits: Vec<&str> = book
+            .find_by_prefix("mill")
+            .into_iter()
+            .map(|e| e.name.as_str())
+            .collect();
         assert_eq!(hits, vec!["Mill farm"]);
         assert!(book.find_by_prefix("zzz").is_empty());
     }
@@ -411,6 +432,17 @@ mod tests {
         let mentions = book.parse_mentions("@Mara!");
         assert_eq!(mentions.len(), 1);
         assert_eq!(mentions[0].name, "Mara");
+    }
+
+    #[test]
+    fn sentence_final_period_does_not_extend_names() {
+        let mut book = stocked();
+        book.add(EntityKind::Character, "Joren").unwrap();
+        // "@Joren." mentions Joren — the dot is punctuation, not the name.
+        let mentions = book.parse_mentions(" waved at @Joren.");
+        assert_eq!(mentions.len(), 1);
+        assert_eq!(mentions[0].name, "Joren");
+        assert!(mentions[0].entity.is_some());
     }
 
     #[test]

@@ -8,8 +8,8 @@ mod plugin_component;
 mod sheet;
 mod statusbar;
 mod uicomponent;
-mod wordcount;
 pub mod view;
+mod wordcount;
 
 pub use commandbar::CommandBar;
 pub use fileexplorer::FileExplorer;

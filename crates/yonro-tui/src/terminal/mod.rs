@@ -2,10 +2,9 @@
 // Also the need to handle custom events is also there, so eventualy need to be smart about it
 mod attribute;
 use crate::prelude::*;
-use yonro_core::AnnotatedString;
 use attribute::Attribute;
 use crossterm::cursor::{Hide, MoveTo, Show};
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture, poll, read};
+use crossterm::event::{poll, read, DisableMouseCapture, EnableMouseCapture};
 use crossterm::style::{Print, ResetColor, SetBackgroundColor, SetForegroundColor};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, size, Clear, ClearType, DisableLineWrap, EnableLineWrap,
@@ -14,6 +13,7 @@ use crossterm::terminal::{
 use crossterm::{queue, Command};
 use std::io::{stdout, Error, Write};
 use std::time::Duration;
+use yonro_core::AnnotatedString;
 pub struct Terminal {}
 
 impl Terminal {
@@ -302,7 +302,9 @@ impl Terminal {
 
     /// Non-blocking event poll with timeout.
     /// Returns `Ok(Some(event))` if event available, `Ok(None)` if timeout, `Err` on error.
-    pub fn poll_event(timeout: Duration) -> Result<Option<yonro_core::events::EditorEvent>, std::io::Error> {
+    pub fn poll_event(
+        timeout: Duration,
+    ) -> Result<Option<yonro_core::events::EditorEvent>, std::io::Error> {
         if poll(timeout)? {
             let event = read()?;
             Ok(Some(crate::input::from_crossterm(event)))

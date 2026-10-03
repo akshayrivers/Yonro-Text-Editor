@@ -1,10 +1,10 @@
 // src/editor/plugins/builtin/file_explorer_plugin.rs
-use yonro_core::events::keyboard::{KeyCode, KeyModifiers};
-use yonro_core::events::mouse::{MouseAction, MouseButton};
-use yonro_core::events::EditorEvent;
 use crate::layout::SidebarKind;
 use crate::plugins::{BufferSnapshot, Plugin, PluginResponse};
 use async_trait::async_trait;
+use yonro_core::events::keyboard::{KeyCode, KeyModifiers};
+use yonro_core::events::mouse::{MouseAction, MouseButton};
+use yonro_core::events::EditorEvent;
 
 pub struct FileExplorerPlugin {
     open_pane_id: Option<usize>,
@@ -43,13 +43,19 @@ impl Plugin for FileExplorerPlugin {
         }
     }
 
-    async fn on_event(&mut self, event: &EditorEvent, active_pane_id: usize) -> Option<PluginResponse> {
+    async fn on_event(
+        &mut self,
+        event: &EditorEvent,
+        active_pane_id: usize,
+    ) -> Option<PluginResponse> {
         match event {
             // ── Ctrl+E — toggle sidebar ───────────────────────────────────────
             EditorEvent::Key(key)
                 if key.modifiers == KeyModifiers::CTRL && key.key_code == KeyCode::Char('e') =>
             {
-                return Some(PluginResponse::ToggleSidebar { kind: SidebarKind::FileExplorer });
+                return Some(PluginResponse::ToggleSidebar {
+                    kind: SidebarKind::FileExplorer,
+                });
             }
 
             // Other events are only processed if the explorer is currently the active pane
@@ -69,7 +75,9 @@ impl Plugin for FileExplorerPlugin {
                                 }
                                 KeyCode::Esc => {
                                     self.open_pane_id = None;
-                                    return Some(PluginResponse::CloseSidebar { kind: SidebarKind::FileExplorer });
+                                    return Some(PluginResponse::CloseSidebar {
+                                        kind: SidebarKind::FileExplorer,
+                                    });
                                 }
                                 _ => {}
                             }

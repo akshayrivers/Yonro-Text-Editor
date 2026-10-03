@@ -1,3 +1,12 @@
 {
-  "entities": []
+  "entities": [
+    {
+      "id": 0,
+      "kind": "Character",
+      "name": "p",
+      "aliases": [],
+      "sheet": "",
+      "alive": true
+    }
+  ]
 }

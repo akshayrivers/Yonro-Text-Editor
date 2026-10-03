@@ -46,7 +46,8 @@ pub struct View {
     // always starting at (0,0)and the size will dietermine the visible area
     rect: Rect,
     text_location: Location,
-    scroll_offset: Position,    search_info: Option<SearchInfo>,
+    scroll_offset: Position,
+    search_info: Option<SearchInfo>,
     undo_stack: Vec<EditOperation>,
     redo_stack: Vec<EditOperation>,
     // timestamp of the last insert (helps us in grouping the steps)
@@ -622,7 +623,12 @@ impl View {
 
     /// Wrap segments for one buffer line (single whole-line segment when
     /// wrapping is off or the view is sizeless).
-    fn segments_for_line(&self, buffer: &Buffer, line_idx: usize, width: usize) -> Vec<std::ops::Range<usize>> {
+    fn segments_for_line(
+        &self,
+        buffer: &Buffer,
+        line_idx: usize,
+        width: usize,
+    ) -> Vec<std::ops::Range<usize>> {
         let Some(line) = buffer.get_line(line_idx) else {
             return vec![0..0];
         };
@@ -641,9 +647,8 @@ impl View {
     ) -> (usize, usize) {
         let mut visual_row: usize = 0;
         for line_idx in 0..location.line_idx {
-            visual_row = visual_row.saturating_add(
-                self.segments_for_line(buffer, line_idx, width).len().max(1),
-            );
+            visual_row = visual_row
+                .saturating_add(self.segments_for_line(buffer, line_idx, width).len().max(1));
         }
         let mut seg_idx: usize = 0;
         let mut seg_start_col = 0;
@@ -765,12 +770,8 @@ impl View {
             return;
         }
         let (visual_row, visual_col) = self.location_to_visual(buffer, self.text_location, width);
-        self.text_location = self.visual_to_location(
-            buffer,
-            visual_row.saturating_add(step),
-            visual_col,
-            width,
-        );
+        self.text_location =
+            self.visual_to_location(buffer, visual_row.saturating_add(step), visual_col, width);
         self.snap_to_valid_line(buffer);
         self.snap_to_valid_grapheme(buffer);
     }
@@ -921,8 +922,7 @@ impl View {
         // Highlight from line 0: `Highlighter` requires sequential
         // `highlight()` calls per line index (`debug_assert_eq!` in core).
         // `height` visual rows touch at most `height` buffer lines.
-        let visual_rows =
-            self.visual_rows_for_window(buffer, width, scroll_top, height);
+        let visual_rows = self.visual_rows_for_window(buffer, width, scroll_top, height);
         let end_line_idx = visual_rows
             .last()
             .map_or(0, |(line_idx, _)| line_idx.saturating_add(1));
@@ -935,11 +935,7 @@ impl View {
             let Some((line_idx, seg)) = visual_rows.get(screen_row) else {
                 // Past content: welcome message once on empty docs, else `~`.
                 if screen_row == top_third && buffer.is_empty() {
-                    Self::render_line(
-                        rect,
-                        screen_row,
-                        &Self::build_welcome_message(width),
-                    )?;
+                    Self::render_line(rect, screen_row, &Self::build_welcome_message(width))?;
                 } else {
                     Self::render_line(rect, screen_row, "~")?;
                 }
@@ -1018,9 +1014,17 @@ mod tests {
         });
         for ch in text.chars() {
             if ch == '\n' {
-                view.handle_edit_command(Edit::InsertNewLine, &mut buffer, &mut crate::clipboard::MemClipboard::default());
+                view.handle_edit_command(
+                    Edit::InsertNewLine,
+                    &mut buffer,
+                    &mut crate::clipboard::MemClipboard::default(),
+                );
             } else {
-                view.handle_edit_command(Edit::Insert(ch), &mut buffer, &mut crate::clipboard::MemClipboard::default());
+                view.handle_edit_command(
+                    Edit::Insert(ch),
+                    &mut buffer,
+                    &mut crate::clipboard::MemClipboard::default(),
+                );
             }
         }
         view.undo_stack.clear();
@@ -1036,7 +1040,11 @@ mod tests {
     fn undo_single_insert() {
         let mut view = View::default();
         let mut buffer = Buffer::default();
-        view.handle_edit_command(Edit::Insert('a'), &mut buffer, &mut crate::clipboard::MemClipboard::default());
+        view.handle_edit_command(
+            Edit::Insert('a'),
+            &mut buffer,
+            &mut crate::clipboard::MemClipboard::default(),
+        );
         assert_eq!(buffer.grapheme_count(0), 1);
 
         view.undo(&mut buffer);
@@ -1047,7 +1055,11 @@ mod tests {
     fn redo_single_insert() {
         let mut view = View::default();
         let mut buffer = Buffer::default();
-        view.handle_edit_command(Edit::Insert('a'), &mut buffer, &mut crate::clipboard::MemClipboard::default());
+        view.handle_edit_command(
+            Edit::Insert('a'),
+            &mut buffer,
+            &mut crate::clipboard::MemClipboard::default(),
+        );
         view.undo(&mut buffer);
         view.redo(&mut buffer);
         assert_eq!(buffer.grapheme_count(0), 1);
@@ -1058,7 +1070,11 @@ mod tests {
         let mut view = View::default();
         let mut buffer = Buffer::default();
         for ch in "hello".chars() {
-            view.handle_edit_command(Edit::Insert(ch), &mut buffer, &mut crate::clipboard::MemClipboard::default());
+            view.handle_edit_command(
+                Edit::Insert(ch),
+                &mut buffer,
+                &mut crate::clipboard::MemClipboard::default(),
+            );
         }
         assert_eq!(buffer.grapheme_count(0), 5);
 
@@ -1073,9 +1089,17 @@ mod tests {
         let mut view = View::default();
         let mut buffer = Buffer::default();
         for ch in "hello".chars() {
-            view.handle_edit_command(Edit::Insert(ch), &mut buffer, &mut crate::clipboard::MemClipboard::default());
+            view.handle_edit_command(
+                Edit::Insert(ch),
+                &mut buffer,
+                &mut crate::clipboard::MemClipboard::default(),
+            );
         }
-        view.handle_edit_command(Edit::InsertNewLine, &mut buffer, &mut crate::clipboard::MemClipboard::default());
+        view.handle_edit_command(
+            Edit::InsertNewLine,
+            &mut buffer,
+            &mut crate::clipboard::MemClipboard::default(),
+        );
         assert_eq!(buffer.height(), 2);
 
         view.undo(&mut buffer);
@@ -1086,7 +1110,11 @@ mod tests {
     #[test]
     fn delete_undo_redo() {
         let (mut view, mut buffer) = setup_view_and_buffer("hi");
-        view.handle_edit_command(Edit::Delete, &mut buffer, &mut crate::clipboard::MemClipboard::default());
+        view.handle_edit_command(
+            Edit::Delete,
+            &mut buffer,
+            &mut crate::clipboard::MemClipboard::default(),
+        );
         assert_eq!(buffer.grapheme_count(0), 1);
 
         view.undo(&mut buffer);
@@ -1101,7 +1129,11 @@ mod tests {
         let mut view = View::default();
         let mut buffer = Buffer::default();
         for ch in "hello".chars() {
-            view.handle_edit_command(Edit::Insert(ch), &mut buffer, &mut crate::clipboard::MemClipboard::default());
+            view.handle_edit_command(
+                Edit::Insert(ch),
+                &mut buffer,
+                &mut crate::clipboard::MemClipboard::default(),
+            );
             view.last_insert_time = Some(std::time::Instant::now());
             view.last_insert_location = Some(view.text_location);
         }
@@ -1224,12 +1256,10 @@ mod tests {
     }
 
     #[test]
-    fn wrap_window_lists_segments_in_order() {        let (view, buffer) = setup_wrapped_view("hello world foo\nxy", 8);
+    fn wrap_window_lists_segments_in_order() {
+        let (view, buffer) = setup_wrapped_view("hello world foo\nxy", 8);
         let rows = view.visual_rows_for_window(&buffer, 8, 0, 4);
-        assert_eq!(
-            rows,
-            vec![(0, 0..6), (0, 6..12), (0, 12..15), (1, 0..2)]
-        );
+        assert_eq!(rows, vec![(0, 0..6), (0, 6..12), (0, 12..15), (1, 0..2)]);
         // Window starting mid-line skips earlier segments.
         let rows = view.visual_rows_for_window(&buffer, 8, 2, 2);
         assert_eq!(rows, vec![(0, 12..15), (1, 0..2)]);

@@ -5,11 +5,11 @@
 // View, CommandBar, StatusBar etc. are untouched.
 
 use super::UIComponent;
+use crate::prelude::*;
+use std::io::Error;
 use yonro_core::buffers::{Buffer, BufferManager};
 use yonro_core::command::Move;
 use yonro_core::manuscript::{Manuscript, NodeId};
-use crate::prelude::*;
-use std::io::Error;
 
 /// What a mouse click on a plugin component resolved to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,14 +50,12 @@ pub trait PluginComponent: UIComponent + Send {
     /// Update component state from a buffer (e.g., word count, syntax info).
     /// Called when the associated buffer changes.
     /// Default implementation does nothing.
-    fn update_from_buffer(&mut self, _buffer: &Buffer) {
-    }
+    fn update_from_buffer(&mut self, _buffer: &Buffer) {}
 
     /// Rebuild outline rows from the manuscript (`PLAN.md Phase 4.3`).
     /// Called every frame while the outline sidebar is visible; components
     /// must preserve selection across syncs. Default: no-op.
-    fn sync_outline(&mut self, _manuscript: &Manuscript, _buffers: &BufferManager) {
-    }
+    fn sync_outline(&mut self, _manuscript: &Manuscript, _buffers: &BufferManager) {}
 
     /// Currently selected outline node, if any.
     fn outline_selection(&self) -> Option<NodeId> {
@@ -65,12 +63,10 @@ pub trait PluginComponent: UIComponent + Send {
     }
 
     /// Focus an outline node (used after structural adds).
-    fn set_outline_selection(&mut self, _id: Option<NodeId>) {
-    }
+    fn set_outline_selection(&mut self, _id: Option<NodeId>) {}
 
     /// Push `@mention` candidates into an autocomplete popup.
     /// `items` are (display name, kind label); `selected` is the highlight.
     /// Default: no-op.
-    fn sync_mention(&mut self, _items: &[(String, String)], _selected: usize) {
-    }
+    fn sync_mention(&mut self, _items: &[(String, String)], _selected: usize) {}
 }

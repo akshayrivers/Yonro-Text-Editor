@@ -1,9 +1,9 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use yonro_tui::prelude::*;
 use yonro_tui::{
     layout::{LayoutTree, Pane, PaneContent, PaneManager, SplitDirection},
     uicomponents::View,
 };
-use yonro_tui::prelude::*;
 
 fn build_nested_layout_tree(num_panes: usize, rect: Rect) -> LayoutTree {
     let mut tree = LayoutTree::new(0, rect);
@@ -24,7 +24,10 @@ fn bench_layout_computation(c: &mut Criterion) {
 
     let screen_rect = Rect {
         position: Position { row: 1, col: 0 },
-        size: Size { height: 60, width: 200 },
+        size: Size {
+            height: 60,
+            width: 200,
+        },
     };
 
     for &pane_count in &[2, 4, 8, 16, 32] {
@@ -49,7 +52,10 @@ fn bench_layout_mutations(c: &mut Criterion) {
 
     let screen_rect = Rect {
         position: Position { row: 1, col: 0 },
-        size: Size { height: 60, width: 200 },
+        size: Size {
+            height: 60,
+            width: 200,
+        },
     };
 
     group.bench_function("split_and_remove_node", |b| {
@@ -91,7 +97,10 @@ fn bench_pane_manager(c: &mut Criterion) {
 
     let screen_rect = Rect {
         position: Position { row: 1, col: 0 },
-        size: Size { height: 60, width: 200 },
+        size: Size {
+            height: 60,
+            width: 200,
+        },
     };
 
     group.bench_function("create_and_switch_panes", |b| {

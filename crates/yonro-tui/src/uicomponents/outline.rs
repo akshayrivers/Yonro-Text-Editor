@@ -154,8 +154,7 @@ impl Outline {
             let abs_row = content_row_start.saturating_add(screen_row);
             let line = match self.rows.get(self.scroll_top.saturating_add(screen_row)) {
                 Some(row) => {
-                    let prefix = if Some(row.id)
-                        == self.rows.get(self.selected_idx).map(|r| r.id)
+                    let prefix = if Some(row.id) == self.rows.get(self.selected_idx).map(|r| r.id)
                         && self.active
                     {
                         "▶ "

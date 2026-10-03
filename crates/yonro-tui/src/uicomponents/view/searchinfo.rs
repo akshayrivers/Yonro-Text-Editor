@@ -1,5 +1,5 @@
-use yonro_core::Line;
 use crate::prelude::*;
+use yonro_core::Line;
 
 pub struct SearchInfo {
     pub prev_location: Location,

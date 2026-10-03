@@ -6,19 +6,20 @@ use std::{
     panic::{set_hook, take_hook},
     time::{Duration, Instant},
 };
+use unicode_segmentation::UnicodeSegmentation;
 use yonro_core::{
     Buffer, BufferManager, Command, DocumentStatus, Edit, EditorEvent, FileType, Move, System,
 };
-use unicode_segmentation::UnicodeSegmentation;
 
-pub use crate::command_dispatcher::{EditorContext, HandlerRegistry, PromptType};
 pub use crate::clipboard::SystemClipboard;
+pub use crate::command_dispatcher::{EditorContext, HandlerRegistry, PromptType};
 pub use crate::layout::{
-    DocTab, LayoutNode, LayoutTree, Pane, PaneContent, PaneManager, SplitDirection, SplitHandle, SidebarKind,
+    DocTab, LayoutNode, LayoutTree, Pane, PaneContent, PaneManager, SidebarKind, SplitDirection,
+    SplitHandle,
 };
 pub use crate::plugins::{
-    builtin::{FileExplorerPlugin, OutlinePlugin, WordCountPlugin}, BufferSnapshot, OutlineField, Plugin, PluginMessage, PluginResponse,
-    PluginRuntime,
+    builtin::{FileExplorerPlugin, OutlinePlugin, WordCountPlugin},
+    BufferSnapshot, OutlineField, Plugin, PluginMessage, PluginResponse, PluginRuntime,
 };
 pub use crate::terminal::Terminal;
 pub use crate::uicomponents::{
@@ -26,8 +27,8 @@ pub use crate::uicomponents::{
     MessageBar, Outline, PaneBar, StatusBar, UIComponent, View, WordCount,
 };
 pub use yonro_core::{
-    manuscript::{Manuscript, NodeKind},
     lore::{is_mention_char, LoreBook},
+    manuscript::{Manuscript, NodeKind},
     MarkDownSyntaxHighlighter, RustSyntaxHighlighter, SearchResultHighlighter, SyntaxHighlighter,
     TextSyntaxHighlighter,
 };
@@ -55,7 +56,8 @@ impl MentionState {
 }
 
 pub struct Editor {
-    should_quit: bool,    layout_tree: LayoutTree,
+    should_quit: bool,
+    layout_tree: LayoutTree,
     pane_manager: PaneManager,
     buffer_manager: BufferManager,
 
@@ -294,8 +296,11 @@ impl Editor {
                     let was_in_prompt = self.in_prompt();
                     self.handle_event(event);
                     if !was_in_prompt {
-                        let active_pane_id =
-                            self.pane_manager.active_pane().map(|p| p.pane_id).unwrap_or(0);
+                        let active_pane_id = self
+                            .pane_manager
+                            .active_pane()
+                            .map(|p| p.pane_id)
+                            .unwrap_or(0);
                         // Fire and forget to plugin runtime
                         self.plugin_runtime.send(PluginMessage::Event {
                             event: event_for_plugins,
@@ -509,9 +514,7 @@ impl Editor {
             PluginResponse::ToggleSidebar { kind } => {
                 // Kind-switch: hide the current sidebar first (without conflating
                 // `visible` with `is_floating`; hidden panes are simply not rendered).
-                if self.layout_tree.sidebar.kind != kind
-                    && self.layout_tree.sidebar.visible
-                {
+                if self.layout_tree.sidebar.kind != kind && self.layout_tree.sidebar.visible {
                     let old_kind = self.layout_tree.sidebar.kind;
                     if let Some(pane_id) = self.layout_tree.sidebar.pane_id {
                         if let Some(pane) = self.pane_manager.get_pane_mut(pane_id) {
@@ -548,9 +551,7 @@ impl Editor {
                     }
                 } else {
                     // Toggle ON - show sidebar
-                    let pane_id = if let Some(existing_id) =
-                        self.layout_tree.sidebar.pane_id
-                    {
+                    let pane_id = if let Some(existing_id) = self.layout_tree.sidebar.pane_id {
                         // Reuse existing pane
                         existing_id
                     } else {
@@ -603,8 +604,7 @@ impl Editor {
             PluginResponse::CloseSidebar { kind } => {
                 // Explicit hide (Esc, [x], close command). No-op unless the
                 // shown sidebar matches, so stray closes can't kill the tree.
-                if self.layout_tree.sidebar.visible && self.layout_tree.sidebar.kind == kind
-                {
+                if self.layout_tree.sidebar.visible && self.layout_tree.sidebar.kind == kind {
                     if let Some(pane_id) = self.layout_tree.sidebar.pane_id {
                         if let Some(pane) = self.pane_manager.get_pane_mut(pane_id) {
                             pane.is_floating = false;
@@ -809,7 +809,11 @@ impl Editor {
                         // Outline: same as Enter. Otherwise classic file open.
                         if self.is_outline_pane(pane_id) {
                             self.open_outline_selection(pane_id);
-                        } else if let Some(path) = self.pane_manager.get_pane_mut(pane_id).and_then(|p| p.plugin_handle_select()) {
+                        } else if let Some(path) = self
+                            .pane_manager
+                            .get_pane_mut(pane_id)
+                            .and_then(|p| p.plugin_handle_select())
+                        {
                             // Persistent explorer: stay open; new tab keeps
                             // the previous file in place.
                             self.open_file_in_new_pane(&path);
@@ -863,7 +867,10 @@ impl Editor {
                 if let Some(pane) = self.pane_manager.get_pane_mut(sidebar_pane_id) {
                     let sidebar_width = self.layout_tree.sidebar.width;
                     let sidebar_rect = Rect {
-                        position: Position { row: 1, col: width.saturating_sub(sidebar_width) },
+                        position: Position {
+                            row: 1,
+                            col: width.saturating_sub(sidebar_width),
+                        },
                         size: Size {
                             height: height.saturating_sub(3),
                             width: sidebar_width,
@@ -874,8 +881,7 @@ impl Editor {
                     pane.resize(sidebar_rect);
                     // Outline rows rebuild from the manuscript every visible
                     // frame (selection preserved by node id inside).
-                    if let crate::layout::PaneContent::Plugin(component) = &mut pane.content
-                    {
+                    if let crate::layout::PaneContent::Plugin(component) = &mut pane.content {
                         component.sync_outline(&self.manuscript, &self.buffer_manager);
                     }
                     pane.render(&self.buffer_manager);
@@ -1057,10 +1063,11 @@ impl Editor {
         for pane in self.pane_manager.iter_mut() {
             if pane.is_floating {
                 let mut rect = pane.component().rect();
-                rect.position.col = rect
-                    .position
-                    .col
-                    .min(width.saturating_sub(sidebar_width).saturating_sub(rect.size.width));
+                rect.position.col = rect.position.col.min(
+                    width
+                        .saturating_sub(sidebar_width)
+                        .saturating_sub(rect.size.width),
+                );
                 let max_row = height
                     .saturating_sub(rect.size.height.saturating_add(2))
                     .max(1);
@@ -1222,9 +1229,7 @@ impl Editor {
                     let is_sidebar_wordcount = Some(pane.pane_id) == sidebar_id
                         && self.layout_tree.sidebar.kind == SidebarKind::WordCount;
                     if pane.is_floating || is_sidebar_wordcount {
-                        if let crate::layout::PaneContent::Plugin(component) =
-                            &mut pane.content
-                        {
+                        if let crate::layout::PaneContent::Plugin(component) = &mut pane.content {
                             component.update_from_buffer(buffer);
                         }
                     }
@@ -1268,10 +1273,7 @@ impl Editor {
         let location = view.location();
         let line = buffer.get_line(location.line_idx)?;
         let text: &str = &line.to_string();
-        let prefix: Vec<&str> = text
-            .graphemes(true)
-            .take(location.grapheme_idx)
-            .collect();
+        let prefix: Vec<&str> = text.graphemes(true).take(location.grapheme_idx).collect();
         let mut start = prefix.len();
         while start > 0
             && prefix[start.saturating_sub(1)]
@@ -1303,7 +1305,10 @@ impl Editor {
     /// Display rows for the popup: (name, kind label), or a hint when empty.
     fn mention_items(&self, candidates: &[yonro_core::lore::EntityId]) -> Vec<(String, String)> {
         if candidates.is_empty() {
-            return vec![("no lore yet — set scene POVs".to_string(), "hint".to_string())];
+            return vec![(
+                "no lore yet — set scene POVs".to_string(),
+                "hint".to_string(),
+            )];
         }
         candidates
             .iter()
@@ -1342,9 +1347,7 @@ impl Editor {
             .unwrap_or(Position { row: 1, col: 0 });
         let width = 44.min(term.width.saturating_sub(2)).max(20);
         let height = height_rows.min(10).max(3);
-        let col = caret
-            .col
-            .min(term.width.saturating_sub(width).max(0));
+        let col = caret.col.min(term.width.saturating_sub(width).max(0));
         let below = caret.row.saturating_add(1);
         let row = if below.saturating_add(height) > term.height.saturating_sub(1) {
             caret.row.saturating_sub(height)
@@ -1517,16 +1520,17 @@ impl Editor {
         // Backlink: scenes carrying this POV.
         let mut scenes = Vec::new();
         let root = self.manuscript.root();
-        let acts: Vec<usize> = self.manuscript.children(root).iter().map(|n| n.id).collect();
+        let acts: Vec<usize> = self
+            .manuscript
+            .children(root)
+            .iter()
+            .map(|n| n.id)
+            .collect();
         for act in acts {
-            let chapters: Vec<usize> =
-                self.manuscript.children(act).iter().map(|n| n.id).collect();
+            let chapters: Vec<usize> = self.manuscript.children(act).iter().map(|n| n.id).collect();
             for chapter in chapters {
                 for scene in self.manuscript.children(chapter) {
-                    let pov = scene
-                        .meta
-                        .as_ref()
-                        .map_or("", |meta| meta.pov.as_str());
+                    let pov = scene.meta.as_ref().map_or("", |meta| meta.pov.as_str());
                     if !pov.is_empty()
                         && (pov.eq_ignore_ascii_case(&entity.name)
                             || entity
@@ -1806,10 +1810,14 @@ impl Editor {
     /// file opens, and undo/redo — anything that changes draft sizes).
     fn sync_manuscript_words(&mut self) {
         let root = self.manuscript.root();
-        let acts: Vec<usize> = self.manuscript.children(root).iter().map(|n| n.id).collect();
+        let acts: Vec<usize> = self
+            .manuscript
+            .children(root)
+            .iter()
+            .map(|n| n.id)
+            .collect();
         for act in acts {
-            let chapters: Vec<usize> =
-                self.manuscript.children(act).iter().map(|n| n.id).collect();
+            let chapters: Vec<usize> = self.manuscript.children(act).iter().map(|n| n.id).collect();
             for chapter in chapters {
                 let scenes: Vec<usize> = self
                     .manuscript
@@ -1900,9 +1908,7 @@ impl Editor {
 
         let mut view = View::default();
         view.set_buffer_id(buffer_id);
-        let new_id = self
-            .pane_manager
-            .create_pane(PaneContent::TextView(view));
+        let new_id = self.pane_manager.create_pane(PaneContent::TextView(view));
         if let Some(pane) = self.pane_manager.get_pane_mut(new_id) {
             if let Some(view) = pane.view_mut() {
                 view.set_id(new_id);
@@ -2010,7 +2016,11 @@ impl Editor {
             if self.doc_tabs.len() <= 1 {
                 return false;
             }
-            let neighbor = if self.active_tab == 0 { 1 } else { self.active_tab - 1 };
+            let neighbor = if self.active_tab == 0 {
+                1
+            } else {
+                self.active_tab - 1
+            };
             self.switch_tab(neighbor);
             // The doomed pane is now stashed — fall through below.
         }
@@ -2018,8 +2028,7 @@ impl Editor {
         for tab in self.doc_tabs.iter_mut() {
             if tab.pane_ids().contains(&pane_id) {
                 // `None` (emptied root) is left for `prune_tabs` to drop.
-                if let Some(new_root) = LayoutTree::remove_from_root(tab.root.clone(), pane_id)
-                {
+                if let Some(new_root) = LayoutTree::remove_from_root(tab.root.clone(), pane_id) {
                     tab.root = new_root;
                 }
                 found = true;
@@ -2062,9 +2071,7 @@ impl Editor {
             let buffer_id = self.buffer_manager.add(Buffer::default());
             let mut view = View::default();
             view.set_buffer_id(buffer_id);
-            let new_id = self
-                .pane_manager
-                .create_pane(PaneContent::TextView(view));
+            let new_id = self.pane_manager.create_pane(PaneContent::TextView(view));
             if let Some(pane) = self.pane_manager.get_pane_mut(new_id) {
                 if let Some(view) = pane.view_mut() {
                     view.set_id(new_id);
@@ -2118,8 +2125,8 @@ impl Drop for Editor {
 mod tests {
     use super::*;
     use crate::layout::{LayoutTree, Sidebar, SidebarKind};
-    use crate::uicomponents::{FileExplorer, WordCount};
     use crate::prelude::*;
+    use crate::uicomponents::{FileExplorer, WordCount};
     use yonro_core::buffers::Buffer;
 
     #[test]
@@ -2135,31 +2142,40 @@ mod tests {
     fn test_sidebar_toggle() {
         let mut sidebar = Sidebar::new(SidebarKind::FileExplorer, 30);
         assert!(!sidebar.visible);
-        
+
         sidebar.toggle();
         assert!(sidebar.visible);
-        
+
         sidebar.toggle();
         assert!(!sidebar.visible);
     }
 
     #[test]
     fn test_layout_tree_sidebar_integration() {
-        let mut layout = LayoutTree::new(0, Rect {
-            position: Position { row: 1, col: 0 },
-            size: Size { height: 20, width: 80 },
-        });
-        
+        let mut layout = LayoutTree::new(
+            0,
+            Rect {
+                position: Position { row: 1, col: 0 },
+                size: Size {
+                    height: 20,
+                    width: 80,
+                },
+            },
+        );
+
         assert!(!layout.sidebar.visible);
-        
+
         layout.sidebar.toggle();
         assert!(layout.sidebar.visible);
-        
+
         layout.compute_layout(Rect {
             position: Position { row: 1, col: 0 },
-            size: Size { height: 20, width: 80 },
+            size: Size {
+                height: 20,
+                width: 80,
+            },
         });
-        
+
         let leaves = layout.collect_leaf_layouts();
         for (_, rect) in leaves {
             assert_eq!(rect.size.width, 50); // 80 - 30 = 50
@@ -2184,21 +2200,84 @@ mod tests {
     fn test_word_count_update_from_buffer() {
         let mut wc = WordCount::default();
         let mut buffer = Buffer::default();
-        
-        buffer.insert_char('h', Location { line_idx: 0, grapheme_idx: 0 });
-        buffer.insert_char('e', Location { line_idx: 0, grapheme_idx: 1 });
-        buffer.insert_char('l', Location { line_idx: 0, grapheme_idx: 2 });
-        buffer.insert_char('l', Location { line_idx: 0, grapheme_idx: 3 });
-        buffer.insert_char('o', Location { line_idx: 0, grapheme_idx: 4 });
-        buffer.insert_newline(Location { line_idx: 0, grapheme_idx: 5 });
-        buffer.insert_char('w', Location { line_idx: 1, grapheme_idx: 0 });
-        buffer.insert_char('o', Location { line_idx: 1, grapheme_idx: 1 });
-        buffer.insert_char('r', Location { line_idx: 1, grapheme_idx: 2 });
-        buffer.insert_char('l', Location { line_idx: 1, grapheme_idx: 3 });
-        buffer.insert_char('d', Location { line_idx: 1, grapheme_idx: 4 });
-        
+
+        buffer.insert_char(
+            'h',
+            Location {
+                line_idx: 0,
+                grapheme_idx: 0,
+            },
+        );
+        buffer.insert_char(
+            'e',
+            Location {
+                line_idx: 0,
+                grapheme_idx: 1,
+            },
+        );
+        buffer.insert_char(
+            'l',
+            Location {
+                line_idx: 0,
+                grapheme_idx: 2,
+            },
+        );
+        buffer.insert_char(
+            'l',
+            Location {
+                line_idx: 0,
+                grapheme_idx: 3,
+            },
+        );
+        buffer.insert_char(
+            'o',
+            Location {
+                line_idx: 0,
+                grapheme_idx: 4,
+            },
+        );
+        buffer.insert_newline(Location {
+            line_idx: 0,
+            grapheme_idx: 5,
+        });
+        buffer.insert_char(
+            'w',
+            Location {
+                line_idx: 1,
+                grapheme_idx: 0,
+            },
+        );
+        buffer.insert_char(
+            'o',
+            Location {
+                line_idx: 1,
+                grapheme_idx: 1,
+            },
+        );
+        buffer.insert_char(
+            'r',
+            Location {
+                line_idx: 1,
+                grapheme_idx: 2,
+            },
+        );
+        buffer.insert_char(
+            'l',
+            Location {
+                line_idx: 1,
+                grapheme_idx: 3,
+            },
+        );
+        buffer.insert_char(
+            'd',
+            Location {
+                line_idx: 1,
+                grapheme_idx: 4,
+            },
+        );
+
         wc.update_from_buffer(&buffer);
-        
+
         // "hello world" = 2 words, 10 chars (without newline), 2 lines
         assert_eq!(wc.words(), 2);
         assert_eq!(wc.lines(), 2);
@@ -2212,8 +2291,20 @@ mod tests {
         // froze at 0. This must update through dynamic dispatch.
         use crate::uicomponents::PluginComponent;
         let mut buffer = Buffer::default();
-        buffer.insert_char('h', Location { line_idx: 0, grapheme_idx: 0 });
-        buffer.insert_char('i', Location { line_idx: 0, grapheme_idx: 1 });
+        buffer.insert_char(
+            'h',
+            Location {
+                line_idx: 0,
+                grapheme_idx: 0,
+            },
+        );
+        buffer.insert_char(
+            'i',
+            Location {
+                line_idx: 0,
+                grapheme_idx: 1,
+            },
+        );
 
         let mut boxed: Box<dyn PluginComponent> = Box::new(WordCount::default());
         boxed.update_from_buffer(&buffer);
@@ -2236,7 +2327,13 @@ mod tests {
         // Family emoji is one grapheme cluster, not 7 scalar chars.
         let mut buffer = Buffer::default();
         for (i, c) in "👨‍👩‍👧‍👦".chars().enumerate() {
-            buffer.insert_char(c, Location { line_idx: 0, grapheme_idx: i });
+            buffer.insert_char(
+                c,
+                Location {
+                    line_idx: 0,
+                    grapheme_idx: i,
+                },
+            );
         }
         let (words, graphemes, _) = buffer.word_count_stats();
         assert_eq!(graphemes, 1);

@@ -5,7 +5,9 @@
 //! `yonro-core::events` during the Phase 2 workspace split so core keeps
 //! zero UI dependencies (`AGENTS.md §2.2`).
 
-use yonro_core::events::{EditorEvent, KeyCode, KeyInput, KeyModifiers, MouseAction, MouseButton, MouseInput};
+use yonro_core::events::{
+    EditorEvent, KeyCode, KeyInput, KeyModifiers, MouseAction, MouseButton, MouseInput,
+};
 use yonro_core::prelude::{Position, Size};
 
 /// Convert a raw crossterm event into an `EditorEvent`.

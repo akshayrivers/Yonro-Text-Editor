@@ -7,7 +7,8 @@ fn bench_line_creation(c: &mut Criterion) {
     let short_ascii = "fn main() { println!(\"hello\"); }";
     let medium_ascii = "pub fn handle_resize_command(&mut self, size: Size) { self.terminal_size = size; self.sync(); }";
     let long_ascii = "let very_long_string_with_many_identifiers_and_tokens_for_benchmarking_purposes = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]; ".repeat(10);
-    let unicode_text = "नमस्ते दुनिया! こんにちは世界！ مرحبا بالعالم Здравствуйте, мир! Hello 🚀🦀✨🔥";
+    let unicode_text =
+        "नमस्ते दुनिया! こんにちは世界！ مرحبا بالعالم Здравствуйте, мир! Hello 🚀🦀✨🔥";
     let complex_emoji = "👨‍👩‍👧‍👦 👨‍💻 🏳️‍🌈 👩🏼‍🚀 🏃‍♀️ 🧙‍♂️ 🧟‍♂️ 🧝‍♀️ 🦸‍♂️ 🧑‍🍳 ".repeat(10);
 
     for (name, text) in [
@@ -138,7 +139,9 @@ fn bench_line_search(c: &mut Criterion) {
     });
 
     group.bench_function("search_forward_miss", |b| {
-        b.iter(|| black_box(&haystack).search_forward(black_box("nonexistent_pattern"), black_box(0)));
+        b.iter(|| {
+            black_box(&haystack).search_forward(black_box("nonexistent_pattern"), black_box(0))
+        });
     });
 
     group.bench_function("search_backward_hit", |b| {

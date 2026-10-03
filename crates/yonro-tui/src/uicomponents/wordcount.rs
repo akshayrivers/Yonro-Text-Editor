@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use crate::terminal::Terminal;
-use crate::uicomponents::{UIComponent, PluginComponent};
+use crate::uicomponents::{PluginComponent, UIComponent};
 use std::io::Error;
 use yonro_core::buffers::Buffer;
 
@@ -103,14 +103,20 @@ impl UIComponent for WordCount {
             "─ [Word Count]  "
         };
         let _ = Terminal::print_at(
-            Position { row, col: col.saturating_add(1) },
+            Position {
+                row,
+                col: col.saturating_add(1),
+            },
             title,
         );
 
         // Close button
         if width >= 10 {
             let _ = Terminal::print_at(
-                Position { row, col: col.saturating_add(width).saturating_sub(4) },
+                Position {
+                    row,
+                    col: col.saturating_add(width).saturating_sub(4),
+                },
                 "[x]",
             );
         }
@@ -131,7 +137,10 @@ impl UIComponent for WordCount {
             let line_row = content_row.saturating_add(i);
             if line_row < row.saturating_add(height).saturating_sub(1) {
                 let _ = Terminal::print_at(
-                    Position { row: line_row, col: content_col },
+                    Position {
+                        row: line_row,
+                        col: content_col,
+                    },
                     &format!("{:<width$}", line, width = content_width),
                 );
             }
@@ -168,7 +177,12 @@ impl PluginComponent for WordCount {
 
     fn handle_click(&mut self, position: Position) -> crate::uicomponents::ClickAction {
         // Check if close button clicked
-        let close_col = self.rect.position.col.saturating_add(self.rect.size.width).saturating_sub(4);
+        let close_col = self
+            .rect
+            .position
+            .col
+            .saturating_add(self.rect.size.width)
+            .saturating_sub(4);
         if position.row == self.rect.position.row
             && position.col >= close_col
             && position.col < close_col + 3

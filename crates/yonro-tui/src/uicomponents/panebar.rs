@@ -1,11 +1,11 @@
 use super::UIComponent;
-use yonro_core::buffers::BufferManager;
 use crate::layout::{DocTab, PaneManager};
-use crate::terminal::Terminal;
 use crate::prelude::*;
+use crate::terminal::Terminal;
 use std::io::Error;
-use unicode_width::UnicodeWidthStr;
 use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
+use yonro_core::buffers::BufferManager;
 
 #[derive(Default)]
 pub struct PaneBar {
@@ -89,17 +89,27 @@ impl PaneBar {
 
             let start_col = self.rect.position.col + current_col;
             let end_col = start_col + display_text.width();
-            self.tab_hitboxes.push((tab_idx, tab.active_pane, start_col, end_col));
+            self.tab_hitboxes
+                .push((tab_idx, tab.active_pane, start_col, end_col));
 
             // Close button inline: "✕"
             let close_text = "✕";
             let close_start = end_col;
             let close_end = close_start + close_text.width();
             if close_end <= self.rect.position.col + width {
-                self.close_hitboxes.push((tab_idx, tab.active_pane, close_start, close_end));
+                self.close_hitboxes
+                    .push((tab_idx, tab.active_pane, close_start, close_end));
             }
 
-            let full_text = format!("{}{}", formatted, if close_end <= self.rect.position.col + width { close_text } else { "" });
+            let full_text = format!(
+                "{}{}",
+                formatted,
+                if close_end <= self.rect.position.col + width {
+                    close_text
+                } else {
+                    ""
+                }
+            );
 
             Terminal::print_at(
                 Position {
@@ -153,7 +163,8 @@ impl PaneBar {
 
                     let start_col = self.rect.position.col + current_col;
                     let end_col = start_col + display_text.width();
-                    self.minimized_hitboxes.push((pane.pane_id, start_col, end_col));
+                    self.minimized_hitboxes
+                        .push((pane.pane_id, start_col, end_col));
 
                     Terminal::print_at(
                         Position {

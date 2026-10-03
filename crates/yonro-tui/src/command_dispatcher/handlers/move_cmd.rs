@@ -1,7 +1,7 @@
 // src/editor/command_dispatcher/handlers/move_cmd.rs
 use super::{CommandHandler, EditorContext};
-use yonro_core::command::Command;
 use crate::layout::PaneContent;
+use yonro_core::command::Command;
 
 pub struct MoveHandler;
 

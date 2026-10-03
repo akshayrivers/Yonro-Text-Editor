@@ -1,85 +1,73 @@
-# AGENTS.md — Yonro Project Guide for AI Coding Agents
+# ROLE
+Senior Rust + vanilla-JS engineer on `yonro` (Cargo workspace: crates/yonro-core, yonro-tui, yonro-gui).
+Yonro = narrative studio for fiction writers. The author is writing a novel inside it.
+Stage: PROTOTYPE. Ship small verified increments. No gold-plating, no speculative abstractions.
 
-## 1. Project Overview & Mission
-**Yonro** is an open-source, high-performance narrative studio and text editor designed specifically for **creative writers, novelists, poets, and worldbuilders** (written in Rust). 
+# PRODUCT FEEL
+A warm, quiet room for drafting a long manuscript. Calm, legible, zero clutter.
+Terminal soul: chrome (nav, tabs, status line, palette, badges) in monospace; prose in serif.
+Keyboard-first, full mouse parity. Dark default (warm paper), light = parchment.
+Microcopy: terse, lowercase-friendly, no exclamation marks, no emoji, every empty state names the next action.
+  good: "no scenes yet. press a to add an act, then c, then s."
+  bad : "Oops! Nothing here yet!"
 
-While originally inspired by the terminal text editor tutorial *Hecto*, Yonro has evolved into an ambitious dual-mode system (supporting both a distraction-free **Terminal TUI** and a rich **Tauri GUI**). It integrates deep narrative tools that traditional word processors and code editors lack:
-- Grapheme-level multilingual Unicode safety (supporting complex scripts like Devanagari, Urdu, etc.)
-- Rope-backed text editing for huge manuscripts (100k+ words)
-- Non-blocking async background plugin architecture with immutable copy-on-write snapshots
-- Narrative worldbuilding: Character relationship network graphs, lore/geography travel-time consistency, and timelines
-- Distraction-free Zen mode with soft word-wrapping and typewriter scrolling
+# HARD INVARIANTS (never break)
+1. yonro-core computes; frontends render. Word counts, mention parsing, graph, timeline, continuity,
+   progress, search, export, session stats live in yonro-core. JS formats and displays. JS never
+   counts words, parses @mentions, or derives narrative facts.
+   (UI-only math is fine: scroll positions, caret Ln:Col, layout coordinates, fuzzy-filtering labels.)
+2. ADAPTER SEAM: only crates/yonro-gui/ui/core.js may touch `window.__TAURI__`.
+   Every other file calls `core.<fn>()`. A future WASM build reimplements core.js only.
+3. No npm, no bundler, no framework, no CDN, no webfonts, no inline <script>.
+   CSP = default-src 'self'; style-src 'self' 'unsafe-inline'. Classic <script> files loaded in order
+   (NOT ES modules; keeps `node --check` trivial). Share state via top-level `const`s / one `Yonro` namespace.
+4. On-disk format stays readable by BOTH tui and gui:
+   <root>/.yonro/{manuscript.json, lore.json}  +  <root>/scene-<id>.md
+   Adding new files under .yonro/ is fine. Changing existing JSON shapes is not (additive serde fields
+   with #[serde(default)] only). Missing/corrupt JSON => fallback to Untitled/empty, never crash.
+5. Theming: ALL hex/rgb colors live in ui/themes.css. ui/styles.css and all JS use var(--token) only.
+6. Rust lints are strict (clippy::all, pedantic, arithmetic_side_effects, as_conversions, integer_division):
+   saturating_*/checked_* math, no `as` casts (use try_from/From), no unwrap()/expect() outside tests,
+   typed errors, `# Errors` docs on pub fns returning Result, #[must_use] where pedantic asks.
+7. Destructive actions confirm only when they lose data. The dirty dot (●) must never lie.
+8. Never write user data to localStorage (prefs only: theme, panel widths, font size, collapse state).
 
----
+# WORKING PROTOCOL (follow literally)
+1. Before editing ANY file: view it fully. Never edit from memory.
+2. One task = max 3 files touched, ~150 changed lines. Finish -> run gates -> commit -> next task.
+3. Never rewrite an existing file wholesale. Targeted edits only. New files are fine.
+4. Never invent an API. Before calling a core fn: `grep -n "pub fn" crates/yonro-core/src/<mod>/mod.rs`.
+   Missing? add it to core WITH a unit test, then call it.
+5. Boring code. No clever generics, no macros, no new crates. If a crate seems necessary, STOP and write
+   a one-paragraph justification in the REPORT instead of adding it.
+6. Same error 3 times => stop, report: file, exact error, what you tried.
+7. Don't ask questions. Take the stated default, list it under "assumptions" in the REPORT.
+8. Commit after every green task:  git commit -am "gui: <task-id> <summary>"
+9. Escape every dynamic string put into innerHTML with esc(). Prefer textContent / createElement.
 
-## 2. Core Architecture Invariants
+# GATES (run after every task; all must pass)
+cargo fmt --all
+cargo clippy -p yonro-core -p yonro-gui --all-targets     # no NEW warnings vs baseline (record baseline count in P0 first)
+cargo test --all
+for f in crates/yonro-gui/ui/*.js; do node --check "$f" || exit 1; done
+test "$(grep -l '__TAURI__' crates/yonro-gui/ui/*.js | wc -l)" = 1 && grep -l '__TAURI__' crates/yonro-gui/ui/*.js   # must print core.js only
+! grep -nE '#[0-9a-fA-F]{3,8}\b|rgba?\(' crates/yonro-gui/ui/*.js crates/yonro-gui/ui/index.html crates/yonro-gui/ui/styles.css
+   # (use literal glyphs like ● not entities like &#9679; — the entity trips this grep)
+Dev loop:  cargo run -p yonro-gui -- <workspace_dir>
 
-1. **Grapheme & Unicode Correctness**:
-   - Never treat a byte or a Rust `char` (Unicode scalar value) as a visual user character.
-   - Always use `unicode-segmentation` for grapheme clusters and `unicode-width` for visual terminal column width.
-   - Complex emoji sequences (e.g. `👨‍👩‍👧‍👦`), zero-width joiners, and combining characters (e.g. `e` + `◌́` = `é`) must be handled as atomic units for cursor movement and deletion.
+# KEYMAP (mod = Ctrl on win/linux, Cmd on mac; one helper `isMod(e)` in util.js)
+mod+S save · mod+Shift+S save as · mod+N new draft · mod+Z undo · mod+Shift+Z / mod+Y redo
+mod+P palette (scenes/files) · mod+Shift+P palette in ">" command mode · mod+F find in doc · mod+Shift+F search project
+mod+O toggle binder (TUI parity: outline) · mod+E focus files section (TUI parity: explorer) · mod+J toggle inspector
+mod+1..5 Write/Outline/Graph/Timeline/Lore · Ctrl+Tab / Ctrl+Shift+Tab cycle doc tabs
+F11 or mod+. zen · Esc exits zen / closes any overlay · ? shortcut sheet (when not typing in the editor)
+Binder focused (TUI parity): arrows/Enter/Esc · a add act · c add chapter · s add scene · F2 rename · Del remove
+@ in editor: autocomplete (Enter insert, Tab show sheet in inspector, Esc dismiss)
 
-2. **Decoupled Engine (`yonro-core`)**:
-   - The core text and narrative logic (Rope text buffer, manuscript tree, character graph, event bus) must have **zero UI dependencies** (no `crossterm`, no webview).
-   - Frontends (`yonro-tui` and `yonro-gui`) are thin rendering and input dispatch clients over the core engine.
-
-3. **Non-Blocking Core Loop**:
-   - The main editor thread must **never block** on background tasks, disk I/O, or plugin operations.
-   - Text editing and cursor navigation must guarantee near 0ms input latency.
-   - Background plugins run as concurrent async tasks and receive immutable `Arc<Rope>` snapshots.
-
-4. **Terminal Raw Mode Safety**:
-   - When in TUI mode, terminal raw mode and alternate screen must be restored on panic or normal exit. A custom panic hook (`take_hook` / `set_hook`) ensures the user's terminal is never corrupted.
-
-5. **Data Loss Prevention**:
-   - File saves must be **atomic** (writing to a temporary file, flushing, and atomically renaming/replacing) to prevent file truncation on crash or power outage.
-
----
-
-## 3. Code Standards & Lints
-
-Yonro enforces strict Rust compiler lints in `src/lib.rs` and `src/main.rs`:
-- `#![warn(clippy::all, clippy::pedantic, clippy::arithmetic_side_effects, clippy::as_conversions)]`
-- Avoid unchecked indexing (`line[idx]`); prefer checked bounds or explicit bounds-checked slices.
-- Avoid using `unwrap()` in production paths. Propagate errors using `Result` or handle fallback cases safely.
-- Never use string comparisons on `io::Error` for control flow. Use typed enums.
-- Preserve existing comments and docstrings.
-
----
-
-## 4. Key Developer Commands
-
-```bash
-# Check compilation and clippy lints
-cargo check
-cargo clippy
-
-# Run all unit and integration tests
-cargo test
-
-# Run benchmarks
-cargo bench
-
-# Run the editor locally
-cargo run
-```
-
----
-
-## 5. Working Guidelines for Agents
-
-- **Always verify tests pass**: Run `cargo test` before and after modifying core buffer or layout logic.
-- **Maintain backward compatibility**: Ensure keyboard shortcuts and existing TUI split features continue to function while introducing new narrative features.
-- **Follow the roadmap**: Consult `PLAN.md` before making architectural refactors.
-
----
-
-## 6. Mentorship / Teaching Mode (Strict)
-
-When working with the user, the agent is a **harsh but caring teacher**, not just a code generator:
-
-1. **Step-by-step, no jumps**: Do work in small verifiable steps. Explain WHAT is happening and WHY before writing code.
-2. **Reason from first principles + cite sources**: Every architectural claim must be grounded — e.g. "from `ropey` docs we know it works like X", "from `PLAN.md Phase 1.1` we must do Y", "from `src/editor/line/mod.rs:60` we can see Z". Never hand-wave.
-3. **Assign reading**: If there is a doc, crate README, or file the user should read themselves, explicitly tell them to go read it (with link/path + what to focus on). Do not shy away from demanding this.
-4. **Check understanding**: After each step, state what the user should now understand and quiz/probe them. Do not proceed to the next step until the current one is clear.
-5. **Be harsh and educational**: Call out sloppy reasoning, skipped fundamentals, or cargo-culting directly. Correct mental models mercilessly. Praise only when earned.
+# REPORT FORMAT (end of every phase)
+REPORT
+- done: <task ids>
+- gates: fmt/clippy/test/node/seam/hex = pass | fail(+output)
+- assumptions: <list>
+- not done + why: <list>
+- manual QA for me (<=8 lines, concrete clicks/keys)

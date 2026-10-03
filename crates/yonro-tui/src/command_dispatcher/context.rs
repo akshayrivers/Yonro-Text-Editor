@@ -1,11 +1,11 @@
+use crate::clipboard::Clipboard;
+use crate::prelude::*;
 use crate::{
     layout::{LayoutTree, PaneManager},
     plugins::PluginResponse,
     uicomponents::{CommandBar, MessageBar, PaneBar, UIComponent},
 };
 use yonro_core::buffers::BufferManager;
-use crate::clipboard::Clipboard;
-use crate::prelude::*;
 
 /// Thin view into Editor's state for handlers
 /// This is the ONLY thing handlers receive

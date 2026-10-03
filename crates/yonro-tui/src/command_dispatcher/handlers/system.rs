@@ -1,9 +1,9 @@
 use super::{CommandHandler, EditorContext};
-use yonro_core::buffers::Buffer;
-use yonro_core::command::{Command, System};
+use crate::command_dispatcher::PromptType;
 use crate::layout::{PaneContent, SplitDirection};
 use crate::uicomponents::View;
-use crate::command_dispatcher::PromptType;
+use yonro_core::buffers::Buffer;
+use yonro_core::command::{Command, System};
 
 pub struct SystemHandler;
 
@@ -26,7 +26,7 @@ impl CommandHandler for SystemHandler {
                 System::OpenCommandBar => ctx.set_prompt(PromptType::FocusPane),
                 // Handled by `Editor::handle_event` pre-dispatch (needs Editor
                 // state, not just the handler context) — unreachable here.
-                System::ZenToggle => {},
+                System::ZenToggle => {}
                 System::Dismiss => {} // handled by prompt handlers
             }
             Ok(())

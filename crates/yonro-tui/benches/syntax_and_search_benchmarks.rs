@@ -1,4 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use yonro_core::prelude::*;
 use yonro_core::{
     annotatedstring::AnnotatedString,
     annotationtype::AnnotationType,
@@ -8,7 +9,6 @@ use yonro_core::{
     },
     line::Line,
 };
-use yonro_core::prelude::*;
 
 fn sample_rust_code_lines() -> Vec<Line> {
     let raw_code = r#"
@@ -112,11 +112,19 @@ fn bench_markdown_syntax_highlighting(c: &mut Criterion) {
 
 fn bench_search_result_highlighting(c: &mut Criterion) {
     let mut group = c.benchmark_group("search_result_highlighting");
-    let line = Line::from("let buffer = Buffer::new(); buffer.insert('a'); buffer.save(); // buffer manipulation");
+    let line = Line::from(
+        "let buffer = Buffer::new(); buffer.insert('a'); buffer.save(); // buffer manipulation",
+    );
 
     group.bench_function("highlight_search_occurrences", |b| {
         b.iter(|| {
-            let mut search_highlighter = SearchResultHighlighter::new("buffer", Some(Location { line_idx: 0, grapheme_idx: 4 }));
+            let mut search_highlighter = SearchResultHighlighter::new(
+                "buffer",
+                Some(Location {
+                    line_idx: 0,
+                    grapheme_idx: 4,
+                }),
+            );
             search_highlighter.highlight(0, black_box(&line));
             black_box(search_highlighter.get_annotations(0));
         });
@@ -130,12 +138,14 @@ fn bench_annotated_string_ops(c: &mut Criterion) {
 
     group.bench_function("build_and_add_annotations", |b| {
         b.iter(|| {
-            let mut s = AnnotatedString::from(black_box("pub fn process_data(value: usize) -> Option<String> {"));
-            s.add_annotation(AnnotationType::Keyword, 0, 3);   // pub
-            s.add_annotation(AnnotationType::Keyword, 4, 6);   // fn
-            s.add_annotation(AnnotationType::Type, 24, 29);    // usize
-            s.add_annotation(AnnotationType::Type, 34, 40);    // Option
-            s.add_annotation(AnnotationType::Type, 41, 47);    // String
+            let mut s = AnnotatedString::from(black_box(
+                "pub fn process_data(value: usize) -> Option<String> {",
+            ));
+            s.add_annotation(AnnotationType::Keyword, 0, 3); // pub
+            s.add_annotation(AnnotationType::Keyword, 4, 6); // fn
+            s.add_annotation(AnnotationType::Type, 24, 29); // usize
+            s.add_annotation(AnnotationType::Type, 34, 40); // Option
+            s.add_annotation(AnnotationType::Type, 41, 47); // String
             black_box(s);
         });
     });
@@ -153,7 +163,8 @@ fn bench_annotated_string_ops(c: &mut Criterion) {
 
     group.bench_function("replace_and_shift_annotations", |b| {
         b.iter(|| {
-            let mut s = AnnotatedString::from("pub fn process_data(value: usize) -> Option<String> {");
+            let mut s =
+                AnnotatedString::from("pub fn process_data(value: usize) -> Option<String> {");
             s.add_annotation(AnnotationType::Keyword, 0, 3);
             s.add_annotation(AnnotationType::Keyword, 4, 6);
             s.add_annotation(AnnotationType::Type, 24, 29);

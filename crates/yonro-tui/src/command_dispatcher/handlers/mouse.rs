@@ -39,7 +39,8 @@ fn handle_left_click(position: Position, ctx: &mut EditorContext) {
             .map(|&(idx, _, _, _)| idx);
 
         if let Some(tab_idx) = clicked_tab {
-            ctx.plugin_responses.push(PluginResponse::SwitchTab { index: tab_idx });
+            ctx.plugin_responses
+                .push(PluginResponse::SwitchTab { index: tab_idx });
             return;
         }
 
@@ -194,8 +195,8 @@ fn handle_sidebar_click(position: Position, ctx: &mut EditorContext) -> bool {
     let term_height = ctx.terminal_size.height;
     let sidebar_width = sidebar.width;
     let sidebar_col = term_width.saturating_sub(sidebar_width);
-    let in_sidebar_col = position.col >= sidebar_col
-        && position.col < sidebar_col.saturating_add(sidebar_width);
+    let in_sidebar_col =
+        position.col >= sidebar_col && position.col < sidebar_col.saturating_add(sidebar_width);
     let in_sidebar_row =
         position.row >= 1 && position.row < 1_usize.saturating_add(term_height.saturating_sub(3));
     if !(in_sidebar_col && in_sidebar_row) {
@@ -203,9 +204,7 @@ fn handle_sidebar_click(position: Position, ctx: &mut EditorContext) -> bool {
     }
     // Absolute close-button column (was `sidebar_width - 4`, which never hit).
     let close_col = term_width.saturating_sub(4);
-    if position.row == 1
-        && position.col >= close_col
-        && position.col < close_col.saturating_add(3)
+    if position.row == 1 && position.col >= close_col && position.col < close_col.saturating_add(3)
     {
         ctx.plugin_responses
             .push(PluginResponse::CloseSidebar { kind: sidebar.kind });
@@ -215,7 +214,8 @@ fn handle_sidebar_click(position: Position, ctx: &mut EditorContext) -> bool {
     true
 }
 
-fn handle_left_drag(position: Position, ctx: &mut EditorContext) {    if let Some(split_id) = *ctx.dragging_split {
+fn handle_left_drag(position: Position, ctx: &mut EditorContext) {
+    if let Some(split_id) = *ctx.dragging_split {
         ctx.layout_tree.resize_split(split_id, position);
         let size = ctx.terminal_size;
         ctx.handle_resize(size);
@@ -245,7 +245,10 @@ fn handle_left_drag(position: Position, ctx: &mut EditorContext) {    if let Som
 /// `saturating_*` is mandatory: terminal sizes are `usize`, so plain `-`
 /// panics in debug / wraps in release on tiny terminals or oversized panes.
 fn clamp_floating_rect(rect: &mut Rect, term: Size, sidebar_width: usize) {
-    let max_col = term.width.saturating_sub(sidebar_width).saturating_sub(rect.size.width);
+    let max_col = term
+        .width
+        .saturating_sub(sidebar_width)
+        .saturating_sub(rect.size.width);
     rect.position.col = rect.position.col.min(max_col);
     let max_row = term
         .height
@@ -403,12 +406,7 @@ pub fn unfloat_pane(id: usize, ctx: &mut EditorContext) {
         Some(tid) => {
             if ctx
                 .layout_tree
-                .split_pane(
-                    tid,
-                    id,
-                    crate::layout::SplitDirection::Vertical,
-                    0.5,
-                )
+                .split_pane(tid, id, crate::layout::SplitDirection::Vertical, 0.5)
                 .is_ok()
             {
                 if let Some(pane) = ctx.pane_manager.get_pane_mut(id) {

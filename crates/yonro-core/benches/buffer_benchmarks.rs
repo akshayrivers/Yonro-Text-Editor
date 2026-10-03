@@ -45,7 +45,13 @@ fn bench_buffer_editing(c: &mut Criterion) {
         b.iter(|| {
             let mut buffer = Buffer::default();
             for i in 0..100 {
-                buffer.insert_char('x', Location { line_idx: 0, grapheme_idx: i });
+                buffer.insert_char(
+                    'x',
+                    Location {
+                        line_idx: 0,
+                        grapheme_idx: i,
+                    },
+                );
             }
             black_box(buffer);
         });
@@ -55,7 +61,10 @@ fn bench_buffer_editing(c: &mut Criterion) {
         b.iter(|| {
             let mut buffer = Buffer::default();
             for i in 0..50 {
-                buffer.insert_newline(Location { line_idx: i, grapheme_idx: 0 });
+                buffer.insert_newline(Location {
+                    line_idx: i,
+                    grapheme_idx: 0,
+                });
             }
             black_box(buffer);
         });
@@ -64,15 +73,30 @@ fn bench_buffer_editing(c: &mut Criterion) {
     group.bench_function("delete_chars_backward", |b| {
         let mut base = Buffer::default();
         for i in 0..100 {
-            base.insert_char('a', Location { line_idx: 0, grapheme_idx: i });
+            base.insert_char(
+                'a',
+                Location {
+                    line_idx: 0,
+                    grapheme_idx: i,
+                },
+            );
         }
         b.iter(|| {
             let mut buffer = Buffer::default();
             for i in 0..100 {
-                buffer.insert_char('a', Location { line_idx: 0, grapheme_idx: i });
+                buffer.insert_char(
+                    'a',
+                    Location {
+                        line_idx: 0,
+                        grapheme_idx: i,
+                    },
+                );
             }
             for i in (0..100).rev() {
-                buffer.delete(Location { line_idx: 0, grapheme_idx: i });
+                buffer.delete(Location {
+                    line_idx: 0,
+                    grapheme_idx: i,
+                });
             }
             black_box(buffer);
         });
@@ -81,11 +105,29 @@ fn bench_buffer_editing(c: &mut Criterion) {
     group.bench_function("line_merge_via_delete", |b| {
         b.iter(|| {
             let mut buffer = Buffer::default();
-            buffer.insert_char('a', Location { line_idx: 0, grapheme_idx: 0 });
-            buffer.insert_newline(Location { line_idx: 0, grapheme_idx: 1 });
-            buffer.insert_char('b', Location { line_idx: 1, grapheme_idx: 0 });
+            buffer.insert_char(
+                'a',
+                Location {
+                    line_idx: 0,
+                    grapheme_idx: 0,
+                },
+            );
+            buffer.insert_newline(Location {
+                line_idx: 0,
+                grapheme_idx: 1,
+            });
+            buffer.insert_char(
+                'b',
+                Location {
+                    line_idx: 1,
+                    grapheme_idx: 0,
+                },
+            );
             // Delete at end of line 0 merges line 1 into line 0
-            buffer.delete(Location { line_idx: 0, grapheme_idx: 1 });
+            buffer.delete(Location {
+                line_idx: 0,
+                grapheme_idx: 1,
+            });
             black_box(buffer);
         });
     });
@@ -101,25 +143,49 @@ fn bench_buffer_search(c: &mut Criterion) {
 
     group.bench_function("search_forward_hit_early", |b| {
         b.iter(|| {
-            buffer.search_forward(black_box("line 000010"), Location { line_idx: 0, grapheme_idx: 0 })
+            buffer.search_forward(
+                black_box("line 000010"),
+                Location {
+                    line_idx: 0,
+                    grapheme_idx: 0,
+                },
+            )
         });
     });
 
     group.bench_function("search_forward_hit_late", |b| {
         b.iter(|| {
-            buffer.search_forward(black_box("line 001950"), Location { line_idx: 0, grapheme_idx: 0 })
+            buffer.search_forward(
+                black_box("line 001950"),
+                Location {
+                    line_idx: 0,
+                    grapheme_idx: 0,
+                },
+            )
         });
     });
 
     group.bench_function("search_forward_miss", |b| {
         b.iter(|| {
-            buffer.search_forward(black_box("nonexistent_needle_404"), Location { line_idx: 0, grapheme_idx: 0 })
+            buffer.search_forward(
+                black_box("nonexistent_needle_404"),
+                Location {
+                    line_idx: 0,
+                    grapheme_idx: 0,
+                },
+            )
         });
     });
 
     group.bench_function("search_backward_hit", |b| {
         b.iter(|| {
-            buffer.search_backward(black_box("line 000100"), Location { line_idx: 1999, grapheme_idx: 10 })
+            buffer.search_backward(
+                black_box("line 000100"),
+                Location {
+                    line_idx: 1999,
+                    grapheme_idx: 10,
+                },
+            )
         });
     });
 

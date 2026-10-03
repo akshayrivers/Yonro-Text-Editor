@@ -15,17 +15,22 @@
 pub mod annotatedstring;
 pub mod annotation;
 pub mod annotationtype;
+pub mod api;
 pub mod buffers;
 pub mod command;
 pub mod documentstatus;
 pub mod events;
 pub mod fileinfo;
 pub mod filetype;
+pub mod graph;
 pub mod highlighter;
+pub mod history;
 pub mod line;
 pub mod lore;
 pub mod manuscript;
 pub mod prelude;
+pub mod project;
+pub mod timeline;
 
 pub use annotatedstring::AnnotatedString;
 pub use annotation::Annotation;
@@ -36,10 +41,14 @@ pub use documentstatus::DocumentStatus;
 pub use events::EditorEvent;
 pub use fileinfo::FileInfo;
 pub use filetype::FileType;
+pub use graph::{Edge, EdgeKind, Graph, GraphError};
 pub use highlighter::{
     Highlighter, MarkDownSyntaxHighlighter, RustSyntaxHighlighter, SearchResultHighlighter,
     SyntaxHighlighter, TextSyntaxHighlighter,
 };
+pub use history::UndoStack;
 pub use line::Line;
 pub use lore::{is_mention_char, Entity, EntityId, EntityKind, LoreBook, LoreError, Mention};
 pub use manuscript::{Manuscript, ManuscriptError, Node, NodeId, NodeKind, SceneMeta};
+pub use project::{Project, ProjectError};
+pub use timeline::{ContinuityNote, Timeline, TimelineEntry};

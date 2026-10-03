@@ -8,10 +8,10 @@ pub mod runtime;
 pub use runtime::PluginRuntime;
 
 use crate::prelude::*;
+use async_trait::async_trait;
 use ropey::Rope;
 use std::sync::Arc;
 use yonro_core::events::EditorEvent;
-use async_trait::async_trait;
 
 #[derive(Clone, Debug)]
 pub struct BufferSnapshot {
@@ -95,7 +95,9 @@ pub enum PluginResponse {
     /// Switch to document tab `index` (PaneBar click).
     SwitchTab { index: usize },
     /// Add a manuscript node under the outline selection (`PLAN.md 4.3`).
-    ManuscriptAdd { child: yonro_core::manuscript::NodeKind },
+    ManuscriptAdd {
+        child: yonro_core::manuscript::NodeKind,
+    },
     /// Open an outline field prompt (`r`ename, `p`OV, `t`arget).
     ManuscriptPrompt { field: OutlineField },
     /// Commit an outline field prompt value (selection read at commit).

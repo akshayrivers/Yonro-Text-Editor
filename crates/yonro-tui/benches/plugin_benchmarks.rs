@@ -11,7 +11,9 @@ fn bench_plugin_runtime_throughput(c: &mut Criterion) {
 
         b.iter(|| {
             runtime.send(PluginMessage::Event {
-                event: EditorEvent::Custom(yonro_text_editor::editor::events::customevent::CustomEvent::ThemeChanged),
+                event: EditorEvent::Custom(
+                    yonro_text_editor::editor::events::customevent::CustomEvent::ThemeChanged,
+                ),
                 active_pane_id: 0,
             });
             let responses = runtime.drain_responses();
@@ -27,7 +29,13 @@ fn bench_plugin_runtime_throughput(c: &mut Criterion) {
 
         let mut buffer = Buffer::default();
         for i in 0..100 {
-            buffer.insert_char('a', yonro_text_editor::prelude::Location { line_idx: 0, grapheme_idx: i });
+            buffer.insert_char(
+                'a',
+                yonro_text_editor::prelude::Location {
+                    line_idx: 0,
+                    grapheme_idx: i,
+                },
+            );
         }
 
         b.iter(|| {

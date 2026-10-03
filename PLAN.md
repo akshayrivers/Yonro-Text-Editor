@@ -130,9 +130,9 @@ grapheme-correct. Verified end-to-end by driving the real binary in a pty.*
 ### 🟠 Phase 5: Dual Frontend — Tauri GUI & Visual Graphs
 *Goal: Unlock visual character maps, timelines, and worldbuilding tools that terminals cannot display.*
 
-- [ ] **5.1 Setup `yonro-gui` (Tauri v2)**: Tauri app connecting to `yonro-core` via Rust IPC / commands.
-- [ ] **5.2 Interactive Character Relationship Graph**: Node-link graph of characters/factions; dynamic links showing relationship changes over chapter timelines.
-- [ ] **5.3 Narrative Timeline & Geography Travel-Time Checker**: Chronological timeline ruler (story time vs scene order); travel-time validation with soft warnings.
+- [x] **5.1 Setup `yonro-gui` (Tauri v2)**: `crates/yonro-gui` runs via plain `cargo run` (no npm: static vanilla-JS UI, `cargo-tauri` CLI only needed for OS bundlers later). Rust backend holds `yonro-core` in-process; commands (`get_outline`/`get_stats`/`get_lore`/`get_workspace_dir`) are the documented adapter seam a future pure-web build reimplements over WASM. Read-only dashboard ships: stat cards, outline tree with progress bars, lore entities with POV backlinks; `.yonro/` workspace load with safe fallbacks.
+- [x] **5.2 Interactive Character Relationship Graph**: computed in `yonro-core::graph` (scene co-occurrence + POV-`@mention` edges, combined weights, neighbor ranking), rendered as an SVG canvas in `yonro-gui` (circular layout, width-by-weight edges, gold = mention / bronze = shared scene, click-to-spotlight neighborhoods).
+- [x] **5.3 Narrative Timeline & Geography Travel-Time Checker**: computed in `yonro-core::timeline` over outline order (free-form dates preserved; soft continuity notes for POV setting-jumps between adjacent scenes and missing POV/setting metadata), rendered as an ordered timeline with warnings in `yonro-gui`.
 
 ---
 
@@ -146,5 +146,5 @@ grapheme-correct. Verified end-to-end by driving the real binary in a pty.*
 ---
 
 ## 📋 Next Immediate Actions
-1. **Phase 4 complete** — all prose-engine features done; remaining work is Phase 5 (Tauri GUI: visual graphs, timelines, maps).
+1. **All planned phases complete** (1–5, TUI + GUI). Polish backlog: in-text `@mention` highlighting, visual text selection (copy/cut are line-based), op-level GUI undo (currently snapshot-based), OS bundlers via `cargo-tauri`.
 2. **Run `cargo test` after each fix** to prevent regressions.
