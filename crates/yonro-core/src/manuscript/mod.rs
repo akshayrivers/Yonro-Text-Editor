@@ -290,11 +290,26 @@ impl Manuscript {
     }
 
     /// Reparent `id` under `new_parent` (same hierarchy rules as insertion,
-    /// plus cycle rejection).
+    /// plus cycle rejection). Appends to the end of the new sibling list.
     ///
     /// # Errors
     /// `UnknownNode`/`InactiveNode`/`InvalidParent`/`Cycle`/`CannotRemoveProject`.
     pub fn move_node(&mut self, id: NodeId, new_parent: NodeId) -> Result<(), ManuscriptError> {
+        self.move_node_at(id, new_parent, None)
+    }
+
+    /// Reparent `id` under `new_parent` at sibling position `index`
+    /// (`None` appends; out-of-range clamps to the end). Used by outline
+    /// drag-and-drop and move up/down so the UI can place the node exactly.
+    ///
+    /// # Errors
+    /// `UnknownNode`/`InactiveNode`/`InvalidParent`/`Cycle`/`CannotRemoveProject`.
+    pub fn move_node_at(
+        &mut self,
+        id: NodeId,
+        new_parent: NodeId,
+        index: Option<usize>,
+    ) -> Result<(), ManuscriptError> {
         let kind = self.get_mut(id)?.kind;
         if id == self.root {
             return Err(ManuscriptError::CannotRemoveProject);
@@ -319,7 +334,14 @@ impl Manuscript {
             self.get_mut(old)?.children.retain(|child| *child != id);
         }
         self.get_mut(id)?.parent = Some(new_parent);
-        self.get_mut(new_parent)?.children.push(id);
+        let siblings = &mut self.get_mut(new_parent)?.children;
+        match index {
+            Some(at) => {
+                let clamped = at.min(siblings.len());
+                siblings.insert(clamped, id);
+            }
+            None => siblings.push(id),
+        }
         Ok(())
     }
 
@@ -525,6 +547,26 @@ mod tests {
             ms.breadcrumb(ch).unwrap(),
             vec!["The Pink Dog", "Act II", "Chapter 1"]
         );
+    }
+
+    #[test]
+    fn move_at_inserts_at_index_and_clamps() {
+        let mut ms = Manuscript::new("T");
+        let act = ms.add_act("A").unwrap();
+        let c1 = ms.add_chapter(act, "C1").unwrap();
+        let c2 = ms.add_chapter(act, "C2").unwrap();
+        // Reorder within the same parent: C2 to the front.
+        ms.move_node_at(c2, act, Some(0)).unwrap();
+        let order: Vec<usize> = ms.children(act).iter().map(|n| n.id).collect();
+        assert_eq!(order, vec![c2, c1]);
+        // Out-of-range index clamps to the end.
+        ms.move_node_at(c2, act, Some(99)).unwrap();
+        let order: Vec<usize> = ms.children(act).iter().map(|n| n.id).collect();
+        assert_eq!(order, vec![c1, c2]);
+        // `None` appends, preserving the old `move_node` behaviour.
+        ms.move_node_at(c1, act, None).unwrap();
+        let order: Vec<usize> = ms.children(act).iter().map(|n| n.id).collect();
+        assert_eq!(order, vec![c2, c1]);
     }
 
     #[test]
