@@ -14,7 +14,7 @@ use super::manuscript::Manuscript;
 pub type EntityId = usize;
 
 /// What kind of world element an entity is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EntityKind {
     Character,
     Place,
@@ -24,7 +24,7 @@ pub enum EntityKind {
 }
 
 /// One named world element with an optional lore sheet.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Entity {
     pub id: EntityId,
     pub kind: EntityKind,
@@ -72,7 +72,7 @@ pub struct Mention {
 }
 
 /// The world bible: every character, place, faction, item worth `@`-ing.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct LoreBook {
     entities: Vec<Entity>,
 }
@@ -340,7 +340,10 @@ impl LoreBook {
 }
 
 /// Mention-token characters for *unresolved* mentions (single token only).
-fn is_mention_char(ch: char) -> bool {
+/// Public so frontends apply the exact same rule when extracting the live
+/// `@query` behind the cursor.
+#[must_use]
+pub fn is_mention_char(ch: char) -> bool {
     ch.is_alphanumeric() || matches!(ch, '_' | '\'' | '-' | '.')
 }
 

@@ -41,6 +41,12 @@ pub enum PromptType {
     None,
     FocusPane,
     ClosePane,
+    /// Rename outline node (`r` in outline).
+    Rename,
+    /// Set scene POV (`p` in outline).
+    OutlinePov,
+    /// Set scene word target (`t` in outline).
+    OutlineTarget,
 }
 
 impl PromptType {
@@ -83,6 +89,9 @@ impl<'a> EditorContext<'a> {
             PromptType::ClosePane => self
                 .command_bar
                 .set_prompt("close [Pane ID] to close that pane"),
+            PromptType::Rename => self.command_bar.set_prompt("Rename: "),
+            PromptType::OutlinePov => self.command_bar.set_prompt("POV character: "),
+            PromptType::OutlineTarget => self.command_bar.set_prompt("Target words: "),
         }
         self.command_bar.clear_value();
         *self.prompt_type = prompt_type;

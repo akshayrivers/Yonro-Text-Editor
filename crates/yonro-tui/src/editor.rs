@@ -7,8 +7,9 @@ use std::{
     time::{Duration, Instant},
 };
 use yonro_core::{
-    Buffer, BufferManager, Command, DocumentStatus, EditorEvent, FileType, System,
+    Buffer, BufferManager, Command, DocumentStatus, Edit, EditorEvent, FileType, Move, System,
 };
+use unicode_segmentation::UnicodeSegmentation;
 
 pub use crate::command_dispatcher::{EditorContext, HandlerRegistry, PromptType};
 pub use crate::clipboard::SystemClipboard;
@@ -16,24 +17,45 @@ pub use crate::layout::{
     DocTab, LayoutNode, LayoutTree, Pane, PaneContent, PaneManager, SplitDirection, SplitHandle, SidebarKind,
 };
 pub use crate::plugins::{
-    builtin::{FileExplorerPlugin, OutlinePlugin, WordCountPlugin}, BufferSnapshot, Plugin, PluginMessage, PluginResponse,
+    builtin::{FileExplorerPlugin, OutlinePlugin, WordCountPlugin}, BufferSnapshot, OutlineField, Plugin, PluginMessage, PluginResponse,
     PluginRuntime,
 };
 pub use crate::terminal::Terminal;
 pub use crate::uicomponents::{
-    view::EditOperation, ClickAction, CommandBar, FileExplorer, MessageBar, Outline, PaneBar, StatusBar,
-    UIComponent, View, WordCount,
+    view::EditOperation, ClickAction, CommandBar, FileExplorer, LoreSheet, MentionComplete,
+    MessageBar, Outline, PaneBar, StatusBar, UIComponent, View, WordCount,
 };
 pub use yonro_core::{
     manuscript::{Manuscript, NodeKind},
-    lore::LoreBook,
+    lore::{is_mention_char, LoreBook},
     MarkDownSyntaxHighlighter, RustSyntaxHighlighter, SearchResultHighlighter, SyntaxHighlighter,
     TextSyntaxHighlighter,
 };
 
+/// Live `@mention` completion state (`PLAN.md Phase 4.5`). The popup pane
+/// is Editor-driven (no plugin): keys are intercepted pre-dispatch while it
+/// is open, and the query is re-derived from the buffer after every event.
+struct MentionState {
+    /// Editor pane being completed.
+    pane_id: usize,
+    /// Text between `@` and the cursor.
+    query: String,
+    /// Filtered entity ids (capped for display).
+    candidates: Vec<yonro_core::lore::EntityId>,
+    /// Highlight index into `candidates`.
+    selected: usize,
+    /// Floating popup pane, if currently shown.
+    popup: Option<usize>,
+}
+
+impl MentionState {
+    fn selected_entity(&self) -> Option<yonro_core::lore::EntityId> {
+        self.candidates.get(self.selected).copied()
+    }
+}
+
 pub struct Editor {
-    should_quit: bool,
-    layout_tree: LayoutTree,
+    should_quit: bool,    layout_tree: LayoutTree,
     pane_manager: PaneManager,
     buffer_manager: BufferManager,
 
@@ -85,6 +107,12 @@ pub struct Editor {
     /// World bible for `@mentions` (`PLAN.md Phase 4.5`): characters, places
     /// and lore, auto-seeded from scene POVs/settings as structure is added.
     lore: LoreBook,
+
+    /// Open `@mention` completion popup, if any.
+    mention: Option<MentionState>,
+
+    /// Open lore-sheet viewer pane, if any.
+    sheet_pane: Option<usize>,
 }
 
 impl Editor {
@@ -183,7 +211,15 @@ impl Editor {
             clipboard: SystemClipboard::new(),
             manuscript,
             lore: LoreBook::new(),
+            mention: None,
+            sheet_pane: None,
         };
+
+        // Restore a saved workspace (manuscript + lore) when present.
+        if let Some((manuscript, lore)) = crate::workspace::load() {
+            editor.manuscript = manuscript;
+            editor.lore = lore;
+        }
 
         editor.handle_resize_command(terminal_size);
         editor.update_message(
@@ -240,6 +276,8 @@ impl Editor {
             // 3. Render
             self.refresh_screen();
             if self.should_quit {
+                // Best-effort workspace save on the way out.
+                let _ = crate::workspace::save(&self.manuscript, &self.lore);
                 break;
             }
 
@@ -248,14 +286,22 @@ impl Editor {
                 Ok(Some(event)) => {
                     // Clone for plugins before core consumes
                     let event_for_plugins = event.clone();
+                    // Modal prompts own the keyboard: keys typed into the
+                    // command bar must never reach plugins (typing "Mara"
+                    // into a POV prompt otherwise adds acts / hijacks the
+                    // prompt via outline hotkeys). Commit/abort keys are
+                    // evaluated on pre-dispatch state for the same reason.
+                    let was_in_prompt = self.in_prompt();
                     self.handle_event(event);
-                    let active_pane_id = self.pane_manager.active_pane().map(|p| p.pane_id).unwrap_or(0);
-                    // Fire and forget to plugin runtime
-                    self.plugin_runtime
-                        .send(PluginMessage::Event {
+                    if !was_in_prompt {
+                        let active_pane_id =
+                            self.pane_manager.active_pane().map(|p| p.pane_id).unwrap_or(0);
+                        // Fire and forget to plugin runtime
+                        self.plugin_runtime.send(PluginMessage::Event {
                             event: event_for_plugins,
                             active_pane_id,
                         });
+                    }
                 }
                 Ok(None) => {
                     // Timeout - no event, just continue loop for next frame
@@ -300,6 +346,61 @@ impl Editor {
                 }
             }
 
+            // `@mention` popup interception (pre-dispatch): navigation and
+            // actions resolve inside the popup; anything else flows through
+            // and the query is re-derived afterwards.
+            if self.mention.is_some() {
+                match &command {
+                    Command::Move(Move::Up) => {
+                        self.move_mention_selection(true);
+                        return;
+                    }
+                    Command::Move(Move::Down) => {
+                        self.move_mention_selection(false);
+                        return;
+                    }
+                    Command::Edit(Edit::InsertNewLine) => {
+                        self.accept_mention();
+                        return;
+                    }
+                    Command::Edit(Edit::Insert('\t')) => {
+                        // `Tab` views the lore sheet instead of indenting.
+                        let target = self
+                            .mention
+                            .as_ref()
+                            .and_then(MentionState::selected_entity);
+                        self.dismiss_mention();
+                        if let Some(id) = target {
+                            self.open_lore_sheet(id);
+                        }
+                        return;
+                    }
+                    Command::System(System::Dismiss) => {
+                        self.dismiss_mention();
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+            // Lore-sheet viewer: `Esc` closes it (tracked pane, no plugin).
+            if let Command::System(System::Dismiss) = command {
+                if let Some(sheet) = self.sheet_pane {
+                    if self
+                        .pane_manager
+                        .active_pane()
+                        .is_some_and(|pane| pane.pane_id == sheet)
+                    {
+                        self.pane_manager.remove_pane(sheet);
+                        self.sheet_pane = None;
+                        if let Some(id) = self.editor_target_pane() {
+                            self.pane_manager.set_active_pane(id);
+                        }
+                        self.mark_all_panes_for_redraw();
+                        return;
+                    }
+                }
+            }
+
             let mut handler = std::mem::take(&mut self.command_handler);
             let mut ctx = self.make_context();
             let _ = handler.dispatch(&command, &mut ctx);
@@ -339,6 +440,10 @@ impl Editor {
                     }
                 }
             }
+
+            // `@mention` popup follows every event (typed query, moves,
+            // focus changes); it dismisses itself when the cursor leaves.
+            self.update_mention();
         }
     }
 
@@ -569,6 +674,17 @@ impl Editor {
 
                 if is_floating {
                     self.pane_manager.remove_pane(pane_id);
+                    // Drop dangling popup/sheet references to the closed pane.
+                    if self.sheet_pane == Some(pane_id) {
+                        self.sheet_pane = None;
+                    }
+                    if self
+                        .mention
+                        .as_ref()
+                        .is_some_and(|state| state.popup == Some(pane_id))
+                    {
+                        self.mention = None;
+                    }
                     // Keep async plugins in sync (mouse [x] on floating WordCount).
                     self.plugin_runtime.send(PluginMessage::PaneClosed {
                         plugin_name: "word_count".to_string(),
@@ -642,6 +758,38 @@ impl Editor {
             }
             PluginResponse::ManuscriptAdd { child } => {
                 self.manuscript_add(child);
+            }
+            PluginResponse::ManuscriptPrompt { field } => {
+                let (prompt, prefill) = self.outline_prompt_for(field);
+                self.command_bar.set_prompt(prompt);
+                self.command_bar.set_value(&prefill);
+                self.prompt_type = match field {
+                    crate::plugins::OutlineField::Rename => PromptType::Rename,
+                    crate::plugins::OutlineField::Pov => PromptType::OutlinePov,
+                    crate::plugins::OutlineField::Target => PromptType::OutlineTarget,
+                };
+                self.mark_all_panes_for_redraw();
+            }
+            PluginResponse::ManuscriptApply { field, value } => {
+                self.manuscript_apply(field, &value);
+            }
+            PluginResponse::ManuscriptRemove => {
+                let selected = self
+                    .layout_tree
+                    .sidebar
+                    .pane_id
+                    .and_then(|id| self.outline_selection_of(id));
+                let Some(node_id) = selected else {
+                    self.update_message("Outline: nothing selected");
+                    return;
+                };
+                match self.manuscript.remove(node_id) {
+                    Ok(()) => {
+                        self.save_workspace();
+                        self.update_message("Outline: removed (files kept on disk)");
+                    }
+                    Err(err) => self.update_message(&format!("Outline: {err}")),
+                }
             }
             PluginResponse::MouseClickInPane { pane_id, position } => {
                 let action = if let Some(pane) = self.pane_manager.get_pane_mut(pane_id) {
@@ -1102,6 +1250,323 @@ impl Editor {
         self.mark_all_panes_for_redraw();
     }
 
+    /// Max completion rows shown in the mention popup.
+    const MENTION_LIMIT: usize = 8;
+    /// Queries longer than this never complete.
+    const MENTION_QUERY_MAX: usize = 48;
+
+    /// `@query` behind the cursor, if the cursor sits in mention context:
+    /// `@` preceded by start/whitespace/punctuation (never identifier chars,
+    /// keeping `a@b` email-like text quiet). Returns (pane, buffer, query).
+    fn mention_query_at_cursor(&self) -> Option<(usize, usize, String)> {
+        if self.in_prompt() {
+            return None;
+        }
+        let pane = self.pane_manager.active_pane()?;
+        let view = pane.view()?;
+        let buffer = self.buffer_manager.get(view.buffer_id())?;
+        let location = view.location();
+        let line = buffer.get_line(location.line_idx)?;
+        let text: &str = &line.to_string();
+        let prefix: Vec<&str> = text
+            .graphemes(true)
+            .take(location.grapheme_idx)
+            .collect();
+        let mut start = prefix.len();
+        while start > 0
+            && prefix[start.saturating_sub(1)]
+                .chars()
+                .next()
+                .is_some_and(is_mention_char)
+        {
+            start = start.saturating_sub(1);
+        }
+        if start == 0 || prefix[start.saturating_sub(1)] != "@" {
+            return None;
+        }
+        if start >= 2 {
+            let glued = prefix[start.saturating_sub(2)]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_');
+            if glued {
+                return None;
+            }
+        }
+        let query: String = prefix[start..].concat();
+        if query.graphemes(true).count() > Self::MENTION_QUERY_MAX {
+            return None;
+        }
+        Some((pane.pane_id, view.buffer_id(), query))
+    }
+
+    /// Display rows for the popup: (name, kind label), or a hint when empty.
+    fn mention_items(&self, candidates: &[yonro_core::lore::EntityId]) -> Vec<(String, String)> {
+        if candidates.is_empty() {
+            return vec![("no lore yet — set scene POVs".to_string(), "hint".to_string())];
+        }
+        candidates
+            .iter()
+            .filter_map(|id| self.lore.get(*id))
+            .map(|entity| {
+                (
+                    entity.name.clone(),
+                    Self::entity_kind_label(entity.kind).to_string(),
+                )
+            })
+            .collect()
+    }
+
+    const fn entity_kind_label(kind: yonro_core::lore::EntityKind) -> &'static str {
+        match kind {
+            yonro_core::lore::EntityKind::Character => "character",
+            yonro_core::lore::EntityKind::Place => "place",
+            yonro_core::lore::EntityKind::Faction => "faction",
+            yonro_core::lore::EntityKind::Item => "item",
+            yonro_core::lore::EntityKind::Lore => "lore",
+        }
+    }
+
+    /// Popup rect tucked under the caret (above it when space is short).
+    fn mention_popup_rect(&self, pane_id: usize, height_rows: usize) -> Rect {
+        let term = self.terminal_size;
+        let caret = self
+            .pane_manager
+            .get_pane(pane_id)
+            .and_then(|pane| pane.view())
+            .and_then(|view| {
+                self.buffer_manager
+                    .get(view.buffer_id())
+                    .map(|buffer| view.caret_position(buffer))
+            })
+            .unwrap_or(Position { row: 1, col: 0 });
+        let width = 44.min(term.width.saturating_sub(2)).max(20);
+        let height = height_rows.min(10).max(3);
+        let col = caret
+            .col
+            .min(term.width.saturating_sub(width).max(0));
+        let below = caret.row.saturating_add(1);
+        let row = if below.saturating_add(height) > term.height.saturating_sub(1) {
+            caret.row.saturating_sub(height)
+        } else {
+            below
+        };
+        Rect {
+            position: Position { row, col },
+            size: Size { height, width },
+        }
+    }
+
+    /// Re-derive popup state after every event (create/update/dismiss).
+    fn update_mention(&mut self) {
+        let Some((pane_id, _buffer_id, query)) = self.mention_query_at_cursor() else {
+            self.dismiss_mention();
+            return;
+        };
+        let ids: Vec<yonro_core::lore::EntityId> = self
+            .lore
+            .find_by_prefix(&query)
+            .into_iter()
+            .take(Self::MENTION_LIMIT)
+            .map(|entity| entity.id)
+            .collect();
+        // Keep the highlight on the same entity across keystrokes.
+        let mut selected = 0;
+        if let Some(state) = &self.mention {
+            if state.pane_id == pane_id {
+                if let Some(prev) = state.selected_entity() {
+                    if let Some(i) = ids.iter().position(|id| *id == prev) {
+                        selected = i;
+                    }
+                }
+            }
+        }
+        let items = self.mention_items(&ids);
+        let rect = self.mention_popup_rect(pane_id, items.len().saturating_add(2));
+        let popup_id = match self.mention.as_ref().and_then(|state| state.popup) {
+            Some(id) if self.pane_manager.get_pane(id).is_some() => id,
+            _ => {
+                let id = self.pane_manager.create_floating_pane(
+                    PaneContent::Plugin(Box::new(MentionComplete::default())),
+                    20,
+                );
+                // Highlight rows without stealing editor focus (moves must
+                // still reach the editor; popup keys are intercepted).
+                if let Some(pane) = self.pane_manager.get_pane_mut(id) {
+                    if let PaneContent::Plugin(component) = &mut pane.content {
+                        component.set_active(true);
+                    }
+                }
+                id
+            }
+        };
+        if let Some(pane) = self.pane_manager.get_pane_mut(popup_id) {
+            pane.resize(rect);
+            if let PaneContent::Plugin(component) = &mut pane.content {
+                component.sync_mention(&items, selected);
+            }
+        }
+        self.mention = Some(MentionState {
+            pane_id,
+            query,
+            candidates: ids,
+            selected,
+            popup: Some(popup_id),
+        });
+    }
+
+    /// Close the popup without acting.
+    fn dismiss_mention(&mut self) {
+        if let Some(state) = self.mention.take() {
+            if let Some(popup) = state.popup {
+                self.pane_manager.remove_pane(popup);
+            }
+        }
+    }
+
+    /// Nudge the popup highlight; re-syncs the component.
+    fn move_mention_selection(&mut self, up: bool) {
+        let Some(state) = self.mention.as_mut() else {
+            return;
+        };
+        if state.candidates.is_empty() {
+            return;
+        }
+        if up {
+            state.selected = state.selected.saturating_sub(1);
+        } else {
+            state.selected = state
+                .selected
+                .saturating_add(1)
+                .min(state.candidates.len().saturating_sub(1));
+        }
+        let (popup, selected, items) = match self.mention.as_ref() {
+            Some(state) => (
+                state.popup,
+                state.selected,
+                self.mention_items(&state.candidates.clone()),
+            ),
+            None => return,
+        };
+        if let Some(popup) = popup {
+            if let Some(pane) = self.pane_manager.get_pane_mut(popup) {
+                if let PaneContent::Plugin(component) = &mut pane.content {
+                    component.sync_mention(&items, selected);
+                }
+            }
+        }
+    }
+
+    /// Replace `@query` with the selected `@CanonicalName `.
+    fn accept_mention(&mut self) {
+        let Some(state) = self.mention.take() else {
+            return;
+        };
+        if let Some(popup) = state.popup {
+            self.pane_manager.remove_pane(popup);
+        }
+        let name = state
+            .selected_entity()
+            .and_then(|id| self.lore.get(id))
+            .map(|entity| entity.name.clone());
+        let Some(name) = name else {
+            return; // hint row / empty lore: dismiss only.
+        };
+        let total = state.query.graphemes(true).count().saturating_add(1);
+        let buffer_id = self
+            .pane_manager
+            .get_pane(state.pane_id)
+            .and_then(|pane| pane.view())
+            .map(|view| view.buffer_id());
+        if let Some(buffer_id) = buffer_id {
+            if let Some(pane) = self.pane_manager.get_pane_mut(state.pane_id) {
+                if let Some(view) = pane.view_mut() {
+                    if let Some(buffer) = self.buffer_manager.get_mut(buffer_id) {
+                        view.delete_backward_chars(buffer, total);
+                        view.insert_text(buffer, &format!("@{name} "));
+                    }
+                }
+            }
+            if let Some(snapshot) = self.make_buffer_snapshot(buffer_id) {
+                self.plugin_runtime
+                    .send(PluginMessage::BufferChanged(snapshot));
+            }
+            self.update_word_count_if_open();
+            self.sync_manuscript_words();
+        }
+    }
+
+    /// Open a read-only lore sheet for `entity_id` in a centered float.
+    fn open_lore_sheet(&mut self, entity_id: yonro_core::lore::EntityId) {
+        let Some(entity) = self.lore.get(entity_id) else {
+            return;
+        };
+        let mut lines = vec![
+            format!("{} ({})", entity.name, Self::entity_kind_label(entity.kind)),
+            String::new(),
+        ];
+        if !entity.aliases.is_empty() {
+            lines.push(format!("Also known as: {}", entity.aliases.join(", ")));
+            lines.push(String::new());
+        }
+        if entity.sheet.trim().is_empty() {
+            lines.push("(no lore sheet yet)".to_string());
+        } else {
+            lines.extend(entity.sheet.lines().map(str::to_string));
+        }
+        // Backlink: scenes carrying this POV.
+        let mut scenes = Vec::new();
+        let root = self.manuscript.root();
+        let acts: Vec<usize> = self.manuscript.children(root).iter().map(|n| n.id).collect();
+        for act in acts {
+            let chapters: Vec<usize> =
+                self.manuscript.children(act).iter().map(|n| n.id).collect();
+            for chapter in chapters {
+                for scene in self.manuscript.children(chapter) {
+                    let pov = scene
+                        .meta
+                        .as_ref()
+                        .map_or("", |meta| meta.pov.as_str());
+                    if !pov.is_empty()
+                        && (pov.eq_ignore_ascii_case(&entity.name)
+                            || entity
+                                .aliases
+                                .iter()
+                                .any(|alias| pov.eq_ignore_ascii_case(alias)))
+                    {
+                        scenes.push(format!("· {} — {}", scene.title, entity.name));
+                    }
+                }
+            }
+        }
+        if !scenes.is_empty() {
+            lines.push(String::new());
+            lines.push("POV in:".to_string());
+            lines.extend(scenes);
+        }
+        let term = self.terminal_size;
+        let width = 60.min(term.width.saturating_sub(4)).max(20);
+        let height = lines.len().saturating_add(2).min(20).max(5);
+        let rect = Rect {
+            position: Position {
+                row: term.height.saturating_sub(height) / 2,
+                col: term.width.saturating_sub(width) / 2,
+            },
+            size: Size { height, width },
+        };
+        let title = entity.name.clone();
+        let pane_id = self.pane_manager.create_floating_pane(
+            PaneContent::Plugin(Box::new(LoreSheet::new(title, lines))),
+            20,
+        );
+        if let Some(pane) = self.pane_manager.get_pane_mut(pane_id) {
+            pane.resize(rect);
+        }
+        self.pane_manager.set_active_pane(pane_id);
+        self.sheet_pane = Some(pane_id);
+        self.mark_all_panes_for_redraw();
+    }
+
     /// True when `pane_id` is the visible outline sidebar.
     fn is_outline_pane(&self, pane_id: usize) -> bool {
         self.layout_tree.sidebar.kind == SidebarKind::Outline
@@ -1155,9 +1620,17 @@ impl Editor {
                     meta.file = Some(path.clone());
                     let _ = self.manuscript.set_meta(node_id, meta);
                 }
+                self.save_workspace();
                 path
             }
         };
+        // Externally deleted draft? Materialize it again on explicit open.
+        if !path.exists() {
+            if std::fs::write(&path, "").is_err() {
+                self.update_message("ERR: Could not create scene file");
+                return;
+            }
+        }
         self.open_file_in_new_pane(&path);
         self.sync_manuscript_words();
     }
@@ -1204,6 +1677,7 @@ impl Editor {
             Ok(new_id) => {
                 // New POVs/settings become @-completable entities (deduped).
                 self.lore.seed_from_manuscript(&self.manuscript);
+                self.save_workspace();
                 if let Some(sidebar_id) = sidebar_id {
                     if let Some(pane) = self.pane_manager.get_pane_mut(sidebar_id) {
                         if let PaneContent::Plugin(component) = &mut pane.content {
@@ -1234,6 +1708,98 @@ impl Editor {
             cursor = node.parent;
         }
         None
+    }
+
+    /// Prompt text for an outline field prompt. Values always start empty:
+    /// the command bar has no selection model, so prefilling would append
+    /// instead of replace (e.g. "Scene 1The gate").
+    fn outline_prompt_for(&self, field: crate::plugins::OutlineField) -> (&'static str, String) {
+        use crate::plugins::OutlineField;
+        match field {
+            OutlineField::Rename => ("Rename: ", String::new()),
+            OutlineField::Pov => ("POV character: ", String::new()),
+            OutlineField::Target => ("Target words: ", String::new()),
+        }
+    }
+
+    /// Commit an outline field prompt value against the current selection.
+    fn manuscript_apply(&mut self, field: crate::plugins::OutlineField, value: &str) {
+        use crate::plugins::OutlineField;
+        let selected = self
+            .layout_tree
+            .sidebar
+            .pane_id
+            .and_then(|id| self.outline_selection_of(id));
+        let Some(node_id) = selected else {
+            self.update_message("Outline: nothing selected");
+            return;
+        };
+        match field {
+            OutlineField::Rename => {
+                let title = value.trim();
+                if title.is_empty() {
+                    self.update_message("Outline: empty title kept");
+                    return;
+                }
+                match self.manuscript.rename(node_id, title) {
+                    Ok(()) => {
+                        self.save_workspace();
+                        self.update_message(&format!("Renamed to {title}"));
+                    }
+                    Err(err) => self.update_message(&format!("Outline: {err}")),
+                }
+            }
+            OutlineField::Pov => {
+                let is_scene = self
+                    .manuscript
+                    .get(node_id)
+                    .is_some_and(|node| node.kind == NodeKind::Scene);
+                if !is_scene {
+                    self.update_message("Outline: POV belongs on scenes");
+                    return;
+                }
+                if let Some(node) = self.manuscript.get(node_id) {
+                    let mut meta = node.meta.clone().unwrap_or_default();
+                    meta.pov = value.trim().to_string();
+                    let _ = self.manuscript.set_meta(node_id, meta);
+                }
+                // New POVs become @-completable entities (deduped).
+                self.lore.seed_from_manuscript(&self.manuscript);
+                self.save_workspace();
+                self.update_message("Outline: POV updated");
+            }
+            OutlineField::Target => {
+                let is_scene = self
+                    .manuscript
+                    .get(node_id)
+                    .is_some_and(|node| node.kind == NodeKind::Scene);
+                if !is_scene {
+                    self.update_message("Outline: targets belong on scenes");
+                    return;
+                }
+                let target: usize = match value.trim().parse() {
+                    Ok(n) => n,
+                    Err(_) => {
+                        self.update_message("Outline: target must be a number");
+                        return;
+                    }
+                };
+                if let Some(node) = self.manuscript.get(node_id) {
+                    let mut meta = node.meta.clone().unwrap_or_default();
+                    meta.target_words = target;
+                    let _ = self.manuscript.set_meta(node_id, meta);
+                }
+                self.save_workspace();
+                self.update_message(&format!("Outline: target {target} words"));
+            }
+        }
+    }
+
+    /// Persist manuscript + lorebook (best-effort; warns, never blocks).
+    fn save_workspace(&mut self) {
+        if let Err(err) = crate::workspace::save(&self.manuscript, &self.lore) {
+            self.update_message(&format!("Workspace save failed: {err}"));
+        }
     }
 
     /// Push live buffer word counts into scene metadata (call after edits,

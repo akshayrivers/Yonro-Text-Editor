@@ -78,6 +78,20 @@ impl Plugin for OutlinePlugin {
                                 KeyCode::Char('s') => {
                                     return Some(PluginResponse::ManuscriptAdd { child: NodeKind::Scene });
                                 }
+                                // Field prompts: rename, POV, word target.
+                                KeyCode::Char('r') => {
+                                    return Some(PluginResponse::ManuscriptPrompt { field: crate::plugins::OutlineField::Rename });
+                                }
+                                KeyCode::Char('p') => {
+                                    return Some(PluginResponse::ManuscriptPrompt { field: crate::plugins::OutlineField::Pov });
+                                }
+                                KeyCode::Char('t') => {
+                                    return Some(PluginResponse::ManuscriptPrompt { field: crate::plugins::OutlineField::Target });
+                                }
+                                // Delete removes the selected node (files kept).
+                                KeyCode::Delete => {
+                                    return Some(PluginResponse::ManuscriptRemove);
+                                }
                                 _ => {}
                             }
                         }

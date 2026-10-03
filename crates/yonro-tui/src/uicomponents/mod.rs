@@ -1,9 +1,11 @@
 mod commandbar;
 mod fileexplorer;
+mod mention;
 mod messagebar;
 mod outline;
 mod panebar;
 mod plugin_component;
+mod sheet;
 mod statusbar;
 mod uicomponent;
 mod wordcount;
@@ -11,10 +13,12 @@ pub mod view;
 
 pub use commandbar::CommandBar;
 pub use fileexplorer::FileExplorer;
+pub use mention::MentionComplete;
 pub use messagebar::MessageBar;
 pub use outline::Outline;
 pub use panebar::PaneBar;
 pub use plugin_component::{ClickAction, PluginComponent};
+pub use sheet::LoreSheet;
 pub use statusbar::StatusBar;
 pub use uicomponent::UIComponent;
 pub use view::View;

@@ -1,0 +1,14 @@
+{
+  "nodes": [
+    {
+      "id": 0,
+      "kind": "Project",
+      "title": "yonro_text_editor",
+      "parent": null,
+      "children": [],
+      "meta": null,
+      "alive": true
+    }
+  ],
+  "root": 0
+}

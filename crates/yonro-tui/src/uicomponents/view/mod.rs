@@ -100,6 +100,32 @@ impl View {
     pub fn buffer_id(&self) -> usize {
         self.buffer_id
     }
+    /// Current cursor location (for `@mention` query extraction).
+    pub const fn location(&self) -> Location {
+        self.text_location
+    }
+    /// Delete `count` graphemes backward, stopping at document start.
+    pub fn delete_backward_chars(&mut self, buffer: &mut Buffer, count: usize) {
+        for _ in 0..count {
+            let before = self.text_location;
+            self.delete_backward(buffer);
+            if self.text_location == before {
+                break;
+            }
+        }
+    }
+    /// Insert literal text (`\n` splits lines, `\r` dropped for CRLF pastes).
+    pub fn insert_text(&mut self, buffer: &mut Buffer, text: &str) {
+        for ch in text.chars() {
+            if ch == '\n' {
+                self.insert_newline(buffer);
+            } else if ch != '\r' {
+                self.insert_char(ch, buffer);
+            }
+        }
+        self.scroll_text_location_into_view(buffer);
+        self.mark_redraw(true);
+    }
     pub fn set_buffer_id(&mut self, id: usize) {
         self.buffer_id = id;
         self.text_location = Location::default();
@@ -186,15 +212,7 @@ impl View {
         if text.is_empty() {
             return false;
         }
-        for ch in text.chars() {
-            if ch == '\n' {
-                self.insert_newline(buffer);
-            } else if ch != '\r' {
-                self.insert_char(ch, buffer);
-            }
-        }
-        self.scroll_text_location_into_view(buffer);
-        self.mark_redraw(true);
+        self.insert_text(buffer, &text);
         true
     }
     pub fn handle_move_command(&mut self, command: Move, buffer: &Buffer) {

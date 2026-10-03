@@ -1,6 +1,7 @@
 use super::context::EditorContext;
 use yonro_core::command::{Command, Edit, Move, System};
 use crate::command_dispatcher::PromptType;
+use crate::plugins::{OutlineField, PluginResponse};
 
 pub mod edit;
 pub mod mouse;
@@ -99,6 +100,9 @@ impl CommandHandler for PromptAwareHandler {
             PromptType::Search => handle_search_prompt(command, ctx),
             PromptType::Save => handle_save_prompt(command, ctx),
             PromptType::FocusPane | PromptType::ClosePane => handle_pane_prompt(command, ctx),
+            PromptType::Rename | PromptType::OutlinePov | PromptType::OutlineTarget => {
+                handle_outline_prompt(command, ctx);
+            }
         }
         Ok(())
     }
@@ -261,6 +265,33 @@ fn handle_pane_prompt(command: &Command, ctx: &mut EditorContext) {
             ctx.command_bar.handle_edit_command(*edit_cmd, ctx.clipboard);
         }
 
+        _ => {}
+    }
+}
+
+// Outline field prompt (rename / POV / word target): commit pushes a typed
+// response; the editor resolves the outline selection at commit time.
+fn handle_outline_prompt(command: &Command, ctx: &mut EditorContext) {
+    let field = match *ctx.prompt_type {
+        PromptType::Rename => OutlineField::Rename,
+        PromptType::OutlinePov => OutlineField::Pov,
+        PromptType::OutlineTarget => OutlineField::Target,
+        _ => return,
+    };
+    match command {
+        Command::System(System::Dismiss) => {
+            ctx.set_prompt(PromptType::None);
+            ctx.update_message("Edit aborted");
+        }
+        Command::Edit(Edit::InsertNewLine) => {
+            let value = ctx.command_bar.value();
+            ctx.plugin_responses
+                .push(PluginResponse::ManuscriptApply { field, value });
+            ctx.set_prompt(PromptType::None);
+        }
+        Command::Edit(edit_cmd) => {
+            ctx.command_bar.handle_edit_command(*edit_cmd, ctx.clipboard);
+        }
         _ => {}
     }
 }

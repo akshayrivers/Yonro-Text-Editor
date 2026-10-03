@@ -123,7 +123,7 @@ grapheme-correct. Verified end-to-end by driving the real binary in a pty.*
 - [x] **4.2 Zen Mode & Typewriter Scrolling**: `F11` toggles document-only mode (centered 70-column strip, PaneBar/sidebar/status/message chrome hidden, sidebar visibility restored exactly on exit); cursor pinned to vertical center via `View::apply_typewriter` (recentered after every event, idempotent); command bar still overlays while prompting so the user is never stranded.
 - [x] **4.3 Manuscript Tree Structure**: `Project` → `Acts` → `Chapters` → `Scenes` with metadata (POV, setting, story date/time, target word count). Core `yonro-core::manuscript` arena (stable ids, enforced hierarchy, rename/move/remove, word rollups + progress) + outline sidebar (`Ctrl+O`): tree with live `[words/target %]`, `a`/`c`/`s` structural adds, `Enter` opens scene files in new tabs (materializing `scene-<id>.md` on first open), live word sync from buffers (incl. undo/redo). Deferred: rename/metadata editing UI, on-disk persistence.
 - [x] **4.4 System Clipboard Integration**: Cross-platform Copy/Cut/Paste (`Ctrl-C/X/V`) via `arboard` (in-memory fallback headless). `Clipboard` trait + `MemClipboard` test double; line-based copy/cut (undoable), multi-line paste, command-bar paste, hints.
-- [ ] **4.5 Lore & `@mention` Entity System** (core DONE, UI next): `yonro-core::lore` registry (characters/places/factions/items, aliases, sheets, tombstone ids, duplicate rejection), longest-match `@mention` parsing (multi-word names, unresolved tokens, email-safe), prefix autocomplete search, auto-seed from scene POVs/settings. Remaining: `@` autocomplete popup + lore-sheet viewer in TUI.
+- [x] **4.5 Lore & `@mention` Entity System**: `yonro-core::lore` registry (characters/places/factions/items, aliases, sheets, tombstone ids, longest-match mention parsing, prefix search, POV/setting auto-seed); TUI `@` autocomplete popup (filter as you type, `Enter` inserts `@Name`, `Tab` opens sheet, `Esc` dismisses); lore-sheet floating viewer (aliases, sheet, POV backlinks, scroll); outline `r`ename / `p`OV / `t`arget prompts + `Del` remove; `.yonro/` JSON persistence (save on change + quit, load on startup).
 
 ---
 
@@ -146,6 +146,5 @@ grapheme-correct. Verified end-to-end by driving the real binary in a pty.*
 ---
 
 ## 📋 Next Immediate Actions
-1. **Next: Phase 4.4** — System clipboard (`Ctrl-C/X/V` via `arboard`).
+1. **Phase 4 complete** — all prose-engine features done; remaining work is Phase 5 (Tauri GUI: visual graphs, timelines, maps).
 2. **Run `cargo test` after each fix** to prevent regressions.
-3. TUI is stable (all 3.5.x + 3.6.x tasks ✅) — proceed with Phase 4.

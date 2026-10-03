@@ -67,4 +67,10 @@ pub trait PluginComponent: UIComponent + Send {
     /// Focus an outline node (used after structural adds).
     fn set_outline_selection(&mut self, _id: Option<NodeId>) {
     }
+
+    /// Push `@mention` candidates into an autocomplete popup.
+    /// `items` are (display name, kind label); `selected` is the highlight.
+    /// Default: no-op.
+    fn sync_mention(&mut self, _items: &[(String, String)], _selected: usize) {
+    }
 }

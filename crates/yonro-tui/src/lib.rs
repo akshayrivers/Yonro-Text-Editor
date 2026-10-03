@@ -20,6 +20,7 @@ pub mod layout;
 pub mod plugins;
 pub mod terminal;
 pub mod uicomponents;
+pub mod workspace;
 
 // Re-export the core prelude under the old path so moved files keep working.
 pub use yonro_core::prelude;

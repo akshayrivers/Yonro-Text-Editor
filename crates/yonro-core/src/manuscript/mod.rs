@@ -21,7 +21,7 @@ use std::path::PathBuf;
 pub type NodeId = usize;
 
 /// Structural level of a manuscript node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum NodeKind {
     Project,
     Act,
@@ -45,7 +45,7 @@ impl NodeKind {
 /// Per-scene metadata (`PLAN.md Phase 4.3`: POV, setting, story date/time,
 /// target word count). Free-form strings — writers mean many things by
 /// "Day 3" or "dusk", and parsing that is a later feature, not this one.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct SceneMeta {
     /// Point-of-view character (e.g. `"Mara"`).
     pub pov: String,
@@ -66,7 +66,7 @@ pub struct SceneMeta {
 }
 
 /// One node of the manuscript tree.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Node {
     pub id: NodeId,
     pub kind: NodeKind,
@@ -116,7 +116,7 @@ impl fmt::Display for ManuscriptError {
 impl std::error::Error for ManuscriptError {}
 
 /// An in-memory manuscript: one project tree plus structural operations.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Manuscript {
     nodes: Vec<Node>,
     root: NodeId,

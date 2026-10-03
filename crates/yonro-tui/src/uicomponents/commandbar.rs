@@ -75,6 +75,14 @@ impl CommandBar {
         self.value = Line::default();
         self.mark_redraw(true);
     }
+
+    /// Prefill the prompt value (rename/metadata flows).
+    pub fn set_value(&mut self, text: &str) {
+        // Single-line prompts: stop at the first line break.
+        let first = text.lines().next().unwrap_or("");
+        self.value = Line::from(first);
+        self.mark_redraw(true);
+    }
 }
 
 impl UIComponent for CommandBar {

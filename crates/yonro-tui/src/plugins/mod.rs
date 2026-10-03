@@ -96,6 +96,20 @@ pub enum PluginResponse {
     SwitchTab { index: usize },
     /// Add a manuscript node under the outline selection (`PLAN.md 4.3`).
     ManuscriptAdd { child: yonro_core::manuscript::NodeKind },
+    /// Open an outline field prompt (`r`ename, `p`OV, `t`arget).
+    ManuscriptPrompt { field: OutlineField },
+    /// Commit an outline field prompt value (selection read at commit).
+    ManuscriptApply { field: OutlineField, value: String },
+    /// Remove the outline-selected node (whole subtree, files kept on disk).
+    ManuscriptRemove,
+}
+
+/// Which outline field a prompt edits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutlineField {
+    Rename,
+    Pov,
+    Target,
 }
 
 impl std::fmt::Debug for PluginResponse {
@@ -118,6 +132,11 @@ impl std::fmt::Debug for PluginResponse {
             Self::CloseSidebar { kind } => write!(f, "CloseSidebar({kind:?})"),
             Self::SwitchTab { index } => write!(f, "SwitchTab({index})"),
             Self::ManuscriptAdd { child } => write!(f, "ManuscriptAdd({child:?})"),
+            Self::ManuscriptPrompt { field } => write!(f, "ManuscriptPrompt({field:?})"),
+            Self::ManuscriptApply { field, value } => {
+                write!(f, "ManuscriptApply({field:?}, {value:?})")
+            }
+            Self::ManuscriptRemove => write!(f, "ManuscriptRemove"),
         }
     }
 }

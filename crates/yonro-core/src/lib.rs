@@ -41,5 +41,5 @@ pub use highlighter::{
     SyntaxHighlighter, TextSyntaxHighlighter,
 };
 pub use line::Line;
-pub use lore::{Entity, EntityId, EntityKind, LoreBook, LoreError, Mention};
+pub use lore::{is_mention_char, Entity, EntityId, EntityKind, LoreBook, LoreError, Mention};
 pub use manuscript::{Manuscript, ManuscriptError, Node, NodeId, NodeKind, SceneMeta};

@@ -183,7 +183,7 @@ impl Outline {
         if self.rect.size.height < 5 || self.rect.size.width < 12 {
             return Ok(());
         }
-        let hint = "a/c/s add · Enter open";
+        let hint = "a/c/s/r/p/t/del · Enter";
         let row = self
             .rect
             .position
