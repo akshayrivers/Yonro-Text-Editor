@@ -31,6 +31,12 @@ const core = {
   getScene: (id) => core.invoke('get_scene', { id }),
   openScene: (id) => core.invoke('open_scene', { id }),
   listFiles: () => core.invoke('list_files'),
+  addEntity: (kind, name) => core.invoke('add_entity', { kind, name }),
+  updateEntity: (id, patch) => core.invoke('update_entity', { id, patch: patch ?? {} }),
+  removeEntity: (id) => core.invoke('remove_entity', { id }),
+  loreSearch: (prefix, limit) => core.invoke('lore_search', { prefix, limit: limit ?? null }),
+  getEntity: (id) => core.invoke('get_entity', { id }),
+  getMentions: (bufferId) => core.invoke('get_mentions', { bufferId }),
   onCloseRequested: (handler) => {
     try {
       const api = window.__TAURI__ && window.__TAURI__.window;

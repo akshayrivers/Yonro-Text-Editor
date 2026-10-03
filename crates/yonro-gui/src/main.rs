@@ -74,6 +74,17 @@ impl AppState {
             .root
             .clone()
     }
+
+    fn open_texts(&self) -> std::collections::BTreeMap<PathBuf, String> {
+        let buffers = self.buffers.lock().unwrap_or_else(|e| e.into_inner());
+        let mut open_texts = std::collections::BTreeMap::new();
+        for buf in buffers.values() {
+            if let Some(path) = buf.path.clone() {
+                open_texts.insert(path, buf.buffer.text());
+            }
+        }
+        open_texts
+    }
 }
 
 fn canonical_key(path: &PathBuf) -> PathBuf {
@@ -560,15 +571,8 @@ struct EditDto {
 /// scene files) so mentions in *unsaved* drafts still link.
 #[tauri::command]
 fn get_graph(state: tauri::State<'_, AppState>) -> api::GraphDto {
-    use std::collections::BTreeMap;
     let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
-    let buffers = state.buffers.lock().unwrap_or_else(|e| e.into_inner());
-    let mut open_texts: BTreeMap<PathBuf, String> = BTreeMap::new();
-    for buf in buffers.values() {
-        if let Some(path) = buf.path.clone() {
-            open_texts.insert(path, buf.buffer.text());
-        }
-    }
+    let open_texts = state.open_texts();
     let scene_texts = api::gather_scene_texts(&project, &open_texts);
     api::graph_dto(&project.manuscript, &project.lore, &scene_texts)
 }
@@ -731,6 +735,117 @@ fn list_files(state: tauri::State<'_, AppState>) -> Vec<String> {
     list_files_impl(&state)
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+struct UpdateEntityPatch {
+    name: Option<String>,
+    aliases: Option<Vec<String>>,
+    sheet: Option<String>,
+}
+
+fn add_entity_impl(state: &AppState, kind: String, name: String) -> Result<api::EntityDto, String> {
+    let mut project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+    let id = project
+        .add_entity(&kind, &name)
+        .map_err(|err| err.to_string())?;
+    api::entity_dto(&project.manuscript, &project.lore, id)
+        .ok_or_else(|| format!("unknown entity {id}"))
+}
+
+#[tauri::command]
+fn add_entity(
+    state: tauri::State<'_, AppState>,
+    kind: String,
+    name: String,
+) -> Result<api::EntityDto, String> {
+    add_entity_impl(&state, kind, name)
+}
+
+fn update_entity_impl(
+    state: &AppState,
+    id: usize,
+    patch: UpdateEntityPatch,
+) -> Result<api::EntityDto, String> {
+    let mut project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+    project
+        .update_entity(
+            id,
+            patch.name.as_deref(),
+            patch.aliases.as_deref(),
+            patch.sheet.as_deref(),
+        )
+        .map_err(|err| err.to_string())?;
+    api::entity_dto(&project.manuscript, &project.lore, id)
+        .ok_or_else(|| format!("unknown entity {id}"))
+}
+
+#[tauri::command]
+fn update_entity(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+    patch: UpdateEntityPatch,
+) -> Result<api::EntityDto, String> {
+    update_entity_impl(&state, id, patch)
+}
+
+fn remove_entity_impl(state: &AppState, id: usize) -> Result<(), String> {
+    let mut project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+    project.remove_entity(id).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn remove_entity(state: tauri::State<'_, AppState>, id: usize) -> Result<(), String> {
+    remove_entity_impl(&state, id)
+}
+
+fn lore_search_impl(
+    state: &AppState,
+    prefix: String,
+    limit: Option<usize>,
+) -> Vec<api::LoreSearchHitDto> {
+    let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+    api::lore_search(&project.lore, &prefix, limit.unwrap_or(8))
+}
+
+#[tauri::command]
+fn lore_search(
+    state: tauri::State<'_, AppState>,
+    prefix: String,
+    limit: Option<usize>,
+) -> Vec<api::LoreSearchHitDto> {
+    lore_search_impl(&state, prefix, limit)
+}
+
+fn get_entity_impl(state: &AppState, id: usize) -> Result<api::EntityDetailDto, String> {
+    let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+    let open_texts = state.open_texts();
+    api::entity_detail_dto(&project, &open_texts, id).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn get_entity(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+) -> Result<api::EntityDetailDto, String> {
+    get_entity_impl(&state, id)
+}
+
+fn get_mentions_impl(
+    state: &AppState,
+    buffer_id: usize,
+) -> Result<Vec<api::MentionSpanDto>, String> {
+    let text = with_buffer(state, buffer_id, |buf| buf.buffer.text())?;
+    let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+    Ok(api::get_mentions_dto(&project.lore, &text))
+}
+
+#[tauri::command]
+fn get_mentions(
+    state: tauri::State<'_, AppState>,
+    buffer_id: usize,
+) -> Result<Vec<api::MentionSpanDto>, String> {
+    get_mentions_impl(&state, buffer_id)
+}
+
 fn save_project_on_exit(window: &tauri::Window) {
     let state = window.state::<AppState>();
     let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
@@ -773,6 +888,12 @@ fn main() {
             get_scene,
             open_scene,
             list_files,
+            add_entity,
+            update_entity,
+            remove_entity,
+            lore_search,
+            get_entity,
+            get_mentions,
             sweep_recovery,
             check_recovery,
             discard_recovery
@@ -1127,6 +1248,69 @@ mod tests {
         assert!(removed.message.contains("kept"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "keep me");
         assert!(get_scene_impl(&state, sc).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn lore_and_mention_commands_roundtrip() {
+        let (state, path) = scene_workspace();
+        let dir = state.workspace_root();
+
+        // 1. Add entity
+        let mara =
+            add_entity_impl(&state, "character".to_string(), "Mara Stone".to_string()).unwrap();
+        assert_eq!(mara.name, "Mara Stone");
+        assert_eq!(mara.kind, "character");
+
+        // Duplicate rejection error mapping
+        let err =
+            add_entity_impl(&state, "character".to_string(), "mara stone".to_string()).unwrap_err();
+        assert_eq!(err, "name already in use: mara stone");
+
+        // 2. Update entity
+        let updated = update_entity_impl(
+            &state,
+            mara.id,
+            UpdateEntityPatch {
+                name: Some("Mara the Brave".to_string()),
+                aliases: Some(vec!["Brave Mara".to_string()]),
+                sheet: Some("Leader of the rebellion.".to_string()),
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.name, "Mara the Brave");
+        assert_eq!(updated.aliases, vec!["Brave Mara"]);
+        assert_eq!(updated.sheet, "Leader of the rebellion.");
+
+        // 3. Search
+        let search = lore_search_impl(&state, "brave".to_string(), Some(5));
+        assert_eq!(search.len(), 1);
+        assert_eq!(search[0].name, "Mara the Brave");
+        assert_eq!(search[0].matched_alias, Some("Brave Mara".to_string()));
+
+        // 4. Open buffer and check get_entity mention counts + get_mentions
+        let opened = open_file_impl(&state, Some(path.to_string_lossy().to_string())).unwrap();
+        set_text_impl(
+            &state,
+            opened.buffer_id,
+            "Talked with @Brave Mara today. @Brave Mara agreed.".to_string(),
+        )
+        .unwrap();
+
+        let detail = get_entity_impl(&state, mara.id).unwrap();
+        assert_eq!(detail.entity.name, "Mara the Brave");
+        assert_eq!(detail.mention_scenes.len(), 1);
+        assert_eq!(detail.mention_scenes[0].count, 2);
+
+        let mentions = get_mentions_impl(&state, opened.buffer_id).unwrap();
+        assert_eq!(mentions.len(), 2);
+        assert_eq!(mentions[0].entity_id, Some(mara.id));
+        assert_eq!(mentions[0].kind.as_deref(), Some("character"));
+
+        // 5. Remove entity
+        remove_entity_impl(&state, mara.id).unwrap();
+        assert!(get_entity_impl(&state, mara.id).is_err());
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
