@@ -25,6 +25,12 @@ pub struct OutlineNodeDto {
     pub target: usize,
     pub progress: f64,
     pub file: Option<String>,
+    /// Scene POV, setting, and story date (empty for structural nodes).
+    pub pov: String,
+    /// Scene setting, if any.
+    pub setting: String,
+    /// Scene story date, if any.
+    pub story_date: String,
     pub children: Vec<OutlineNodeDto>,
 }
 
@@ -170,6 +176,7 @@ fn entity_kind_label(kind: super::lore::EntityKind) -> &'static str {
 pub fn outline_dto(manuscript: &Manuscript) -> OutlineNodeDto {
     fn build(manuscript: &Manuscript, id: usize) -> Option<OutlineNodeDto> {
         let node = manuscript.get(id)?;
+        let meta = node.meta.clone().unwrap_or_default();
         Some(OutlineNodeDto {
             id,
             kind: kind_label(node.kind).to_string(),
@@ -182,6 +189,9 @@ pub fn outline_dto(manuscript: &Manuscript) -> OutlineNodeDto {
                 .as_ref()
                 .and_then(|meta| meta.file.clone())
                 .map(|path| path.to_string_lossy().to_string()),
+            pov: meta.pov.clone(),
+            setting: meta.setting.clone(),
+            story_date: meta.story_date.clone(),
             children: manuscript
                 .children(id)
                 .iter()
@@ -198,6 +208,9 @@ pub fn outline_dto(manuscript: &Manuscript) -> OutlineNodeDto {
         target: 0,
         progress: 0.0,
         file: None,
+        pov: String::new(),
+        setting: String::new(),
+        story_date: String::new(),
         children: Vec::new(),
     })
 }
@@ -453,6 +466,9 @@ mod tests {
         let scene = &dto.children[0].children[0].children[0];
         assert_eq!(scene.title, "The gate");
         assert_eq!(scene.kind, "scene");
+        assert_eq!(scene.pov, "Mara");
+        assert_eq!(scene.setting, "");
+        assert_eq!(dto.children[0].pov, "");
     }
 
     #[test]

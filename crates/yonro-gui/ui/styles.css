@@ -231,6 +231,35 @@ dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
 .inspect-form textarea.field { resize: vertical; min-height: 3em; }
 .field-error { color: var(--danger); font-size: 12px; margin: 8px 0 0; }
 
+/* Outline table */
+.table-wrap { overflow-x: auto; }
+.outline-table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 12px; }
+.outline-table th, .outline-table td {
+  text-align: left;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.outline-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 1;
+  color: var(--muted);
+  font-weight: normal;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+.outline-table tbody tr { cursor: pointer; }
+.outline-table tbody tr:hover { background: var(--panel-2); }
+.outline-table tbody tr[aria-selected="true"] { background: var(--panel-2); }
+.outline-table tr[data-kind="act"] td:first-child { font-weight: bold; color: var(--accent); }
+.outline-table tfoot td { color: var(--muted); border-top: 1px solid var(--line); }
+.status-dot.st-done { color: var(--ok); }
+.status-dot.st-draft { color: var(--accent); }
+.status-dot.st-empty { color: var(--muted); }
+
 /* Lore */
 .entity {
   background: var(--panel);

@@ -1,38 +1,148 @@
-/* Yonro outline view (center column). Classic script; globals for app.js. */
+/* Yonro outline view (center column): a table in tree order, same data
+ * as the binder. Click selects (inspector updates), double-click/Enter
+ * opens scenes in Write. Totals come from get_stats.
+ */
 
-function renderNode(node, openScene) {
-  const meta =
-    node.kind === 'scene' && node.target > 0
-      ? `<span class="meta">${node.words}/${node.target} words</span>`
-      : node.kind === 'scene' && node.words > 0
-        ? `<span class="meta">${node.words} words</span>`
-        : '';
-  const bar =
-    node.kind !== 'project' && node.target > 0
-      ? `<div class="pbar"><div style="width:${Math.min(100, Math.round((node.words / node.target) * 100))}%"></div></div>`
-      : '';
-  const kids = (node.children || []).map((k) => renderNode(k, openScene)).join('');
-  const clickable = node.kind === 'scene' && node.file ? ` data-file="${esc(node.file)}"` : '';
-  return `<div class="node" data-kind="${esc(node.kind)}"><div class="row"${clickable}>${esc(node.title)}${meta}${bar}</div>${
-    kids ? `<div class="children">${kids}</div>` : ''
-  }</div>`;
+function outlineFlatRows(outline) {
+  const rows = [];
+  const walk = (node, depth) => {
+    if (node.kind !== 'project') rows.push({ node, depth });
+    for (const child of node.children || []) walk(child, depth + 1);
+  };
+  walk(outline, -1);
+  return rows;
+}
+
+function outlineStatus(node) {
+  if (node.target > 0 && node.words >= node.target) return { cls: 'st-done', label: 'complete' };
+  if (node.words > 0) return { cls: 'st-draft', label: 'drafting' };
+  return { cls: 'st-empty', label: 'empty' };
+}
+
+function outlineRow(entry) {
+  const { node, depth } = entry;
+  const tr = document.createElement('tr');
+  tr.dataset.id = String(node.id);
+  tr.dataset.kind = node.kind;
+  tr.tabIndex = 0;
+  if (node.id === binderSelectedId) tr.setAttribute('aria-selected', 'true');
+  const cells = [
+    { text: node.title, pad: 8 + depth * 18 },
+    { text: node.kind === 'scene' && node.pov ? node.pov : '' },
+    { text: node.kind === 'scene' && node.setting ? node.setting : '' },
+    { text: node.kind === 'scene' && node.story_date ? node.story_date : '' },
+    { text: node.target > 0 ? `${node.words}/${node.target}` : `${node.words}` },
+  ];
+  for (const cell of cells) {
+    const td = document.createElement('td');
+    if (cell.pad !== undefined) td.style.paddingLeft = `${cell.pad}px`;
+    td.textContent = cell.text;
+    tr.appendChild(td);
+  }
+  const dotCell = document.createElement('td');
+  const status = outlineStatus(node);
+  const dot = document.createElement('span');
+  dot.className = `status-dot ${status.cls}`;
+  dot.textContent = '●';
+  dot.title = status.label;
+  dot.setAttribute('role', 'img');
+  dot.setAttribute('aria-label', status.label);
+  dotCell.appendChild(dot);
+  tr.appendChild(dotCell);
+  tr.addEventListener('click', () => {
+    binderSelect(node.id);
+    outlineMarkSelected(node.id);
+  });
+  tr.addEventListener('dblclick', () => {
+    if (node.kind === 'scene') openSceneDoc(node.id);
+  });
+  tr.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      binderSelect(node.id);
+      outlineMarkSelected(node.id);
+      if (node.kind === 'scene') openSceneDoc(node.id);
+    }
+  });
+  return tr;
 }
 
 async function loadOutline() {
+  const element = document.getElementById('outline');
   try {
-    const outline = await core.outline();
-    const kids = (outline.children || []).map((k) => renderNode(k, true)).join('');
-    const element = document.getElementById('outline');
-    element.innerHTML =
-      `<div class="node" data-kind="project"><div class="row">✎ ${esc(outline.title)}</div>` +
-      (kids ? `<div class="children">${kids}</div>` : '') +
-      `</div>`;
-    element.querySelectorAll('[data-file]').forEach((row) => {
-      row.addEventListener('click', () => openDoc(row.dataset.file));
-    });
+    const [outline, stats] = await Promise.all([core.outline(), core.stats()]);
+    binderTree = outline;
+    renderBinderTree();
+    renderOutlineTable(element, outline, stats);
   } catch (err) {
-    document.getElementById('outline').innerHTML = `<p class="muted">Outline unavailable: ${esc(err)}</p>`;
+    element.innerHTML = '';
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = `Outline unavailable: ${err}`;
+    element.appendChild(p);
   }
+}
+
+function renderOutlineTable(element, outline, stats) {
+  element.innerHTML = '';
+  if (!(outline.children || []).length) {
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = 'no manuscript yet. build it in the binder: press a, then c, then s.';
+    element.appendChild(p);
+    return;
+  }
+  const wrap = document.createElement('div');
+  wrap.className = 'table-wrap';
+  const table = document.createElement('table');
+  table.className = 'outline-table';
+  table.setAttribute('aria-label', 'manuscript outline');
+  const head = document.createElement('thead');
+  const header = document.createElement('tr');
+  for (const text of ['title', 'pov', 'setting', 'date', 'words', 'status']) {
+    const th = document.createElement('th');
+    th.textContent = text;
+    th.scope = 'col';
+    header.appendChild(th);
+  }
+  head.appendChild(header);
+  table.appendChild(head);
+  const body = document.createElement('tbody');
+  for (const entry of outlineFlatRows(outline)) body.appendChild(outlineRow(entry));
+  table.appendChild(body);
+  const foot = document.createElement('tfoot');
+  const total = document.createElement('tr');
+  const name = document.createElement('td');
+  name.textContent = `total · ${stats.scenes} scene${stats.scenes === 1 ? '' : 's'}`;
+  total.appendChild(name);
+  for (let i = 0; i < 3; i++) total.appendChild(document.createElement('td'));
+  const words = document.createElement('td');
+  words.textContent = stats.target > 0 ? `${stats.words}/${stats.target}` : `${stats.words}`;
+  total.appendChild(words);
+  const dotCell = document.createElement('td');
+  const pct = stats.target > 0 ? Math.min(100, Math.round((stats.words / stats.target) * 100)) : 0;
+  const dot = document.createElement('span');
+  dot.className = `status-dot ${stats.target > 0 && stats.words >= stats.target ? 'st-done' : stats.words > 0 ? 'st-draft' : 'st-empty'}`;
+  dot.textContent = '●';
+  dot.title = `${pct}% of target`;
+  dot.setAttribute('role', 'img');
+  dot.setAttribute('aria-label', `${pct}% of target`);
+  dotCell.appendChild(dot);
+  total.appendChild(dotCell);
+  foot.appendChild(total);
+  table.appendChild(foot);
+  wrap.appendChild(table);
+  element.appendChild(wrap);
+}
+
+function outlineMarkSelected(id) {
+  const element = document.getElementById('outline');
+  if (!element) return;
+  for (const tr of element.querySelectorAll('tr[aria-selected="true"]')) {
+    tr.removeAttribute('aria-selected');
+  }
+  const tr = element.querySelector(`tr[data-id="${id}"]`);
+  if (tr) tr.setAttribute('aria-selected', 'true');
 }
 
 /* Binder tree (left column). Same OutlineNodeDto data as the Outline view.
@@ -262,6 +372,7 @@ function binderSelect(id) {
   }
   const row = binderRowFor(id);
   if (row) row.setAttribute('aria-selected', 'true');
+  if (typeof outlineMarkSelected === 'function') outlineMarkSelected(id);
   if (typeof showInspectorFor === 'function') showInspectorFor(id);
 }
 
@@ -729,22 +840,5 @@ async function refreshFiles() {
     p.className = 'muted';
     p.textContent = `files unavailable: ${err}`;
     box.appendChild(p);
-  }
-}
-
-async function loadOutline() {
-  try {
-    const outline = await core.outline();
-    const kids = (outline.children || []).map((k) => renderNode(k, true)).join('');
-    const element = document.getElementById('outline');
-    element.innerHTML =
-      `<div class="node" data-kind="project"><div class="row">✎ ${esc(outline.title)}</div>` +
-      (kids ? `<div class="children">${kids}</div>` : '') +
-      `</div>`;
-    element.querySelectorAll('[data-file]').forEach((row) => {
-      row.addEventListener('click', () => openDoc(row.dataset.file));
-    });
-  } catch (err) {
-    document.getElementById('outline').innerHTML = `<p class="muted">Outline unavailable: ${esc(err)}</p>`;
   }
 }
