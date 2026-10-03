@@ -154,8 +154,56 @@ body.hide-inspector #inspector, body.hide-inspector #split-inspector { display: 
 .node[data-kind="act"] > .row { font-weight: bold; color: var(--accent); margin-top: 8px; }
 .node .meta { color: var(--muted); font-size: 0.85em; margin-left: 8px; }
 .children { margin-left: 18px; border-left: 1px solid var(--line); padding-left: 8px; }
-.pbar { height: 4px; background: var(--line); border-radius: 2px; margin-top: 3px; max-width: 220px; }
+.pbar { height: 3px; background: var(--line); border-radius: 2px; margin-top: 3px; max-width: 220px; }
 .pbar > div { height: 100%; background: var(--accent); border-radius: 2px; }
+
+/* Binder tree */
+.node .row { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.node .row[aria-selected="true"] { background: var(--panel-2); }
+.twisty { display: inline-block; width: 1.2em; color: var(--muted); cursor: pointer; text-align: center; }
+.node .label { overflow: hidden; text-overflow: ellipsis; }
+.node .dirty { color: var(--accent); }
+.inline-edit {
+  flex: 1;
+  min-width: 8ch;
+  background: var(--panel-2);
+  color: var(--ink);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  font: inherit;
+}
+#binder-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 170px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 6px;
+}
+#binder-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border-color: transparent;
+  margin: 1px 0;
+}
+#binder-menu button:hover, #binder-menu button:focus-visible { border-color: var(--accent); }
+
+dialog {
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  max-width: min(420px, 90vw);
+}
+dialog::backdrop { background: var(--scrim); }
+dialog h2 { margin: 0 0 8px; font-size: 1rem; }
+dialog p { margin: 0 0 12px; }
+dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
 
 /* Lore */
 .entity {

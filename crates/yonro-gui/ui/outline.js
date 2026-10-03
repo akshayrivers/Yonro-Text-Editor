@@ -44,6 +44,34 @@ async function loadOutline() {
 let binderTree = null;
 let binderFocusId = null;
 let binderSelectedId = null;
+let binderCollapsed = loadBinderCollapsed();
+
+function loadBinderCollapsed() {
+  try {
+    const raw = localStorage.getItem('yonro.collapsed');
+    const arr = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(arr)) return new Set();
+    return new Set(arr.filter((n) => Number.isInteger(n)));
+  } catch (err) {
+    return new Set();
+  }
+}
+
+function saveBinderCollapsed() {
+  try {
+    localStorage.setItem('yonro.collapsed', JSON.stringify(Array.from(binderCollapsed)));
+  } catch (err) {
+    /* prefs only; ignore */
+  }
+}
+
+function binderToggle(id) {
+  if (binderCollapsed.has(id)) binderCollapsed.delete(id);
+  else binderCollapsed.add(id);
+  saveBinderCollapsed();
+  renderBinderTree();
+  binderFocus(id, true);
+}
 
 async function loadBinder() {
   const box = document.getElementById('binder-outline');
@@ -52,6 +80,7 @@ async function loadBinder() {
     const title = document.getElementById('project-title');
     if (title) title.textContent = binderTree.title || 'untitled';
     renderBinderTree();
+    await refreshFiles();
   } catch (err) {
     binderTree = null;
     if (box) {
@@ -101,6 +130,7 @@ function binderVisibleIds() {
   const out = [];
   const walk = (node) => {
     out.push(node.id);
+    if (binderCollapsed.has(node.id)) return;
     for (const child of node.children || []) walk(child);
   };
   for (const child of (binderTree && binderTree.children) || []) walk(child);
@@ -151,14 +181,16 @@ function buildBinderNode(node) {
   row.tabIndex = node.id === binderFocusId ? 0 : -1;
   if (node.id === binderSelectedId) row.setAttribute('aria-selected', 'true');
   const hasKids = (node.children || []).length > 0;
-  if (hasKids) row.setAttribute('aria-expanded', 'true');
+  const collapsed = binderCollapsed.has(node.id);
+  if (hasKids) row.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
   const twisty = document.createElement('span');
   twisty.className = 'twisty';
   twisty.setAttribute('aria-hidden', 'true');
-  twisty.textContent = hasKids ? '▾' : '·';
+  twisty.textContent = !hasKids ? '·' : collapsed ? '▸' : '▾';
   twisty.addEventListener('click', (e) => {
     e.stopPropagation();
-    binderFocus(Number(row.dataset.id), true);
+    if (hasKids) binderToggle(node.id);
+    else binderFocus(node.id, true);
   });
   row.appendChild(twisty);
   const label = document.createElement('span');
@@ -179,13 +211,21 @@ function buildBinderNode(node) {
     bar.appendChild(fill);
     row.appendChild(bar);
   }
+  if (node.kind === 'scene' && node.file && typeof isDocDirty === 'function' && isDocDirty(node.file)) {
+    const dot = document.createElement('span');
+    dot.className = 'dirty';
+    dot.textContent = ' ●';
+    dot.title = 'unsaved changes';
+    dot.setAttribute('aria-hidden', 'true');
+    row.appendChild(dot);
+  }
   row.addEventListener('click', () => {
     binderFocus(node.id, true);
     binderSelect(node.id);
     if (node.kind === 'scene') openSceneDoc(node.id);
   });
   wrap.appendChild(row);
-  if (hasKids) {
+  if (hasKids && !collapsed) {
     const group = document.createElement('div');
     group.className = 'children';
     group.setAttribute('role', 'group');
@@ -242,6 +282,32 @@ document.getElementById('binder-outline').addEventListener('keydown', (e) => {
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     e.preventDefault();
     binderFocusDelta(e.key === 'ArrowDown' ? 1 : -1);
+  } else if (e.key === 'ArrowRight') {
+    e.preventDefault();
+    if (id === null || id === undefined) return;
+    const node = binderFind(id);
+    if (!node) return;
+    if ((node.children || []).length > 0 && binderCollapsed.has(id)) {
+      binderToggle(id);
+    } else if ((node.children || []).length > 0) {
+      const first = node.children[0].id;
+      binderFocus(first, true);
+      binderSelect(first);
+    }
+  } else if (e.key === 'ArrowLeft') {
+    e.preventDefault();
+    if (id === null || id === undefined) return;
+    const node = binderFind(id);
+    if (!node) return;
+    if ((node.children || []).length > 0 && !binderCollapsed.has(id)) {
+      binderToggle(id);
+    } else {
+      const parent = binderParentOf(id);
+      if (parent && binderTree && parent.id !== binderTree.id) {
+        binderFocus(parent.id, true);
+        binderSelect(parent.id);
+      }
+    }
   } else if (e.key === 'Home') {
     e.preventDefault();
     const ids = binderVisibleIds();
@@ -275,7 +341,20 @@ document.getElementById('binder-outline').addEventListener('keydown', (e) => {
     e.preventDefault();
     const target = id !== null && id !== undefined && !Number.isNaN(id) ? id : binderFocusId;
     binderBeginAdd(e.key, target);
+  } else if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+    if (id === null || id === undefined) return;
+    e.preventDefault();
+    binderOpenMenu(id);
   }
+});
+
+document.getElementById('binder-outline').addEventListener('contextmenu', (e) => {
+  const row = e.target && e.target.closest ? e.target.closest('.row') : null;
+  if (!row || row.dataset.id === undefined) return;
+  e.preventDefault();
+  const x = Number.isFinite(e.clientX) ? e.clientX : undefined;
+  const y = Number.isFinite(e.clientY) ? e.clientY : undefined;
+  binderOpenMenu(Number(row.dataset.id), x, y);
 });
 
 /* Inline structure editing: F2 renames, Del removes, a/c/s add.
@@ -383,6 +462,10 @@ function binderBeginAdd(which, focusId) {
       return;
     }
   }
+  binderBeginAddAt(parent, kind);
+}
+
+function binderBeginAddAt(parent, kind) {
   const box = document.getElementById('binder-outline');
   if (!box) return;
   if (binderEditing()) return;
@@ -490,6 +573,162 @@ async function binderDoRemove(id) {
   } catch (err) {
     setMessage(`delete failed: ${err}`, { error: true });
     binderFocus(id, true);
+  }
+}
+
+/* Move up/down (the keyboard-accessible reorder; no drag and drop).
+ * Index math lives here; hierarchy truth stays in core.
+ */
+
+async function binderMove(id, dir) {
+  const sib = binderSiblingsOf(id);
+  if (!sib.parent || sib.index === -1) return;
+  const next = sib.index + dir;
+  if (next < 0 || next >= sib.kids.length) {
+    setMessage(dir < 0 ? 'already first' : 'already last');
+    return;
+  }
+  try {
+    binderTree = await core.moveNode(id, sib.parent.id, next);
+    renderBinderTree();
+    binderFocus(id, true);
+    binderSelect(id);
+  } catch (err) {
+    setMessage(`move failed: ${err}`, { error: true });
+  }
+}
+
+/* Context menu: rename, add child, move up/down, delete. */
+
+let binderMenuEl = null;
+
+function binderCloseMenu() {
+  if (binderMenuEl) {
+    binderMenuEl.remove();
+    binderMenuEl = null;
+  }
+}
+
+function binderChildKind(node) {
+  if (node.kind === 'chapter') return 'scene';
+  if (node.kind === 'act') return 'chapter';
+  if (node.kind === 'scene') return 'scene';
+  return 'act';
+}
+
+function binderBeginChildAdd(id) {
+  const node = binderFind(id);
+  if (!node) return;
+  if (node.kind === 'scene') {
+    const parent = binderParentOf(id);
+    if (!parent || (binderTree && parent.id === binderTree.id)) {
+      setMessage('scenes live in chapters.', { error: true });
+      return;
+    }
+    binderBeginAddAt(parent.id, 'scene');
+  } else if (node.kind === 'chapter') {
+    binderBeginAddAt(id, 'scene');
+  } else if (node.kind === 'act') {
+    binderBeginAddAt(id, 'chapter');
+  } else {
+    binderBeginAddAt(null, 'act');
+  }
+}
+
+function binderOpenMenu(id, x, y) {
+  binderCloseMenu();
+  const node = binderFind(id);
+  if (!node) return;
+  binderFocus(id, false);
+  binderSelect(id);
+  const menu = document.createElement('div');
+  menu.id = 'binder-menu';
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', `actions for ${node.title}`);
+  const childKind = binderChildKind(node);
+  const items = [
+    { label: 'rename', fn: () => binderBeginRename(id) },
+    { label: `add ${childKind}`, fn: () => binderBeginChildAdd(id) },
+    { label: 'move up', fn: () => binderMove(id, -1) },
+    { label: 'move down', fn: () => binderMove(id, 1) },
+    { label: 'delete', fn: () => binderRemove(id) },
+  ];
+  for (const item of items) {
+    const btn = document.createElement('button');
+    btn.setAttribute('role', 'menuitem');
+    btn.textContent = item.label;
+    btn.addEventListener('click', () => {
+      binderCloseMenu();
+      item.fn();
+    });
+    menu.appendChild(btn);
+  }
+  menu.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      binderCloseMenu();
+      const back = binderRowFor(id);
+      if (back) back.focus();
+    }
+  });
+  document.body.appendChild(menu);
+  const w = 190;
+  const h = items.length * 34 + 12;
+  const vw = Number.isFinite(window.innerWidth) ? window.innerWidth : 1024;
+  const vh = Number.isFinite(window.innerHeight) ? window.innerHeight : 768;
+  let left = Number.isFinite(x) ? x : 8;
+  let top = Number.isFinite(y) ? y : 8;
+  if (left + w > vw) left = Math.max(8, vw - w - 8);
+  if (top + h > vh) top = Math.max(8, vh - h - 8);
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  binderMenuEl = menu;
+  const close = () => binderCloseMenu();
+  document.addEventListener('click', close, { once: true });
+  const first = menu.querySelector('button');
+  if (first) first.focus();
+}
+
+/* Files section: scene-less workspace .md files. Click opens, mod+E focuses. */
+
+function shortNameOf(path) {
+  if (typeof shortName === 'function') return shortName(path);
+  const parts = String(path || '').split('/');
+  return parts[parts.length - 1] || 'untitled';
+}
+
+async function refreshFiles() {
+  const box = document.getElementById('binder-files');
+  if (!box) return;
+  try {
+    const files = await core.listFiles();
+    box.innerHTML = '';
+    if (!files.length) {
+      const p = document.createElement('p');
+      p.className = 'muted';
+      p.textContent = 'no loose files. scenes live in the tree above.';
+      box.appendChild(p);
+      return;
+    }
+    for (const file of files) {
+      const row = document.createElement('button');
+      row.className = 'file-row';
+      row.textContent = shortNameOf(file);
+      row.title = file;
+      row.setAttribute('aria-label', shortNameOf(file));
+      row.addEventListener('click', () => {
+        openDoc(file);
+        closeDrawersOnNarrow();
+      });
+      box.appendChild(row);
+    }
+  } catch (err) {
+    box.innerHTML = '';
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = `files unavailable: ${err}`;
+    box.appendChild(p);
   }
 }
 

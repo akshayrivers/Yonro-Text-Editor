@@ -121,29 +121,19 @@ function renderTabs() {
     });
     docTabs.appendChild(tab);
   });
-  renderBinderFiles();
 }
 
-function renderBinderFiles() {
-  const box = document.getElementById('binder-files');
-  if (!box) return;
-  box.innerHTML = '';
-  if (docs.size === 0) {
-    const p = document.createElement('p');
-    p.className = 'muted';
-    p.textContent = 'no open files. press new to start a draft.';
-    box.appendChild(p);
-    return;
+function isDocDirty(path) {
+  if (!path) return false;
+  for (const doc of docs.values()) {
+    if (doc.path === path && doc.dirty) return true;
   }
-  for (const [id, doc] of docs) {
-    const row = document.createElement('button');
-    row.className = 'file-row' + (id === activeDoc ? ' active' : '');
-    row.textContent = `${shortName(doc.path)}${doc.dirty ? ' ●' : ''}`;
-    row.setAttribute('aria-label', shortName(doc.path));
-    row.addEventListener('click', () => activateDoc(id));
-    box.appendChild(row);
-  }
+  return false;
 }
+
+const scheduleBinderRefresh = debounce(() => {
+  if (typeof refreshBinder === 'function') refreshBinder();
+}, 800);
 
 function setStatusline(stats) {
   const stFile = document.getElementById('st-file');
@@ -371,6 +361,7 @@ async function flushSync() {
       if (flipped) renderTabs();
     }
     renderStatus(stats);
+    scheduleBinderRefresh();
   } catch (err) {
     setMessage(`sync failed: ${err}`, { error: true });
   }
@@ -535,6 +526,7 @@ async function historyStep(which) {
     if (doc) doc.dirty = res.stats.dirty;
     renderTabs();
     renderStatus(res.stats);
+    scheduleBinderRefresh();
   } catch (err) {
     setMessage(`history failed: ${err}`, { error: true });
   }
