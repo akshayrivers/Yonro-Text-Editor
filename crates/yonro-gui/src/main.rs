@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use serde::Serialize;
 use tauri::Manager;
-use yonro_core::{api, Buffer, Project, UndoStack};
+use yonro_core::{api, Buffer, Project, SceneMetaFields, UndoStack};
 
 // ---------------------------------------------------------------------------
 // State
@@ -580,6 +580,157 @@ fn get_timeline(state: tauri::State<'_, AppState>) -> api::TimelineDto {
     api::timeline_dto(&project.manuscript)
 }
 
+// ---------------------------------------------------------------------------
+// Structure editing (thin over `Project`; every mutation persists and
+// returns the fresh outline so the UI re-renders from truth)
+// ---------------------------------------------------------------------------
+
+fn add_node_impl(
+    state: &AppState,
+    parent: Option<usize>,
+    kind: String,
+    title: String,
+) -> Result<api::AddNodeDto, String> {
+    let mut project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+    let new_id = project
+        .add_node(parent, &kind, &title)
+        .map_err(|err| err.to_string())?;
+    Ok(api::AddNodeDto {
+        outline: api::outline_dto(&project.manuscript),
+        new_id,
+    })
+}
+
+/// Add an act/chapter/scene; `parent: null` puts an act at the root.
+#[tauri::command]
+fn add_node(
+    state: tauri::State<'_, AppState>,
+    parent: Option<usize>,
+    kind: String,
+    title: String,
+) -> Result<api::AddNodeDto, String> {
+    add_node_impl(&state, parent, kind, title)
+}
+
+fn rename_node_impl(
+    state: &AppState,
+    id: usize,
+    title: String,
+) -> Result<api::OutlineNodeDto, String> {
+    let mut project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+    project
+        .rename_node(id, &title)
+        .map_err(|err| err.to_string())?;
+    Ok(api::outline_dto(&project.manuscript))
+}
+
+/// Rename any outline node.
+#[tauri::command]
+fn rename_node(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+    title: String,
+) -> Result<api::OutlineNodeDto, String> {
+    rename_node_impl(&state, id, title)
+}
+
+fn move_node_impl(
+    state: &AppState,
+    id: usize,
+    new_parent: usize,
+    index: Option<usize>,
+) -> Result<api::OutlineNodeDto, String> {
+    let mut project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+    project
+        .move_node(id, new_parent, index)
+        .map_err(|err| err.to_string())?;
+    Ok(api::outline_dto(&project.manuscript))
+}
+
+/// Reparent `id` under `new_parent` (`index: null` appends).
+#[tauri::command]
+fn move_node(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+    new_parent: usize,
+    index: Option<usize>,
+) -> Result<api::OutlineNodeDto, String> {
+    move_node_impl(&state, id, new_parent, index)
+}
+
+fn remove_node_impl(state: &AppState, id: usize) -> Result<api::RemoveNodeDto, String> {
+    let mut project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+    let message = project.remove_node(id).map_err(|err| err.to_string())?;
+    Ok(api::RemoveNodeDto {
+        outline: api::outline_dto(&project.manuscript),
+        message,
+    })
+}
+
+/// Remove a node (scene drafts stay on disk; snapshots go to history).
+#[tauri::command]
+fn remove_node(state: tauri::State<'_, AppState>, id: usize) -> Result<api::RemoveNodeDto, String> {
+    remove_node_impl(&state, id)
+}
+
+fn set_scene_meta_impl(
+    state: &AppState,
+    id: usize,
+    meta: SceneMetaFields,
+) -> Result<api::OutlineNodeDto, String> {
+    let mut project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+    project
+        .set_scene_meta(id, &meta)
+        .map_err(|err| err.to_string())?;
+    Ok(api::outline_dto(&project.manuscript))
+}
+
+/// Replace a scene's inspector-editable metadata (seeds lore like the TUI).
+#[tauri::command]
+fn set_scene_meta(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+    meta: SceneMetaFields,
+) -> Result<api::OutlineNodeDto, String> {
+    set_scene_meta_impl(&state, id, meta)
+}
+
+fn get_scene_impl(state: &AppState, id: usize) -> Result<api::SceneDetailDto, String> {
+    let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+    api::scene_detail_dto(&project, id).map_err(|err| err.to_string())
+}
+
+/// One scene's inspector payload (breadcrumb, meta, file, counts).
+#[tauri::command]
+fn get_scene(state: tauri::State<'_, AppState>, id: usize) -> Result<api::SceneDetailDto, String> {
+    get_scene_impl(&state, id)
+}
+
+fn open_scene_impl(state: &AppState, id: usize) -> Result<OpenedDto, String> {
+    let path = {
+        let mut project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+        project.scene_file(id).map_err(|err| err.to_string())?
+    };
+    open_file_impl(state, Some(path.to_string_lossy().to_string()))
+}
+
+/// Materialize a scene's draft file, then open it (deduped like files).
+#[tauri::command]
+fn open_scene(state: tauri::State<'_, AppState>, id: usize) -> Result<OpenedDto, String> {
+    open_scene_impl(&state, id)
+}
+
+fn list_files_impl(state: &AppState) -> Vec<String> {
+    let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+    project.list_files()
+}
+
+/// Scene-less `.md` files in the workspace root.
+#[tauri::command]
+fn list_files(state: tauri::State<'_, AppState>) -> Vec<String> {
+    list_files_impl(&state)
+}
+
 fn save_project_on_exit(window: &tauri::Window) {
     let state = window.state::<AppState>();
     let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
@@ -614,6 +765,14 @@ fn main() {
             redo_buffer,
             get_graph,
             get_timeline,
+            add_node,
+            rename_node,
+            move_node,
+            remove_node,
+            set_scene_meta,
+            get_scene,
+            open_scene,
+            list_files,
             sweep_recovery,
             check_recovery,
             discard_recovery
@@ -873,6 +1032,101 @@ mod tests {
         .unwrap();
         assert!(saved.ends_with("fresh.md"));
         assert!(!recovery_dir(&dir).join("fresh.md").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn empty_state() -> AppState {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(10_000);
+        let n = NEXT.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("yonro-gui-struct-{n}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        AppState::load(dir)
+    }
+
+    #[test]
+    fn structure_impls_build_rename_move_and_open_scenes() {
+        let state = empty_state();
+        let dir = state.workspace_root();
+        let act = add_node_impl(&state, None, "act".to_string(), "Act I".to_string())
+            .unwrap()
+            .new_id;
+        let ch = add_node_impl(&state, Some(act), "chapter".to_string(), "Ch 1".to_string())
+            .unwrap()
+            .new_id;
+        let sc = add_node_impl(&state, Some(ch), "scene".to_string(), "S1".to_string())
+            .unwrap()
+            .new_id;
+        rename_node_impl(&state, sc, "The gate".to_string()).unwrap();
+        let detail = get_scene_impl(&state, sc).unwrap();
+        assert_eq!(detail.title, "The gate");
+        assert_eq!(
+            detail.breadcrumb,
+            vec!["Untitled", "Act I", "Ch 1", "The gate"]
+        );
+        set_scene_meta_impl(
+            &state,
+            sc,
+            SceneMetaFields {
+                pov: "Mara".to_string(),
+                setting: "Mill farm".to_string(),
+                target_words: 100,
+                ..SceneMetaFields::default()
+            },
+        )
+        .unwrap();
+        // POV/setting seeded lore exactly like the TUI.
+        let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(project.lore.resolve("Mara").is_some());
+        drop(project);
+        // Second chapter + indexed move to its front.
+        let ch2 = add_node_impl(&state, Some(act), "chapter".to_string(), "Ch 2".to_string())
+            .unwrap()
+            .new_id;
+        let outline = move_node_impl(&state, sc, ch2, Some(0)).unwrap();
+        assert_eq!(outline.children[0].children[1].children[0].id, sc);
+        // Opening materializes the draft; stray files list separately.
+        let opened = open_scene_impl(&state, sc).unwrap();
+        assert!(opened
+            .path
+            .is_some_and(|p| p.contains(&format!("scene-{sc}.md"))));
+        std::fs::write(dir.join("notes.md"), "stray").unwrap();
+        let files = list_files_impl(&state);
+        assert_eq!(files.len(), 1);
+        assert!(files[0].ends_with("notes.md"));
+        // Reload keeps structure and meta.
+        let reloaded = AppState::load(dir.clone());
+        let detail = get_scene_impl(&reloaded, sc).unwrap();
+        assert_eq!(detail.meta.pov, "Mara");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn structure_impls_name_failures_and_keep_drafts_on_remove() {
+        let state = empty_state();
+        let dir = state.workspace_root();
+        let err = add_node_impl(&state, None, "scene".to_string(), "S".to_string()).unwrap_err();
+        assert!(err.contains("scenes live in chapters"));
+        let err = rename_node_impl(&state, 999, "X".to_string()).unwrap_err();
+        assert!(err.contains("999"));
+        let act = add_node_impl(&state, None, "act".to_string(), "A".to_string())
+            .unwrap()
+            .new_id;
+        let ch = add_node_impl(&state, Some(act), "chapter".to_string(), "C".to_string())
+            .unwrap()
+            .new_id;
+        let sc = add_node_impl(&state, Some(ch), "scene".to_string(), "S".to_string())
+            .unwrap()
+            .new_id;
+        let opened = open_scene_impl(&state, sc).unwrap();
+        let path = opened.path.unwrap();
+        std::fs::write(&path, "keep me").unwrap();
+        let removed = remove_node_impl(&state, sc).unwrap();
+        assert!(removed.message.contains(&format!("scene-{sc}.md")));
+        assert!(removed.message.contains("kept"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "keep me");
+        assert!(get_scene_impl(&state, sc).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

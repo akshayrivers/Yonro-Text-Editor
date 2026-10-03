@@ -23,6 +23,14 @@ const core = {
   sweepRecovery: () => core.invoke('sweep_recovery'),
   checkRecovery: (path) => core.invoke('check_recovery', { path: path ?? null }),
   discardRecovery: (path) => core.invoke('discard_recovery', { path: path ?? null }),
+  addNode: (parent, kind, title) => core.invoke('add_node', { parent: parent ?? null, kind, title }),
+  renameNode: (id, title) => core.invoke('rename_node', { id, title }),
+  moveNode: (id, newParent, index) => core.invoke('move_node', { id, newParent, index: index ?? null }),
+  removeNode: (id) => core.invoke('remove_node', { id }),
+  setSceneMeta: (id, meta) => core.invoke('set_scene_meta', { id, meta }),
+  getScene: (id) => core.invoke('get_scene', { id }),
+  openScene: (id) => core.invoke('open_scene', { id }),
+  listFiles: () => core.invoke('list_files'),
   onCloseRequested: (handler) => {
     try {
       const api = window.__TAURI__ && window.__TAURI__.window;
