@@ -4,7 +4,7 @@ use std::{
     env,
     io::Error,
     panic::{set_hook, take_hook},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use yonro_core::{
     Buffer, BufferManager, Command, DocumentStatus, EditorEvent, FileType, System,
@@ -15,16 +15,16 @@ pub use crate::layout::{
     DocTab, LayoutNode, LayoutTree, Pane, PaneContent, PaneManager, SplitDirection, SplitHandle, SidebarKind,
 };
 pub use crate::plugins::{
-    builtin::{FileExplorerPlugin, WordCountPlugin}, BufferSnapshot, Plugin, PluginMessage, PluginResponse,
+    builtin::{FileExplorerPlugin, OutlinePlugin, WordCountPlugin}, BufferSnapshot, Plugin, PluginMessage, PluginResponse,
     PluginRuntime,
 };
 pub use crate::terminal::Terminal;
 pub use crate::uicomponents::{
-    view::EditOperation, ClickAction, CommandBar, FileExplorer, MessageBar, PaneBar, StatusBar,
+    view::EditOperation, ClickAction, CommandBar, FileExplorer, MessageBar, Outline, PaneBar, StatusBar,
     UIComponent, View, WordCount,
 };
 pub use yonro_core::{
-    MarkDownSyntaxHighlighter, RustSyntaxHighlighter, SearchResultHighlighter, SyntaxHighlighter,
+    manuscript::{Manuscript, NodeKind}, MarkDownSyntaxHighlighter, RustSyntaxHighlighter, SearchResultHighlighter, SyntaxHighlighter,
     TextSyntaxHighlighter,
 };
 
@@ -63,6 +63,18 @@ pub struct Editor {
     /// the layout tree; the rest are stashed with their layouts intact.
     doc_tabs: Vec<DocTab>,
     active_tab: usize,
+
+    /// Distraction-free Zen mode (`PLAN.md Phase 4.2`): document only.
+    zen_mode: bool,
+    /// Sidebar visibility to restore when leaving Zen mode.
+    sidebar_was_visible: bool,
+    /// Last `Ctrl+Z` press (double-press toggles Zen; single still undoes).
+    last_z_press: Option<Instant>,
+
+    /// Story structure (`PLAN.md Phase 4.3`): Project → Acts → Chapters →
+    /// Scenes. Rendered by the outline sidebar; scene word counts sync here
+    /// from live buffers.
+    manuscript: Manuscript,
 }
 
 impl Editor {
@@ -119,6 +131,18 @@ impl Editor {
         let plugin_runtime = PluginRuntime::new();
         plugin_runtime.load_plugin(Box::new(FileExplorerPlugin::new()));
         plugin_runtime.load_plugin(Box::new(WordCountPlugin::new()));
+        plugin_runtime.load_plugin(Box::new(OutlinePlugin::new()));
+
+        // Manuscript project named after the working directory.
+        let manuscript_title = std::env::current_dir()
+            .ok()
+            .and_then(|dir| {
+                dir.file_name()
+                    .and_then(|name| name.to_str())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "Untitled".to_string());
+        let manuscript = Manuscript::new(&manuscript_title);
 
         let mut editor = Self {
             should_quit: false,
@@ -143,11 +167,15 @@ impl Editor {
             last_editor_pane: None,
             doc_tabs,
             active_tab: 0,
+            zen_mode: false,
+            sidebar_was_visible: false,
+            last_z_press: None,
+            manuscript,
         };
 
         editor.handle_resize_command(terminal_size);
         editor.update_message(
-            "HELP: Ctrl-F = find | Ctrl-S = save | Ctrl-Q = quit | Ctrl-E = explorer",
+            "HELP: Ctrl-F = find | Ctrl-S = save | Ctrl-Q = quit | Ctrl-E = explorer | Ctrl-O = outline | F11/Ctrl-ZZ = zen",
         );
 
         let args: Vec<String> = env::args().collect();
@@ -237,6 +265,28 @@ impl Editor {
             if let Command::System(System::Resize(size)) = command {
                 self.handle_resize_command(size);
             }
+            // Zen toggle needs Editor state (handler contexts can't reach it)
+            if matches!(command, Command::System(System::ZenToggle)) {
+                self.last_z_press = None;
+                self.toggle_zen();
+            }
+            // Double `Ctrl+Z` toggles Zen (macOS Fn+F11 is unreliable).
+            // Single press still undoes; the second press within 500ms skips
+            // its undo and toggles instead (first undo stands, redoable).
+            // Guarded to normal mode so prompt editing keeps plain undo.
+            if !self.in_prompt() {
+                if let Command::System(System::Undo) = command {
+                    let now = Instant::now();
+                    if let Some(last) = self.last_z_press {
+                        if now.duration_since(last).as_millis() < Self::Z_DOUBLE_MS {
+                            self.last_z_press = None;
+                            self.toggle_zen();
+                            return;
+                        }
+                    }
+                    self.last_z_press = Some(now);
+                }
+            }
 
             let mut handler = std::mem::take(&mut self.command_handler);
             let mut ctx = self.make_context();
@@ -253,6 +303,29 @@ impl Editor {
                 }
                 // Update WordCount component for active buffer
                 self.update_word_count_if_open();
+                // Scene word counts follow the same edits.
+                self.sync_manuscript_words();
+            }
+
+            // Zen typewriter: recenter AFTER the event's own scrolling, so the
+            // final resting state (not just the next frame) is centered.
+            if self.zen_mode {
+                let buffer_id = self
+                    .pane_manager
+                    .active_pane()
+                    .and_then(|p| p.view())
+                    .map(View::buffer_id);
+                if let Some(buffer_id) = buffer_id {
+                    if let Some(buffer) = self.buffer_manager.get(buffer_id) {
+                        if let Some(view) = self
+                            .pane_manager
+                            .active_pane_mut()
+                            .and_then(|p| p.view_mut())
+                        {
+                            view.apply_typewriter(buffer);
+                        }
+                    }
+                }
             }
         }
     }
@@ -370,6 +443,9 @@ impl Editor {
                             }
                             SidebarKind::WordCount => {
                                 PaneContent::Plugin(Box::new(WordCount::default()))
+                            }
+                            SidebarKind::Outline => {
+                                PaneContent::Plugin(Box::new(Outline::default()))
                             }
                         };
                         let new_id = self.pane_manager.create_pane(content);
@@ -533,6 +609,12 @@ impl Editor {
                 }
             }
             PluginResponse::SelectInPane { pane_id } => {
+                // Outline sidebar: open the selected scene (materializing its
+                // file on first open). Anything else: classic file explorer.
+                if self.is_outline_pane(pane_id) {
+                    self.open_outline_selection(pane_id);
+                    return;
+                }
                 let file_to_open = if let Some(pane) = self.pane_manager.get_pane_mut(pane_id) {
                     pane.plugin_handle_select()
                 } else {
@@ -544,6 +626,9 @@ impl Editor {
                     // sibling pane so the previous file keeps its place.
                     self.open_file_in_new_pane(&path);
                 }
+            }
+            PluginResponse::ManuscriptAdd { child } => {
+                self.manuscript_add(child);
             }
             PluginResponse::MouseClickInPane { pane_id, position } => {
                 let action = if let Some(pane) = self.pane_manager.get_pane_mut(pane_id) {
@@ -560,8 +645,12 @@ impl Editor {
                         self.apply_plugin_response(PluginResponse::ToggleMinimize { pane_id });
                     }
                     ClickAction::DoubleClick => {
-                        // Same as Enter: new sibling pane, explorer stays open.
-                        if let Some(path) = self.pane_manager.get_pane_mut(pane_id).and_then(|p| p.plugin_handle_select()) {
+                        // Outline: same as Enter. Otherwise classic file open.
+                        if self.is_outline_pane(pane_id) {
+                            self.open_outline_selection(pane_id);
+                        } else if let Some(path) = self.pane_manager.get_pane_mut(pane_id).and_then(|p| p.plugin_handle_select()) {
+                            // Persistent explorer: stay open; new tab keeps
+                            // the previous file in place.
                             self.open_file_in_new_pane(&path);
                         }
                     }
@@ -581,6 +670,12 @@ impl Editor {
         let Size { height, width } = self.terminal_size;
 
         let _ = Terminal::hide_caret();
+
+        // Zen mode owns the whole frame (document only, no chrome).
+        if self.zen_mode {
+            self.refresh_screen_zen();
+            return;
+        }
 
         let _ = self.pane_bar.render(
             &self.buffer_manager,
@@ -616,6 +711,12 @@ impl Editor {
                     pane.is_floating = false;
                     pane.is_minimized = false;
                     pane.resize(sidebar_rect);
+                    // Outline rows rebuild from the manuscript every visible
+                    // frame (selection preserved by node id inside).
+                    if let crate::layout::PaneContent::Plugin(component) = &mut pane.content
+                    {
+                        component.sync_outline(&self.manuscript, &self.buffer_manager);
+                    }
                     pane.render(&self.buffer_manager);
                 }
             }
@@ -650,6 +751,46 @@ impl Editor {
         }
 
         // Caret
+        self.position_caret(width, height);
+    }
+
+    /// Zen render (`PLAN.md Phase 4.2`): the active document only, centered
+    /// in a 70-column strip, all chrome hidden. The command bar still
+    /// overlays the bottom row while prompting (else the user is stranded).
+    fn refresh_screen_zen(&mut self) {
+        let _ = Terminal::hide_caret();
+        if self.in_prompt() {
+            self.command_bar.render();
+        }
+        let target = self
+            .pane_manager
+            .active_pane()
+            .filter(|p| p.view().is_some())
+            .map(|p| p.pane_id)
+            .or_else(|| self.editor_target_pane());
+        if let Some(id) = target {
+            let term = self.terminal_size;
+            let mut rect = Self::zen_rect(term);
+            if self.in_prompt() {
+                rect.size.height = rect.size.height.saturating_sub(1);
+            }
+            if let Some(pane) = self.pane_manager.get_pane_mut(id) {
+                pane.resize(rect);
+                // Typewriter: pin the cursor's visual row to vertical center.
+                if let Some(view) = pane.view_mut() {
+                    let buffer_id = view.buffer_id();
+                    if let Some(buffer) = self.buffer_manager.get(buffer_id) {
+                        view.apply_typewriter(buffer);
+                    }
+                }
+                pane.render(&self.buffer_manager);
+            }
+        }
+        let Size { height, width } = self.terminal_size;
+        self.position_caret(width, height);
+    }
+
+    fn position_caret(&mut self, width: usize, height: usize) {
         let active_pane = self.pane_manager.active_pane();
         let new_caret_pos = if self.in_prompt() {
             self.command_bar.caret_position()
@@ -820,6 +961,59 @@ impl Editor {
         }
     }
 
+    /// Flip Zen mode (`PLAN.md Phase 4.2`): document only, everything else
+    /// hidden. The sidebar is remembered and restored exactly on exit.
+    fn toggle_zen(&mut self) {
+        self.zen_mode = !self.zen_mode;
+        if self.zen_mode {
+            self.sidebar_was_visible = self.layout_tree.sidebar.visible;
+            self.layout_tree.sidebar.hide();
+        } else if self.sidebar_was_visible {
+            // Restore the sidebar only if the user had it open on entry.
+            self.layout_tree.sidebar.show();
+            self.handle_resize_command(self.terminal_size);
+        }
+        // Focus a text view so typing works the moment Zen engages.
+        if self.zen_mode
+            && self
+                .pane_manager
+                .active_pane()
+                .is_none_or(|p| p.view().is_none())
+        {
+            if let Some(id) = self.editor_target_pane() {
+                self.pane_manager.set_active_pane(id);
+            }
+        }
+        self.mark_all_panes_for_redraw();
+        // Full clear: the old chrome (tabs, status) leaves stale pixels that
+        // the narrower zen strip (or restored layout) would not overdraw.
+        let _ = Terminal::clear_screen();
+        self.update_message(if self.zen_mode {
+            "Zen mode on (F11 to exit)"
+        } else {
+            "Zen mode off"
+        });
+    }
+
+    /// Centered document rect for Zen mode: at most 70 columns wide, full
+    /// terminal height, chrome hidden. Pure (unit-tested).
+    const ZEN_WIDTH: usize = 70;
+    /// Double-press window for `Ctrl+Z Z` Zen toggle (mirrors `Ctrl+W W`).
+    const Z_DOUBLE_MS: u128 = 500;
+    fn zen_rect(term: Size) -> Rect {
+        let width = term.width.min(Self::ZEN_WIDTH).max(1);
+        Rect {
+            position: Position {
+                row: 0,
+                col: term.width.saturating_sub(width) / 2,
+            },
+            size: Size {
+                height: term.height,
+                width,
+            },
+        }
+    }
+
     /// Set the active pane, tracking the last text editor pane for sidebar file opening.
     fn set_active_editor_pane(&mut self, pane_id: usize) {
         // If the currently active pane is a text editor (not sidebar/plugin), save it
@@ -883,6 +1077,7 @@ impl Editor {
         match kind {
             SidebarKind::FileExplorer => "file_explorer".to_string(),
             SidebarKind::WordCount => "word_count".to_string(),
+            SidebarKind::Outline => "manuscript".to_string(),
         }
     }
 
@@ -892,6 +1087,176 @@ impl Editor {
             self.pane_manager.set_active_pane(id);
         }
         self.mark_all_panes_for_redraw();
+    }
+
+    /// True when `pane_id` is the visible outline sidebar.
+    fn is_outline_pane(&self, pane_id: usize) -> bool {
+        self.layout_tree.sidebar.kind == SidebarKind::Outline
+            && self.layout_tree.sidebar.pane_id == Some(pane_id)
+    }
+
+    /// Outline selection (node id) from a sidebar pane, if any.
+    fn outline_selection_of(&self, pane_id: usize) -> Option<yonro_core::manuscript::NodeId> {
+        let pane = self.pane_manager.get_pane(pane_id)?;
+        if let PaneContent::Plugin(component) = &pane.content {
+            component.outline_selection()
+        } else {
+            None
+        }
+    }
+
+    /// Open the outline-selected scene in a new tab, materializing its draft
+    /// file (`scene-<id>.md`) on first open. Non-scenes get a hint instead.
+    fn open_outline_selection(&mut self, pane_id: usize) {
+        let selected = self.outline_selection_of(pane_id);
+        let Some(node_id) = selected else {
+            self.update_message("Outline: nothing selected");
+            return;
+        };
+        let is_scene = self
+            .manuscript
+            .get(node_id)
+            .is_some_and(|node| node.kind == NodeKind::Scene);
+        if !is_scene {
+            self.update_message("Outline: Enter opens scenes (a/c/s add structure)");
+            return;
+        }
+        let file = self
+            .manuscript
+            .get(node_id)
+            .and_then(|node| node.meta.as_ref())
+            .and_then(|meta| meta.file.clone());
+        let path = match file {
+            Some(path) => path,
+            None => {
+                let name = format!("scene-{node_id}.md");
+                let path = std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .join(name);
+                if std::fs::write(&path, "").is_err() {
+                    self.update_message("ERR: Could not create scene file");
+                    return;
+                }
+                if let Some(node) = self.manuscript.get(node_id) {
+                    let mut meta = node.meta.clone().unwrap_or_default();
+                    meta.file = Some(path.clone());
+                    let _ = self.manuscript.set_meta(node_id, meta);
+                }
+                path
+            }
+        };
+        self.open_file_in_new_pane(&path);
+        self.sync_manuscript_words();
+    }
+
+    /// Structural add from the outline (`a`/`c`/`s`): resolve the parent
+    /// from the selection (walking up), auto-title, select the new node.
+    fn manuscript_add(&mut self, child: NodeKind) {
+        let sidebar_id = self.layout_tree.sidebar.pane_id;
+        let selected = sidebar_id.and_then(|id| self.outline_selection_of(id));
+        let result = match child {
+            NodeKind::Act => {
+                let n = self.manuscript.children(self.manuscript.root()).len();
+                self.manuscript
+                    .add_act(&format!("Act {}", n.saturating_add(1)))
+            }
+            NodeKind::Chapter => match self.nearest_ancestor(selected, NodeKind::Act) {
+                Some(act) => {
+                    let n = self.manuscript.children(act).len();
+                    self.manuscript
+                        .add_chapter(act, &format!("Chapter {}", n.saturating_add(1)))
+                }
+                None => {
+                    self.update_message("Outline: select an act first (a adds one)");
+                    return;
+                }
+            },
+            NodeKind::Scene => match self.nearest_ancestor(selected, NodeKind::Chapter) {
+                Some(chapter) => {
+                    let n = self.manuscript.children(chapter).len();
+                    self.manuscript
+                        .add_scene(chapter, &format!("Scene {}", n.saturating_add(1)))
+                }
+                None => {
+                    self.update_message("Outline: select a chapter first (c adds one)");
+                    return;
+                }
+            },
+            NodeKind::Project => {
+                self.update_message("Outline: one project per manuscript");
+                return;
+            }
+        };
+        match result {
+            Ok(new_id) => {
+                if let Some(sidebar_id) = sidebar_id {
+                    if let Some(pane) = self.pane_manager.get_pane_mut(sidebar_id) {
+                        if let PaneContent::Plugin(component) = &mut pane.content {
+                            component.set_outline_selection(Some(new_id));
+                        }
+                    }
+                }
+                self.update_message(&format!("Outline: added (node {new_id})"));
+            }
+            Err(err) => {
+                self.update_message(&format!("Outline: {err}"));
+            }
+        }
+    }
+
+    /// `selected` itself if it has `kind`, else the nearest ancestor with it.
+    fn nearest_ancestor(
+        &self,
+        selected: Option<yonro_core::manuscript::NodeId>,
+        kind: NodeKind,
+    ) -> Option<yonro_core::manuscript::NodeId> {
+        let mut cursor = selected;
+        while let Some(id) = cursor {
+            let node = self.manuscript.get(id)?;
+            if node.kind == kind {
+                return Some(id);
+            }
+            cursor = node.parent;
+        }
+        None
+    }
+
+    /// Push live buffer word counts into scene metadata (call after edits,
+    /// file opens, and undo/redo — anything that changes draft sizes).
+    fn sync_manuscript_words(&mut self) {
+        let root = self.manuscript.root();
+        let acts: Vec<usize> = self.manuscript.children(root).iter().map(|n| n.id).collect();
+        for act in acts {
+            let chapters: Vec<usize> =
+                self.manuscript.children(act).iter().map(|n| n.id).collect();
+            for chapter in chapters {
+                let scenes: Vec<usize> = self
+                    .manuscript
+                    .children(chapter)
+                    .iter()
+                    .map(|n| n.id)
+                    .collect();
+                for scene in scenes {
+                    let file = self
+                        .manuscript
+                        .get(scene)
+                        .and_then(|node| node.meta.as_ref())
+                        .and_then(|meta| meta.file.clone());
+                    let Some(file) = file else { continue };
+                    for (_id, buffer) in self.buffer_manager.iter() {
+                        let matches = buffer
+                            .get_file_info()
+                            .get_path()
+                            .is_some_and(|p| p.as_os_str() == file.as_os_str());
+                        if matches {
+                            let (words, _, _) = buffer.word_count_stats();
+                            let _ = self.manuscript.set_scene_words(scene, words);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Which text-editor pane should receive an opened file / keep focus.
@@ -998,6 +1363,7 @@ impl Editor {
         self.last_editor_pane = Some(new_id);
         self.update_message(&format!("Opened {file_name} in tab {new_tab_idx}"));
         self.update_word_count_if_open();
+        self.sync_manuscript_words();
     }
 
     /// Switch to document tab `index`, preserving each tab's layout.
@@ -1295,5 +1661,25 @@ mod tests {
         assert_eq!(graphemes, 1);
         // No alphanumeric word chunks in a pure-emoji buffer.
         assert_eq!(words, 0);
+    }
+
+    #[test]
+    fn test_zen_rect_centers_70_col_strip() {
+        // Wide terminal: 70 cols centered.
+        let rect = Editor::zen_rect(Size {
+            height: 30,
+            width: 100,
+        });
+        assert_eq!(rect.size.width, 70);
+        assert_eq!(rect.position.col, 15);
+        assert_eq!(rect.position.row, 0);
+        assert_eq!(rect.size.height, 30);
+        // Narrow terminal: full width, no negative centering.
+        let rect = Editor::zen_rect(Size {
+            height: 24,
+            width: 50,
+        });
+        assert_eq!(rect.size.width, 50);
+        assert_eq!(rect.position.col, 0);
     }
 }

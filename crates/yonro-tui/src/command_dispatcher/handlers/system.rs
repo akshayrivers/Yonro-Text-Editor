@@ -24,6 +24,9 @@ impl CommandHandler for SystemHandler {
                 System::SplitHorizontal => split_active_pane(ctx, SplitDirection::Horizontal),
                 System::SplitVertical => split_active_pane(ctx, SplitDirection::Vertical),
                 System::OpenCommandBar => ctx.set_prompt(PromptType::FocusPane),
+                // Handled by `Editor::handle_event` pre-dispatch (needs Editor
+                // state, not just the handler context) — unreachable here.
+                System::ZenToggle => {},
                 System::Dismiss => {} // handled by prompt handlers
             }
             Ok(())
@@ -141,6 +144,8 @@ fn handle_undo(ctx: &mut EditorContext) {
     if let PaneContent::TextView(view) = &mut pane.content {
         if let Some(buffer) = ctx.buffer_manager.get_mut(buffer_id) {
             view.undo(buffer);
+            // Undo changes draft sizes: stats + manuscript follow the edit.
+            ctx.notify_buffer_changed(buffer_id);
         }
     }
 }
@@ -164,6 +169,8 @@ fn handle_redo(ctx: &mut EditorContext) {
     if let PaneContent::TextView(view) = &mut pane.content {
         if let Some(buffer) = ctx.buffer_manager.get_mut(buffer_id) {
             view.redo(buffer);
+            // Redo changes draft sizes: stats + manuscript follow the edit.
+            ctx.notify_buffer_changed(buffer_id);
         }
     }
 }

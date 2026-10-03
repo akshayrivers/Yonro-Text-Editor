@@ -38,6 +38,7 @@ pub fn from_crossterm(event: crossterm::event::Event) -> EditorEvent {
                 CtKeyCode::End => KeyCode::End,
                 CtKeyCode::PageUp => KeyCode::PageUp,
                 CtKeyCode::PageDown => KeyCode::PageDown,
+                CtKeyCode::F(n) => KeyCode::F(n),
                 _ => KeyCode::Other,
             };
 

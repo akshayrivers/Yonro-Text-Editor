@@ -5,8 +5,9 @@
 // View, CommandBar, StatusBar etc. are untouched.
 
 use super::UIComponent;
+use yonro_core::buffers::{Buffer, BufferManager};
 use yonro_core::command::Move;
-use yonro_core::buffers::Buffer;
+use yonro_core::manuscript::{Manuscript, NodeId};
 use crate::prelude::*;
 use std::io::Error;
 
@@ -50,5 +51,20 @@ pub trait PluginComponent: UIComponent + Send {
     /// Called when the associated buffer changes.
     /// Default implementation does nothing.
     fn update_from_buffer(&mut self, _buffer: &Buffer) {
+    }
+
+    /// Rebuild outline rows from the manuscript (`PLAN.md Phase 4.3`).
+    /// Called every frame while the outline sidebar is visible; components
+    /// must preserve selection across syncs. Default: no-op.
+    fn sync_outline(&mut self, _manuscript: &Manuscript, _buffers: &BufferManager) {
+    }
+
+    /// Currently selected outline node, if any.
+    fn outline_selection(&self) -> Option<NodeId> {
+        None
+    }
+
+    /// Focus an outline node (used after structural adds).
+    fn set_outline_selection(&mut self, _id: Option<NodeId>) {
     }
 }

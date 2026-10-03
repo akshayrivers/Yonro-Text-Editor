@@ -5,6 +5,8 @@ use std::fmt::Debug;
 pub enum SidebarKind {
     FileExplorer,
     WordCount,
+    /// Manuscript outline (`PLAN.md Phase 4.3`).
+    Outline,
 }
 
 /// Sidebar state managed by LayoutTree

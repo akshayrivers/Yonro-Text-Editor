@@ -38,7 +38,6 @@ pub enum EditOperation {
         chars: Vec<char>,
     },
 }
-#[derive(Default)]
 pub struct View {
     id: usize,
     buffer_id: usize,
@@ -47,8 +46,7 @@ pub struct View {
     // always starting at (0,0)and the size will dietermine the visible area
     rect: Rect,
     text_location: Location,
-    scroll_offset: Position,
-    search_info: Option<SearchInfo>,
+    scroll_offset: Position,    search_info: Option<SearchInfo>,
     undo_stack: Vec<EditOperation>,
     redo_stack: Vec<EditOperation>,
     // timestamp of the last insert (helps us in grouping the steps)
@@ -56,6 +54,29 @@ pub struct View {
     // tracks where the cursor was after the last insert
     // used alongside last_insert_time to detect non-contiguous typing
     last_insert_location: Option<Location>,
+    /// Soft word-wrap (`PLAN.md Phase 4.1`): long buffer lines render as
+    /// multiple visual rows at word boundaries. No hard newlines inserted.
+    pub word_wrap: bool,
+}
+
+impl Default for View {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            buffer_id: 0,
+            is_active: false,
+            needs_redraw: false,
+            rect: Rect::default(),
+            text_location: Location::default(),
+            scroll_offset: Position::default(),
+            search_info: None,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            last_insert_time: None,
+            last_insert_location: None,
+            word_wrap: true,
+        }
+    }
 }
 /// How long a gap between keystrokes before we start a new undo group.
 const GROUP_TIMEOUT_MS: u128 = 800;
@@ -404,6 +425,14 @@ impl View {
         }
     }
     fn scroll_horizontally(&mut self, to: ColIdx) {
+        // Wrapped text never scrolls horizontally: every visual column fits.
+        if self.word_wrap && self.wrap_width() > 0 {
+            if self.scroll_offset.col != 0 {
+                self.scroll_offset.col = 0;
+                self.mark_redraw(true);
+            }
+            return;
+        }
         let width = self.rect.size.width.saturating_sub(2); // same for the width part
         let offset_changed = if to < self.scroll_offset.col {
             self.scroll_offset.col = to;
@@ -425,13 +454,38 @@ impl View {
         let vertical_mid = height.div_ceil(2);
         let horizontal_mid = width.div_ceil(2);
         self.scroll_offset.row = row.saturating_sub(vertical_mid);
-        self.scroll_offset.col = col.saturating_sub(horizontal_mid);
+        // Wrapped text never scrolls horizontally (see `scroll_horizontally`).
+        self.scroll_offset.col = if self.word_wrap && self.wrap_width() > 0 {
+            0
+        } else {
+            col.saturating_sub(horizontal_mid)
+        };
         self.mark_redraw(true);
     }
     fn scroll_text_location_into_view(&mut self, buffer: &Buffer) {
         let Position { row, col } = self.text_location_to_position(buffer);
         self.scroll_vertically(row);
         self.scroll_horizontally(col);
+    }
+    /// Pin the cursor's visual row to the vertical center of the content
+    /// area (typewriter scrolling, `PLAN.md Phase 4.2`). Idempotent: marks
+    /// redraw only when the offset actually moves.
+    pub fn apply_typewriter(&mut self, buffer: &Buffer) {
+        let height = self.rect.size.height.saturating_sub(2);
+        if height == 0 {
+            return;
+        }
+        let width = self.wrap_width();
+        let (visual_row, _) = if !self.word_wrap || width == 0 {
+            (self.text_location.line_idx, 0)
+        } else {
+            self.location_to_visual(buffer, self.text_location, width)
+        };
+        let target = visual_row.saturating_sub(height / 2);
+        if target != self.scroll_offset.row {
+            self.scroll_offset.row = target;
+            self.mark_redraw(true);
+        }
     }
     pub fn caret_position(&self, buffer: &Buffer) -> Position {
         let Position { col, row } = self.text_location_to_position(buffer);
@@ -453,18 +507,175 @@ impl View {
         }
     }
     fn text_location_to_position(&self, buffer: &Buffer) -> Position {
-        let row = self.text_location.line_idx;
-        debug_assert!(row.saturating_sub(1) <= buffer.height());
-        let col = buffer.width_until(row, self.text_location.grapheme_idx);
+        let width = self.wrap_width();
+        if !self.word_wrap || width == 0 {
+            // Unwrapped (or sizeless, e.g. unit tests): 1 line == 1 row.
+            let row = self.text_location.line_idx;
+            debug_assert!(row.saturating_sub(1) <= buffer.height());
+            let col = buffer.width_until(row, self.text_location.grapheme_idx);
+            return Position { col, row };
+        }
+        let (row, col) = self.location_to_visual(buffer, self.text_location, width);
         Position { col, row }
     }
 
+    /// Display-column budget for one visual row (pane width minus borders).
+    /// `0` when the view has no size yet — callers treat that as unwrapped.
+    fn wrap_width(&self) -> usize {
+        self.rect.size.width.saturating_sub(2)
+    }
+
+    /// Wrap segments for one buffer line (single whole-line segment when
+    /// wrapping is off or the view is sizeless).
+    fn segments_for_line(&self, buffer: &Buffer, line_idx: usize, width: usize) -> Vec<std::ops::Range<usize>> {
+        let Some(line) = buffer.get_line(line_idx) else {
+            return vec![0..0];
+        };
+        if !self.word_wrap || width == 0 {
+            return vec![0..line.grapheme_count()];
+        }
+        line.wrap_segments(width)
+    }
+
+    /// Buffer location → (visual row, visual column).
+    fn location_to_visual(
+        &self,
+        buffer: &Buffer,
+        location: Location,
+        width: usize,
+    ) -> (usize, usize) {
+        let mut visual_row: usize = 0;
+        for line_idx in 0..location.line_idx {
+            visual_row = visual_row.saturating_add(
+                self.segments_for_line(buffer, line_idx, width).len().max(1),
+            );
+        }
+        let mut seg_idx: usize = 0;
+        let mut seg_start_col = 0;
+        for (i, seg) in self
+            .segments_for_line(buffer, location.line_idx, width)
+            .iter()
+            .enumerate()
+        {
+            if location.grapheme_idx >= seg.start && location.grapheme_idx <= seg.end {
+                seg_idx = i;
+                seg_start_col = buffer.width_until(location.line_idx, seg.start);
+                // Caret at EOL belongs to the last segment covering it.
+                if location.grapheme_idx == seg.end {
+                    continue;
+                }
+                break;
+            }
+        }
+        let col = buffer
+            .width_until(location.line_idx, location.grapheme_idx)
+            .saturating_sub(seg_start_col);
+        (visual_row.saturating_add(seg_idx), col)
+    }
+
+    /// (visual row, visual column) → buffer location, clamped to content.
+    fn visual_to_location(
+        &self,
+        buffer: &Buffer,
+        visual_row: usize,
+        visual_col: usize,
+        width: usize,
+    ) -> Location {
+        let mut remaining = visual_row;
+        let height = buffer.height();
+        for line_idx in 0..height {
+            let segments = self.segments_for_line(buffer, line_idx, width);
+            let segs = segments.len().max(1);
+            if remaining < segs {
+                let seg = segments.get(remaining).cloned().unwrap_or(0..0);
+                let seg_start_col = buffer.width_until(line_idx, seg.start);
+                let target_col = seg_start_col.saturating_add(visual_col);
+                // First grapheme whose column reaches the target (snap right).
+                let mut grapheme_idx = seg.end;
+                let mut g = seg.start;
+                while g < seg.end {
+                    if buffer.width_until(line_idx, g.saturating_add(1)) >= target_col {
+                        grapheme_idx = g.saturating_add(1).min(seg.end);
+                        // Prefer landing ON the target column: step back when the
+                        // grapheme overshoots a wide char boundary.
+                        if buffer.width_until(line_idx, grapheme_idx) > target_col
+                            && grapheme_idx > seg.start
+                        {
+                            grapheme_idx = grapheme_idx.saturating_sub(1);
+                        }
+                        break;
+                    }
+                    g = g.saturating_add(1);
+                }
+                return Location {
+                    line_idx,
+                    grapheme_idx,
+                };
+            }
+            remaining = remaining.saturating_sub(segs);
+        }
+        // Past EOF: end of last line.
+        let last = height.saturating_sub(1);
+        Location {
+            line_idx: last,
+            grapheme_idx: buffer.grapheme_count(last),
+        }
+    }
+
+    /// Visual rows in `[start, start + count)` as (line, grapheme-range).
+    fn visual_rows_for_window(
+        &self,
+        buffer: &Buffer,
+        width: usize,
+        start: usize,
+        count: usize,
+    ) -> Vec<(usize, std::ops::Range<usize>)> {
+        let mut rows = Vec::new();
+        if count == 0 {
+            return rows;
+        }
+        let mut visual_row = 0;
+        for line_idx in 0..buffer.height() {
+            for seg in self.segments_for_line(buffer, line_idx, width) {
+                if visual_row >= start && rows.len() < count {
+                    rows.push((line_idx, seg));
+                }
+                visual_row = visual_row.saturating_add(1);
+                if rows.len() >= count {
+                    return rows;
+                }
+            }
+        }
+        rows
+    }
+
     fn move_up(&mut self, step: usize, buffer: &Buffer) {
-        self.text_location.line_idx = self.text_location.line_idx.saturating_sub(step);
+        let width = self.wrap_width();
+        if !self.word_wrap || width == 0 {
+            self.text_location.line_idx = self.text_location.line_idx.saturating_sub(step);
+            self.snap_to_valid_grapheme(buffer);
+            return;
+        }
+        let (visual_row, visual_col) = self.location_to_visual(buffer, self.text_location, width);
+        self.text_location =
+            self.visual_to_location(buffer, visual_row.saturating_sub(step), visual_col, width);
         self.snap_to_valid_grapheme(buffer);
     }
     fn move_down(&mut self, step: usize, buffer: &Buffer) {
-        self.text_location.line_idx = self.text_location.line_idx.saturating_add(step);
+        let width = self.wrap_width();
+        if !self.word_wrap || width == 0 {
+            self.text_location.line_idx = self.text_location.line_idx.saturating_add(step);
+            self.snap_to_valid_line(buffer);
+            self.snap_to_valid_grapheme(buffer);
+            return;
+        }
+        let (visual_row, visual_col) = self.location_to_visual(buffer, self.text_location, width);
+        self.text_location = self.visual_to_location(
+            buffer,
+            visual_row.saturating_add(step),
+            visual_col,
+            width,
+        );
         self.snap_to_valid_line(buffer);
         self.snap_to_valid_grapheme(buffer);
     }
@@ -612,32 +823,57 @@ impl View {
             buffer.get_file_info().get_file_type(),
         );
 
-        // full document highlighting
-        let end_line_idx = buffer.height().min(scroll_top.saturating_add(height));
+        // Highlight from line 0: `Highlighter` requires sequential
+        // `highlight()` calls per line index (`debug_assert_eq!` in core).
+        // `height` visual rows touch at most `height` buffer lines.
+        let visual_rows =
+            self.visual_rows_for_window(buffer, width, scroll_top, height);
+        let end_line_idx = visual_rows
+            .last()
+            .map_or(0, |(line_idx, _)| line_idx.saturating_add(1));
         for current_row in 0..end_line_idx {
             buffer.highlight(current_row, &mut highlighter);
         }
 
-        // render inside content area
+        // render inside content area (one wrapped segment per screen row)
         for screen_row in 0..height {
-            let line_idx = screen_row.saturating_add(scroll_top);
-
-            let left = self.scroll_offset.col;
-            let right = left.saturating_add(width);
-
-            if let Some(annotated_string) =
-                buffer.get_highlighted_substring(line_idx, left..right, &highlighter)
-            {
-                Terminal::print_annotated_rect(rect, screen_row, &annotated_string)?;
-            } else if screen_row == top_third && buffer.is_empty() {
-                Self::render_line(
-                    rect,
-                    screen_row,
-                    &Self::build_welcome_message(width),
-                )?;
+            let Some((line_idx, seg)) = visual_rows.get(screen_row) else {
+                // Past content: welcome message once on empty docs, else `~`.
+                if screen_row == top_third && buffer.is_empty() {
+                    Self::render_line(
+                        rect,
+                        screen_row,
+                        &Self::build_welcome_message(width),
+                    )?;
+                } else {
+                    Self::render_line(rect, screen_row, "~")?;
+                }
+                continue;
+            };
+            let line_idx = *line_idx;
+            let seg_start_col = buffer.width_until(line_idx, seg.start);
+            let seg_end_col = buffer.width_until(line_idx, seg.end);
+            // Unwrapped: apply the horizontal scroll window, as before.
+            let (left, right) = if self.word_wrap {
+                (seg_start_col, seg_end_col)
             } else {
-                Self::render_line(rect, screen_row, "~")?;
+                let left = self.scroll_offset.col;
+                (
+                    seg_start_col.max(left),
+                    seg_end_col.min(left.saturating_add(width)),
+                )
+            };
+
+            if left < right {
+                if let Some(annotated_string) =
+                    buffer.get_highlighted_column_range(line_idx, left..right, &highlighter)
+                {
+                    Terminal::print_annotated_rect(rect, screen_row, &annotated_string)?;
+                    continue;
+                }
             }
+            // Empty segment (blank buffer line) renders as a cleared row.
+            Self::render_line(rect, screen_row, "")?;
         }
 
         Ok(())
@@ -809,5 +1045,128 @@ mod tests {
         };
         view.handle_move_command(Move::Down, &buffer);
         assert_eq!(view.text_location.line_idx, 1);
+    }
+
+    // Soft-wrap tests (PLAN.md Phase 4.1). Narrow the view to force wraps.
+    fn setup_wrapped_view(text: &str, wrap_cols: usize) -> (View, Buffer) {
+        let (mut view, buffer) = setup_view_and_buffer(text);
+        view.set_size(Rect {
+            position: Position { row: 0, col: 0 },
+            size: Size {
+                height: 24,
+                width: wrap_cols.saturating_add(2),
+            },
+        });
+        assert!(view.word_wrap);
+        (view, buffer)
+    }
+
+    #[test]
+    fn wrap_location_to_visual_row() {
+        // "hello world foo" @ wrap width 10 → rows [0..6][6..12][12..15].
+        let (view, buffer) = setup_wrapped_view("hello world foo", 8);
+        let loc = |grapheme_idx: usize| Location {
+            line_idx: 0,
+            grapheme_idx,
+        };
+        assert_eq!(view.location_to_visual(&buffer, loc(0), 8), (0, 0));
+        assert_eq!(view.location_to_visual(&buffer, loc(5), 8), (0, 5));
+        assert_eq!(view.location_to_visual(&buffer, loc(6), 8), (1, 0));
+        assert_eq!(view.location_to_visual(&buffer, loc(11), 8), (1, 5));
+        assert_eq!(view.location_to_visual(&buffer, loc(14), 8), (2, 2));
+    }
+
+    #[test]
+    fn wrap_move_down_steps_visual_rows() {
+        let (mut view, buffer) = setup_wrapped_view("hello world foo", 8);
+        view.text_location = Location {
+            line_idx: 0,
+            grapheme_idx: 0,
+        };
+        view.handle_move_command(Move::Down, &buffer);
+        assert_eq!(view.text_location.line_idx, 0);
+        assert_eq!(view.text_location.grapheme_idx, 6);
+        view.handle_move_command(Move::Down, &buffer);
+        assert_eq!(view.text_location.grapheme_idx, 12);
+    }
+
+    #[test]
+    fn wrap_move_up_from_second_row() {
+        let (mut view, buffer) = setup_wrapped_view("hello world foo", 8);
+        view.text_location = Location {
+            line_idx: 0,
+            grapheme_idx: 8,
+        };
+        view.handle_move_command(Move::Up, &buffer);
+        assert_eq!(view.text_location.line_idx, 0);
+        assert_eq!(view.text_location.grapheme_idx, 2);
+    }
+
+    #[test]
+    fn wrap_caret_follows_visual_position() {
+        let (mut view, buffer) = setup_wrapped_view("hello world foo", 8);
+        view.text_location = Location {
+            line_idx: 0,
+            grapheme_idx: 7,
+        };
+        // Visual row 1, visual col 1, plus pane offsets (+1) each.
+        let caret = view.caret_position(&buffer);
+        assert_eq!(caret.row, 2);
+        assert_eq!(caret.col, 2);
+    }
+
+    #[test]
+    fn wrap_off_preserves_line_mapping() {
+        let (mut view, buffer) = setup_wrapped_view("hello world foo", 8);
+        view.word_wrap = false;
+        view.text_location = Location {
+            line_idx: 0,
+            grapheme_idx: 7,
+        };
+        let caret = view.caret_position(&buffer);
+        assert_eq!(caret.row, 1);
+        assert_eq!(caret.col, 8);
+    }
+
+    #[test]
+    fn wrap_window_lists_segments_in_order() {        let (view, buffer) = setup_wrapped_view("hello world foo\nxy", 8);
+        let rows = view.visual_rows_for_window(&buffer, 8, 0, 4);
+        assert_eq!(
+            rows,
+            vec![(0, 0..6), (0, 6..12), (0, 12..15), (1, 0..2)]
+        );
+        // Window starting mid-line skips earlier segments.
+        let rows = view.visual_rows_for_window(&buffer, 8, 2, 2);
+        assert_eq!(rows, vec![(0, 12..15), (1, 0..2)]);
+    }
+
+    #[test]
+    fn typewriter_pins_cursor_to_vertical_center() {
+        // 30 short lines; cursor on line 20, 24-row view → content height 22.
+        let text = (0..30).map(|_| "x").collect::<Vec<_>>().join("\n");
+        let (mut view, buffer) = setup_view_and_buffer(&text);
+        view.text_location = Location {
+            line_idx: 20,
+            grapheme_idx: 0,
+        };
+        view.apply_typewriter(&buffer);
+        assert_eq!(view.scroll_offset.row, 20 - 22 / 2);
+        // Idempotent: second call moves nothing and marks nothing.
+        view.mark_redraw(false);
+        view.apply_typewriter(&buffer);
+        assert_eq!(view.scroll_offset.row, 9);
+        assert!(!view.needs_redraw());
+    }
+
+    #[test]
+    fn typewriter_near_top_clamps_to_zero() {
+        let text = (0..30).map(|_| "x").collect::<Vec<_>>().join("\n");
+        let (mut view, buffer) = setup_view_and_buffer(&text);
+        view.text_location = Location {
+            line_idx: 3,
+            grapheme_idx: 0,
+        };
+        view.apply_typewriter(&buffer);
+        assert_eq!(view.scroll_offset.row, 0);
     }
 }

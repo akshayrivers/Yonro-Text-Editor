@@ -18,6 +18,8 @@ pub enum KeyCode {
     End,
     PageUp,
     PageDown,
+    /// Function key by number (F1 == `F(1)`). Only mapped variants are used.
+    F(u8),
     // Catch-all for anything we don't handle yet
     Other,
 }
@@ -105,6 +107,15 @@ pub fn key_to_command(key: KeyInput) -> Result<Command, String> {
         }
     }
 
+    // ── Function keys ───────────────────────────────────────────────────
+    // F11 toggles Zen mode (no modifiers). Other function keys are unbound.
+    if let KeyCode::F(n) = key_code {
+        if modifiers == KeyModifiers::NONE && n == 11 {
+            return Ok(Command::System(System::ZenToggle));
+        }
+        return Err(format!("Unbound key F{n} with {modifiers:?}"));
+    }
+
     // ── Editing ───────────────────────────────────────────────────────────
     let no_mod = modifiers == KeyModifiers::NONE;
     let shift_only = modifiers == KeyModifiers::SHIFT;
@@ -119,4 +130,39 @@ pub fn key_to_command(key: KeyInput) -> Result<Command, String> {
     };
 
     Ok(Command::Edit(edit_cmd))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn f11_maps_to_zen_toggle() {
+        let key = KeyInput {
+            key_code: KeyCode::F(11),
+            modifiers: KeyModifiers::NONE,
+        };
+        assert!(matches!(
+            key_to_command(key),
+            Ok(Command::System(System::ZenToggle))
+        ));
+    }
+
+    #[test]
+    fn other_function_keys_are_unbound() {
+        let key = KeyInput {
+            key_code: KeyCode::F(5),
+            modifiers: KeyModifiers::NONE,
+        };
+        assert!(key_to_command(key).is_err());
+    }
+
+    #[test]
+    fn ctrl_e_remains_unbound_for_plugins() {
+        let key = KeyInput {
+            key_code: KeyCode::Char('e'),
+            modifiers: KeyModifiers::CTRL,
+        };
+        assert!(key_to_command(key).is_err());
+    }
 }

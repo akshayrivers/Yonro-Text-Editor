@@ -1,6 +1,7 @@
 mod commandbar;
 mod fileexplorer;
 mod messagebar;
+mod outline;
 mod panebar;
 mod plugin_component;
 mod statusbar;
@@ -11,6 +12,7 @@ pub mod view;
 pub use commandbar::CommandBar;
 pub use fileexplorer::FileExplorer;
 pub use messagebar::MessageBar;
+pub use outline::Outline;
 pub use panebar::PaneBar;
 pub use plugin_component::{ClickAction, PluginComponent};
 pub use statusbar::StatusBar;

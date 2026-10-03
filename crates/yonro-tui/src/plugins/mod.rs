@@ -94,6 +94,8 @@ pub enum PluginResponse {
     CloseSidebar { kind: crate::layout::SidebarKind },
     /// Switch to document tab `index` (PaneBar click).
     SwitchTab { index: usize },
+    /// Add a manuscript node under the outline selection (`PLAN.md 4.3`).
+    ManuscriptAdd { child: yonro_core::manuscript::NodeKind },
 }
 
 impl std::fmt::Debug for PluginResponse {
@@ -115,6 +117,7 @@ impl std::fmt::Debug for PluginResponse {
             Self::ToggleSidebar { kind } => write!(f, "ToggleSidebar({kind:?})"),
             Self::CloseSidebar { kind } => write!(f, "CloseSidebar({kind:?})"),
             Self::SwitchTab { index } => write!(f, "SwitchTab({index})"),
+            Self::ManuscriptAdd { child } => write!(f, "ManuscriptAdd({child:?})"),
         }
     }
 }

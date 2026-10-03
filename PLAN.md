@@ -23,7 +23,8 @@ graph TD
     P1[Phase 1: Rope Migration & Core Bug Fixes] --> P2[Phase 2: Decouple into Cargo Workspace]
     P2 --> P3[Phase 3: High-Performance Async Plugin Engine]
     P3 --> P35[Phase 3.5: TUI Bug Fixes & Polish]
-    P35 --> P4[Phase 4: Creative Writer Core Features]
+    P35 --> P36[Phase 3.6: Sidebar, Tabs & Live Stats]
+    P36 --> P4[Phase 4: Creative Writer Core Features]
     P4 --> P5[Phase 5: Dual Frontend - Tauri GUI & Visual Graphs]
 ```
 
@@ -88,12 +89,39 @@ graph TD
 
 ---
 
-### 🟣 Phase 4: Creative Writer Core Features (Prose Engine)
+### ✅ Phase 3.6: Sidebar, Document Tabs & Live Stats — **DONE**
+*Goal: Make the explorer reliably visible/persistent, give every file its own
+tab (VS Code-style, no forced splits), and make word-count stats live and
+grapheme-correct. Verified end-to-end by driving the real binary in a pty.*
+
+#### 3.6.1 FileExplorer Sidebar Visibility — **FIXED**
+- [x] **Missing `sidebar.show()`**: `ToggleSidebar` ON created the pane but never set `visible`, so nothing ever drew (pane existed — hence the PaneBar tab — but `refresh_screen` skipped it).
+- [x] **Hide/focus/plugin sync**: hiding no longer fakes `is_floating`; focus returns to the last editor; new `PluginMessage::PaneClosed` + `on_pane_closed` clears stale `open_pane_id` (mouse `[x]`, `Esc`, command-bar closes all funnel through it).
+- [x] **`ClosePane` no-op for sidebar**: sidebar lives outside `LayoutTree`, so `remove_node` always failed — now hides + notifies instead.
+- [x] **Mouse hitboxes**: sidebar `[x]` used `sidebar_width - 4` instead of the absolute `width - 4` (never hit); added body hit-test + focus; legacy split-pane explorer unified into `ToggleSidebar`.
+- [x] **`EditorContext::mark_all_panes_for_redraw`** now marks Plugin/Popup too (was Views-only → blank explorer after focus/resize).
+
+#### 3.6.2 Live Word-Count Stats (Status Bar + Floating) — **FIXED**
+- [x] **Dynamic-dispatch shadowing**: `WordCount::update_from_buffer` was inherent-only, so `Box<dyn PluginComponent>` hit the trait default no-op and stats froze at 0 — moved into the trait impl.
+- [x] **Stale buffer tracking**: `last_editor_pane` (`None` until first sidebar use) now falls back to active view → any text view; floating + sidebar panes update on open, file-open, and every edit.
+- [x] **Grapheme-correct metrics**: new `Buffer::word_count_stats()` (`graphemes(true)`, `split_word_bounds`, 0 on empty, no `.max(1)`); status bar shows live words, truncates instead of blanking on narrow terminals.
+- [x] **Double-move arrows**: `MoveHandler` (sync, Phase 3.3) + plugin `MoveInPane` both fired per press — plugin no longer emits moves.
+
+#### 3.6.3 Persistent Explorer + Document Tabs — **DONE**
+- [x] **Explorer persists**: `Ctrl+E` re-focuses when open (no more toggle whiplash); explicit `PluginResponse::CloseSidebar` for `Esc` / `[x]` / close.
+- [x] **VS Code-style tabs** (`layout/tabs.rs:DocTab`): each opened file gets a full-area root pane, no splitting; only the active tab is installed in the tree, others stash layouts (per-tab splits preserved). Re-open focuses instead of duplicating.
+- [x] **PaneBar renders tabs** (`[0: untitled] [1: hello.txt]`), click to switch (`SwitchTab`), `✕` closes via core (tab-aware close switches neighbors; last tab refuses with a message).
+- [x] **Stale-tab pruning** after every close; sidebar/floating never listed as tabs; tab stash never records plugin panes as editors.
+- [x] **Tests**: `cargo test --all` green (48 core + 19 TUI, incl. `tabs.rs` stash/collect/prune tests).
+
+---
+
+### 🟣 Phase 4: Creative Writer Core Features (Prose Engine) — **IN PROGRESS**
 *Goal: Build the features that make Yonro a joy for novelists, poets, and storytellers.*
 
-- [ ] **4.1 Visual Soft Word-Wrapping**: Dynamic soft-wrapping in `View` at word boundaries to fit viewport width without hard newlines.
-- [ ] **4.2 Zen Mode & Typewriter Scrolling**: Centered column (70 chars), typewriter mode (active line at vertical center), fullscreen distraction-free toggle.
-- [ ] **4.3 Manuscript Tree Structure**: `Project` → `Acts` → `Chapters` → `Scenes` with metadata (POV, setting, story date/time, target word count).
+- [x] **4.1 Visual Soft Word-Wrapping**: Dynamic soft-wrapping in `View` at word boundaries to fit viewport width without hard newlines. `Line::wrap_segments` (core, grapheme-atomic) + visual row/column mapping for caret, scroll, and `Up`/`Down`; `word_wrap` flag (default on), horizontal scroll naturally retired when wrapped.
+- [x] **4.2 Zen Mode & Typewriter Scrolling**: `F11` toggles document-only mode (centered 70-column strip, PaneBar/sidebar/status/message chrome hidden, sidebar visibility restored exactly on exit); cursor pinned to vertical center via `View::apply_typewriter` (recentered after every event, idempotent); command bar still overlays while prompting so the user is never stranded.
+- [x] **4.3 Manuscript Tree Structure**: `Project` → `Acts` → `Chapters` → `Scenes` with metadata (POV, setting, story date/time, target word count). Core `yonro-core::manuscript` arena (stable ids, enforced hierarchy, rename/move/remove, word rollups + progress) + outline sidebar (`Ctrl+O`): tree with live `[words/target %]`, `a`/`c`/`s` structural adds, `Enter` opens scene files in new tabs (materializing `scene-<id>.md` on first open), live word sync from buffers (incl. undo/redo). Deferred: rename/metadata editing UI, on-disk persistence.
 - [ ] **4.4 System Clipboard Integration**: Cross-platform Copy/Cut/Paste (`Ctrl-C/X/V`) via `arboard`.
 - [ ] **4.5 Lore & `@mention` Entity System**: `@` triggers autocomplete for characters/places; links to profiles/lore sheets.
 
@@ -118,6 +146,6 @@ graph TD
 ---
 
 ## 📋 Next Immediate Actions
-1. **Start Phase 3.5**: Fix BufferBar, floating pane buttons, FileExplorer rendering unification.
+1. **Next: Phase 4.4** — System clipboard (`Ctrl-C/X/V` via `arboard`).
 2. **Run `cargo test` after each fix** to prevent regressions.
-3. **Only proceed to Phase 4** when TUI is stable (all 3.5.x tasks ✅).
+3. TUI is stable (all 3.5.x + 3.6.x tasks ✅) — proceed with Phase 4.

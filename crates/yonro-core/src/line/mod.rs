@@ -189,6 +189,69 @@ impl Line {
     pub fn width(&self) -> ColIdx {
         self.width_until(self.grapheme_count())
     }
+    /// Split this line into visual segments fitting `width` display columns
+    /// (soft word-wrap; `PLAN.md Phase 4.1`). Returns grapheme-index ranges.
+    /// Breaks after spaces; over-long words (or width < grapheme width) fall
+    /// back to hard breaks. Never splits a grapheme cluster (`AGENTS.md §2.1`).
+    /// An empty line yields one empty segment; `width == 0` yields the whole
+    /// line unwrapped.
+    #[must_use]
+    pub fn wrap_segments(&self, width: ColIdx) -> Vec<Range<GraphemeIdx>> {
+        let count = self.grapheme_count();
+        if count == 0 {
+            return vec![0..0];
+        }
+        if width == 0 {
+            return vec![0..count];
+        }
+        // Prefix display widths: cum[i] = columns of fragments[0..i].
+        let mut cum: Vec<ColIdx> = Vec::with_capacity(count.saturating_add(1));
+        cum.push(0);
+        for fragment in &self.fragments {
+            let w: ColIdx = fragment.rendered_width.into();
+            cum.push(cum[cum.len().saturating_sub(1)].saturating_add(w));
+        }
+        let is_breakable = |idx: GraphemeIdx| -> bool {
+            self.fragments
+                .get(idx)
+                .is_some_and(|f| f.grapheme == " " || f.grapheme == "\t")
+        };
+        let mut segments = Vec::new();
+        let mut start: GraphemeIdx = 0;
+        while start < count {
+            // Extend j while fragments[start..=j] fit.
+            let mut j = start;
+            let mut last_space: Option<GraphemeIdx> = None;
+            while j < count && cum[j.saturating_add(1)].saturating_sub(cum[start]) <= width {
+                if is_breakable(j) {
+                    last_space = Some(j);
+                }
+                j = j.saturating_add(1);
+            }
+            if j >= count {
+                segments.push(start..count);
+                break;
+            }
+            match last_space {
+                // Break after the last space (space stays at line end).
+                Some(sp) if sp >= start => {
+                    segments.push(start..sp.saturating_add(1));
+                    start = sp.saturating_add(1);
+                }
+                // No space in range: hard break before the overflowing grapheme…
+                _ if j > start => {
+                    segments.push(start..j);
+                    start = j;
+                }
+                // …unless a single grapheme alone overflows: it takes its own row.
+                _ => {
+                    segments.push(start..start.saturating_add(1));
+                    start = start.saturating_add(1);
+                }
+            }
+        }
+        segments
+    }
     // Inserts a character into the line, or appends it at the end if at == grapheme_count + 1
     pub fn insert_char(&mut self, character: char, at: GraphemeIdx) {
         debug_assert!(at.saturating_sub(1) <= self.grapheme_count());
@@ -534,8 +597,7 @@ mod tests {
     }
 
     #[test]
-    fn grapheme_idx_to_byte_idx_at_eol_returns_len() {
-        // PLAN.md Phase 1.4: `grapheme_idx == count` (cursor at EOL) must
+    fn grapheme_idx_to_byte_idx_at_eol_returns_len() {        // PLAN.md Phase 1.4: `grapheme_idx == count` (cursor at EOL) must
         // return one-past-end instead of panicking (debug) / returning 0 (release).
         let line = Line::from("hello");
         assert_eq!(line.grapheme_idx_to_byte_idx(5), line.len());
@@ -547,5 +609,47 @@ mod tests {
         // Multibyte: "aé" where é = e + combining acute (2 chars, 1 grapheme).
         let uni = Line::from("aé");
         assert_eq!(uni.grapheme_idx_to_byte_idx(uni.grapheme_count()), uni.len());
+    }
+
+    // Soft-wrap tests (PLAN.md Phase 4.1)
+    #[test]
+    fn wrap_short_line_single_segment() {
+        let line = Line::from("hello");
+        assert_eq!(line.wrap_segments(80), vec![0..5]);
+        assert_eq!(line.wrap_segments(5), vec![0..5]);
+    }
+
+    #[test]
+    fn wrap_empty_line_single_empty_segment() {
+        let line = Line::from("");
+        assert_eq!(line.wrap_segments(80), vec![0..0]);
+    }
+
+    #[test]
+    fn wrap_breaks_after_spaces() {
+        // "hello world foo" @ width 8 → "hello " | "world " | "foo"
+        let line = Line::from("hello world foo");
+        assert_eq!(line.wrap_segments(8), vec![0..6, 6..12, 12..15]);
+    }
+
+    #[test]
+    fn wrap_long_word_hard_breaks() {
+        // 10-char word @ width 4 → 4/4/2.
+        let line = Line::from("abcdefghij");
+        assert_eq!(line.wrap_segments(4), vec![0..4, 4..8, 8..10]);
+    }
+
+    #[test]
+    fn wrap_never_splits_grapheme_cluster() {
+        // Family emoji = 1 grapheme of width 2; width 1 still keeps it whole.
+        let line = Line::from("👨‍👩‍👧‍👦");
+        assert_eq!(line.grapheme_count(), 1);
+        assert_eq!(line.wrap_segments(1), vec![0..1]);
+    }
+
+    #[test]
+    fn wrap_zero_width_returns_whole_line() {
+        let line = Line::from("hello world");
+        assert_eq!(line.wrap_segments(0), vec![0..11]);
     }
 }

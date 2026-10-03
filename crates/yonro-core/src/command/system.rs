@@ -11,4 +11,7 @@ pub enum System {
     SplitHorizontal,
     SplitVertical,
     OpenCommandBar,
+    /// Distraction-free Zen mode: document only, centered column,
+    /// typewriter scrolling (`PLAN.md Phase 4.2`).
+    ZenToggle,
 }

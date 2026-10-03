@@ -23,6 +23,7 @@ pub mod fileinfo;
 pub mod filetype;
 pub mod highlighter;
 pub mod line;
+pub mod manuscript;
 pub mod prelude;
 
 pub use annotatedstring::AnnotatedString;
@@ -39,3 +40,4 @@ pub use highlighter::{
     SyntaxHighlighter, TextSyntaxHighlighter,
 };
 pub use line::Line;
+pub use manuscript::{Manuscript, ManuscriptError, Node, NodeId, NodeKind, SceneMeta};

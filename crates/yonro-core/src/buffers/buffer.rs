@@ -106,10 +106,13 @@ impl Buffer {
             .filter_map(|idx| self.line_string(idx))
             .collect()
     }
-    pub fn get_highlighted_substring(
+    /// Column-range variant for soft-wrapped segments (`PLAN.md Phase 4.1`).
+    /// `range` is display columns (wide graphemes occupy 2), matching
+    /// `Line::get_annotated_visible_substr` semantics exactly.
+    pub fn get_highlighted_column_range(
         &self,
         line_idx: LineIdx,
-        range: Range<GraphemeIdx>,
+        range: Range<ColIdx>,
         highlighter: &Highlighter,
     ) -> Option<AnnotatedString> {
         self.line_to_line(line_idx).map(|line| {
