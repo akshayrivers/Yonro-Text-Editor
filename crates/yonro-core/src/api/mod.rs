@@ -58,12 +58,64 @@ pub struct EntityDto {
     pub pov_scenes: Vec<String>,
 }
 
+/// One ranked neighbor in the graph.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct GraphNeighborDto {
+    pub id: usize,
+    pub name: String,
+    pub weight: usize,
+}
+
 /// One graph node (a lore entity present in at least one scene).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct GraphNodeDto {
     pub id: usize,
     pub label: String,
     pub kind: String,
+    pub degree: usize,
+    pub neighbors: Vec<GraphNeighborDto>,
+}
+
+/// Search hit for entity autocomplete / palette.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct LoreSearchHitDto {
+    pub id: usize,
+    pub name: String,
+    pub kind: String,
+    pub matched_alias: Option<String>,
+}
+
+/// One scene mention occurrence.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct MentionSceneDto {
+    pub scene_id: usize,
+    pub title: String,
+    pub count: usize,
+}
+
+/// Reference to a scene where an entity appears as POV.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SceneRefDto {
+    pub scene_id: usize,
+    pub title: String,
+}
+
+/// Detailed entity info for the lore view and inspector.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EntityDetailDto {
+    #[serde(flatten)]
+    pub entity: EntityDto,
+    pub pov_scene_links: Vec<SceneRefDto>,
+    pub mention_scenes: Vec<MentionSceneDto>,
+}
+
+/// One mention span inside buffer text with UTF-16 code unit offsets.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct MentionSpanDto {
+    pub start: usize,
+    pub end: usize,
+    pub entity_id: Option<usize>,
+    pub kind: Option<String>,
 }
 
 /// One undirected relationship edge.
@@ -322,6 +374,221 @@ pub fn gather_scene_texts(
     scene_texts
 }
 
+/// Single entity DTO with POV scenes.
+#[must_use]
+pub fn entity_dto(manuscript: &Manuscript, lore: &LoreBook, id: usize) -> Option<EntityDto> {
+    let entity = lore.get(id)?;
+    let mut pov_scenes: Vec<String> = Vec::new();
+    for act in manuscript.children(manuscript.root()) {
+        for chapter in manuscript.children(act.id) {
+            for scene in manuscript.children(chapter.id) {
+                if let Some(meta) = scene.meta.as_ref() {
+                    let pov = meta.pov.trim();
+                    if !pov.is_empty()
+                        && (pov.eq_ignore_ascii_case(&entity.name)
+                            || entity
+                                .aliases
+                                .iter()
+                                .any(|alias| pov.eq_ignore_ascii_case(alias)))
+                    {
+                        pov_scenes.push(scene.title.clone());
+                    }
+                }
+            }
+        }
+    }
+    pov_scenes.sort();
+    pov_scenes.dedup();
+    Some(EntityDto {
+        id: entity.id,
+        kind: entity_kind_label(entity.kind).to_string(),
+        name: entity.name.clone(),
+        aliases: entity.aliases.clone(),
+        sheet: entity.sheet.clone(),
+        pov_scenes,
+    })
+}
+
+/// Search live entities by prefix (case-insensitive), names before aliases.
+#[must_use]
+pub fn lore_search(lore: &LoreBook, prefix: &str, limit: usize) -> Vec<LoreSearchHitDto> {
+    let needle = prefix.trim().to_lowercase();
+    let mut name_hits = Vec::new();
+    let mut alias_hits = Vec::new();
+
+    for entity in lore.find_by_prefix("") {
+        let name_lower = entity.name.to_lowercase();
+        if name_lower.starts_with(&needle) {
+            name_hits.push(LoreSearchHitDto {
+                id: entity.id,
+                name: entity.name.clone(),
+                kind: entity_kind_label(entity.kind).to_string(),
+                matched_alias: None,
+            });
+        } else if let Some(matched) = entity
+            .aliases
+            .iter()
+            .find(|alias| alias.to_lowercase().starts_with(&needle))
+        {
+            alias_hits.push(LoreSearchHitDto {
+                id: entity.id,
+                name: entity.name.clone(),
+                kind: entity_kind_label(entity.kind).to_string(),
+                matched_alias: Some(matched.clone()),
+            });
+        }
+    }
+
+    name_hits.sort_by_key(|h| h.name.to_lowercase());
+    alias_hits.sort_by_key(|h| h.name.to_lowercase());
+    name_hits.extend(alias_hits);
+    if limit > 0 {
+        name_hits.truncate(limit);
+    }
+    name_hits
+}
+
+/// Detailed entity info with POV backlinks and mention scene counts.
+///
+/// # Errors
+/// `Lore` if entity not found or inactive.
+pub fn entity_detail_dto(
+    project: &Project,
+    open_texts: &BTreeMap<PathBuf, String>,
+    id: usize,
+) -> Result<EntityDetailDto, super::project::ProjectError> {
+    let entity = project
+        .lore
+        .get(id)
+        .ok_or_else(|| super::project::ProjectError::Lore(format!("unknown lore entity {id}")))?;
+    let entity_name = entity.name.clone();
+    let entity_aliases = entity.aliases.clone();
+
+    let mut pov_scene_links: Vec<SceneRefDto> = Vec::new();
+    let mut pov_scenes: Vec<String> = Vec::new();
+    let root = project.manuscript.root();
+    for act in project.manuscript.children(root) {
+        for chapter in project.manuscript.children(act.id) {
+            for scene in project.manuscript.children(chapter.id) {
+                if let Some(meta) = scene.meta.as_ref() {
+                    let pov = meta.pov.trim();
+                    if !pov.is_empty()
+                        && (pov.eq_ignore_ascii_case(&entity_name)
+                            || entity_aliases
+                                .iter()
+                                .any(|alias| pov.eq_ignore_ascii_case(alias)))
+                    {
+                        pov_scenes.push(scene.title.clone());
+                        pov_scene_links.push(SceneRefDto {
+                            scene_id: scene.id,
+                            title: scene.title.clone(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    pov_scenes.sort();
+    pov_scenes.dedup();
+    pov_scene_links.sort_by(|a, b| a.title.cmp(&b.title));
+    pov_scene_links.dedup_by(|a, b| a.scene_id == b.scene_id);
+
+    let scene_texts = gather_scene_texts(project, open_texts);
+    let mut mention_scenes: Vec<MentionSceneDto> = Vec::new();
+    for scene_id in super::graph::Graph::scene_order(&project.manuscript) {
+        if let Some(text) = scene_texts.get(&scene_id) {
+            let mentions = project.lore.parse_mentions(text);
+            let count = mentions.iter().filter(|m| m.entity == Some(id)).count();
+            if count > 0 {
+                let title = project
+                    .manuscript
+                    .get(scene_id)
+                    .map_or_else(|| format!("scene-{scene_id}"), |n| n.title.clone());
+                mention_scenes.push(MentionSceneDto {
+                    scene_id,
+                    title,
+                    count,
+                });
+            }
+        }
+    }
+
+    Ok(EntityDetailDto {
+        entity: EntityDto {
+            id: entity.id,
+            kind: entity_kind_label(entity.kind).to_string(),
+            name: entity_name,
+            aliases: entity_aliases,
+            sheet: entity.sheet.clone(),
+            pov_scenes,
+        },
+        pov_scene_links,
+        mention_scenes,
+    })
+}
+
+/// Parse mentions in `text` and return spans with UTF-16 code unit offsets.
+#[must_use]
+pub fn get_mentions_dto(lore: &LoreBook, text: &str) -> Vec<MentionSpanDto> {
+    let raw_mentions = lore.parse_mentions(text);
+    if raw_mentions.is_empty() {
+        return Vec::new();
+    }
+
+    let mut result = Vec::with_capacity(raw_mentions.len());
+    let mut mention_idx = 0;
+    let mut current_start_u16: Option<usize> = None;
+    let mut u16_offset = 0usize;
+
+    for (byte_idx, ch) in text.char_indices() {
+        while mention_idx < raw_mentions.len() {
+            let mention = &raw_mentions[mention_idx];
+            if current_start_u16.is_none() && byte_idx == mention.byte_range.start {
+                current_start_u16 = Some(u16_offset);
+            }
+            if let Some(start_u16) = current_start_u16 {
+                if byte_idx == mention.byte_range.end {
+                    let kind = mention
+                        .entity
+                        .and_then(|id| lore.get(id))
+                        .map(|e| entity_kind_label(e.kind).to_string());
+                    result.push(MentionSpanDto {
+                        start: start_u16,
+                        end: u16_offset,
+                        entity_id: mention.entity,
+                        kind,
+                    });
+                    current_start_u16 = None;
+                    mention_idx = mention_idx.saturating_add(1);
+                    continue;
+                }
+            }
+            break;
+        }
+        u16_offset = u16_offset.saturating_add(ch.len_utf16());
+    }
+
+    if mention_idx < raw_mentions.len() {
+        let mention = &raw_mentions[mention_idx];
+        if let Some(start_u16) = current_start_u16 {
+            if mention.byte_range.end == text.len() {
+                let kind = mention
+                    .entity
+                    .and_then(|id| lore.get(id))
+                    .map(|e| entity_kind_label(e.kind).to_string());
+                result.push(MentionSpanDto {
+                    start: start_u16,
+                    end: u16_offset,
+                    entity_id: mention.entity,
+                    kind,
+                });
+            }
+        }
+    }
+
+    result
+}
+
 /// Relationship graph DTO from pre-gathered scene texts.
 #[must_use]
 pub fn graph_dto(
@@ -334,10 +601,26 @@ pub fn graph_dto(
         .nodes
         .iter()
         .filter_map(|id| lore.get(*id))
-        .map(|entity| GraphNodeDto {
-            id: entity.id,
-            label: entity.name.clone(),
-            kind: entity_kind_label(entity.kind).to_string(),
+        .map(|entity| {
+            let ranked = graph.neighbors(entity.id);
+            let degree = ranked.len();
+            let neighbors = ranked
+                .into_iter()
+                .filter_map(|(nid, weight)| {
+                    lore.get(nid).map(|n| GraphNeighborDto {
+                        id: nid,
+                        name: n.name.clone(),
+                        weight,
+                    })
+                })
+                .collect();
+            GraphNodeDto {
+                id: entity.id,
+                label: entity.name.clone(),
+                kind: entity_kind_label(entity.kind).to_string(),
+                degree,
+                neighbors,
+            }
         })
         .collect();
     let edges = graph
@@ -607,5 +890,127 @@ mod tests {
             ProjectError::UnknownNode(999)
         );
         let _ = std::fs::remove_dir_all(&project.root);
+    }
+
+    #[test]
+    fn lore_search_ranks_names_before_aliases_and_limits() {
+        let mut lore = LoreBook::new();
+        let mara = lore.add(EntityKind::Character, "Mara Stone").unwrap();
+        lore.add_alias(mara, "Red Wolf").unwrap();
+        let red_keep = lore.add(EntityKind::Place, "Red Keep").unwrap();
+        let _ = red_keep;
+
+        // Prefix "red": "Red Keep" is a name match, "Mara Stone" is an alias match
+        let hits = lore_search(&lore, "red", 10);
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].name, "Red Keep");
+        assert_eq!(hits[0].matched_alias, None);
+        assert_eq!(hits[1].name, "Mara Stone");
+        assert_eq!(hits[1].matched_alias, Some("Red Wolf".to_string()));
+
+        // Limit works
+        let limited = lore_search(&lore, "red", 1);
+        assert_eq!(limited.len(), 1);
+        assert_eq!(limited[0].name, "Red Keep");
+    }
+
+    #[test]
+    fn entity_detail_carries_pov_and_mention_counts() {
+        let (project, scene_id) = detail_project();
+        let mara_id = project.lore.resolve("Mara").unwrap().id;
+
+        let mut open_texts = BTreeMap::new();
+        // Add mention in an open buffer
+        let dummy_path = project.root.join("scene-gate.md");
+        let mut project = project;
+        project
+            .manuscript
+            .set_meta(
+                scene_id,
+                SceneMeta {
+                    pov: "Mara".to_string(),
+                    file: Some(dummy_path.clone()),
+                    ..SceneMeta::default()
+                },
+            )
+            .unwrap();
+        open_texts.insert(
+            dummy_path,
+            "Met @Mara Stone at noon. Saw @Mara again.".to_string(),
+        );
+
+        let detail = entity_detail_dto(&project, &open_texts, mara_id).unwrap();
+        assert_eq!(detail.entity.name, "Mara");
+        assert_eq!(detail.entity.pov_scenes, vec!["The gate".to_string()]);
+        assert_eq!(detail.pov_scene_links.len(), 1);
+        assert_eq!(detail.pov_scene_links[0].scene_id, scene_id);
+        assert_eq!(detail.mention_scenes.len(), 1);
+        assert_eq!(detail.mention_scenes[0].scene_id, scene_id);
+        assert_eq!(detail.mention_scenes[0].count, 2);
+
+        let _ = std::fs::remove_dir_all(&project.root);
+    }
+
+    #[test]
+    fn graph_dto_includes_degree_and_ranked_neighbors() {
+        let (ms, mut lore) = seed_story();
+        let joren = lore.add(EntityKind::Character, "Joren").unwrap();
+        let mara = lore.resolve("Mara").unwrap().id;
+        let scene = ms.children(ms.children(ms.root())[0].id)[0].id;
+        let scene = ms.children(scene)[0].id;
+        let mut texts = BTreeMap::new();
+        texts.insert(scene, "Mara waved at @Joren.".to_string());
+        let dto = graph_dto(&ms, &lore, &texts);
+
+        let mara_node = dto.nodes.iter().find(|n| n.id == mara).unwrap();
+        assert_eq!(mara_node.degree, 1);
+        assert_eq!(mara_node.neighbors.len(), 1);
+        assert_eq!(mara_node.neighbors[0].id, joren);
+        assert_eq!(mara_node.neighbors[0].name, "Joren");
+    }
+
+    #[test]
+    fn get_mentions_dto_utf16_offsets_with_emoji_and_umlauts() {
+        let mut lore = LoreBook::new();
+        let mara = lore.add(EntityKind::Character, "Mara").unwrap();
+
+        // 1. Basic ASCII
+        let text1 = "Hello @Mara world";
+        let spans1 = get_mentions_dto(&lore, text1);
+        assert_eq!(spans1.len(), 1);
+        assert_eq!(spans1[0].start, 6);
+        assert_eq!(spans1[0].end, 11);
+        assert_eq!(spans1[0].entity_id, Some(mara));
+        assert_eq!(spans1[0].kind.as_deref(), Some("character"));
+        // Check slice matches exactly
+        let u16_vec: Vec<u16> = text1.encode_utf16().collect();
+        let slice = String::from_utf16(&u16_vec[spans1[0].start..spans1[0].end]).unwrap();
+        assert_eq!(slice, "@Mara");
+
+        // 2. Emoji (surrogate pairs in UTF-16, 4 bytes in UTF-8)
+        let text2 = "👋 Schön @Mara 👋!";
+        let spans2 = get_mentions_dto(&lore, text2);
+        assert_eq!(spans2.len(), 1);
+        let u16_vec2: Vec<u16> = text2.encode_utf16().collect();
+        let slice2 = String::from_utf16(&u16_vec2[spans2[0].start..spans2[0].end]).unwrap();
+        assert_eq!(slice2, "@Mara");
+
+        // 3. Umlauts inside and before mention
+        let joren = lore.add(EntityKind::Character, "Jörën").unwrap();
+        let text3 = "Äpfel Über @Jörën. Ende";
+        let spans3 = get_mentions_dto(&lore, text3);
+        assert_eq!(spans3.len(), 1);
+        assert_eq!(spans3[0].entity_id, Some(joren));
+        let u16_vec3: Vec<u16> = text3.encode_utf16().collect();
+        let slice3 = String::from_utf16(&u16_vec3[spans3[0].start..spans3[0].end]).unwrap();
+        assert_eq!(slice3, "@Jörën");
+
+        // 4. Mention extending to the very end of text
+        let text4 = "Hi @Mara";
+        let spans4 = get_mentions_dto(&lore, text4);
+        assert_eq!(spans4.len(), 1);
+        let u16_vec4: Vec<u16> = text4.encode_utf16().collect();
+        let slice4 = String::from_utf16(&u16_vec4[spans4[0].start..spans4[0].end]).unwrap();
+        assert_eq!(slice4, "@Mara");
     }
 }
