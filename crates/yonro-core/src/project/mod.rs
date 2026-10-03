@@ -14,6 +14,33 @@ use std::path::{Path, PathBuf};
 use super::lore::LoreBook;
 use super::manuscript::{Manuscript, NodeId, NodeKind};
 
+/// Scene metadata fields the GUI inspector edits.
+///
+/// `file` and `current_words` are backend-owned and never overwritten
+/// through this shape. Additive `serde(default)` fields keep the on-disk
+/// format compatible.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct SceneMetaFields {
+    /// Point-of-view character.
+    #[serde(default)]
+    pub pov: String,
+    /// Where the scene happens.
+    #[serde(default)]
+    pub setting: String,
+    /// In-story date, free-form.
+    #[serde(default)]
+    pub story_date: String,
+    /// In-story time, free-form.
+    #[serde(default)]
+    pub story_time: String,
+    /// One-line reminder of what happens.
+    #[serde(default)]
+    pub synopsis: String,
+    /// Draft word-count goal (`0` = no target).
+    #[serde(default)]
+    pub target_words: usize,
+}
+
 /// One workspace: root directory plus in-memory documents.
 #[derive(Debug, Clone)]
 pub struct Project {
@@ -298,6 +325,155 @@ impl Project {
         Ok(())
     }
 
+    /// Remove `id` and its subtree, persisting immediately.
+    ///
+    /// Scene draft files are never deleted: every scene with a file under
+    /// `id` is first copied to
+    /// `.yonro/history/<scene-id>/<unix-ts>.md` (best-effort — a failed
+    /// snapshot never blocks the removal). Returns a human message naming
+    /// what was kept, e.g.
+    /// `removed scene "The gate" (kept scene-7.md on disk)`.
+    ///
+    /// # Errors
+    /// `UnknownNode`, `Structure` for the project root, or `Io` on save.
+    pub fn remove_node(&mut self, id: NodeId) -> Result<String, ProjectError> {
+        let node = self
+            .manuscript
+            .get(id)
+            .ok_or(ProjectError::UnknownNode(id))?;
+        if id == self.manuscript.root() {
+            return Err(ProjectError::Structure(
+                "cannot remove the project node".to_string(),
+            ));
+        }
+        let title = node.title.clone();
+        let kind_label = match node.kind {
+            NodeKind::Project => "project",
+            NodeKind::Act => "act",
+            NodeKind::Chapter => "chapter",
+            NodeKind::Scene => "scene",
+        };
+        let mut kept: Vec<String> = Vec::new();
+        for (scene, path) in self.scene_files_under(id) {
+            if !path.exists() {
+                continue;
+            }
+            if let Some(name) = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_string)
+            {
+                // Best-effort: the original file stays either way.
+                let _ = self.snapshot_scene_file(scene, &path);
+                kept.push(name);
+            }
+        }
+        self.manuscript
+            .remove(id)
+            .map_err(|err| ProjectError::Structure(err.to_string()))?;
+        self.save()?;
+        if kept.is_empty() {
+            Ok(format!("removed {kind_label} {title:?}"))
+        } else {
+            Ok(format!(
+                "removed {kind_label} {title:?} (kept {} on disk)",
+                kept.join(", ")
+            ))
+        }
+    }
+
+    /// Replace a scene's inspector-editable metadata and persist.
+    ///
+    /// Trims free-form strings; `file` and `current_words` are
+    /// backend-owned and preserved. New POVs/settings seed the lore book
+    /// exactly like the TUI (deduped `@`-completable entities).
+    ///
+    /// # Errors
+    /// `UnknownNode`, `NotAScene`, or `Io` on save failure.
+    pub fn set_scene_meta(
+        &mut self,
+        id: NodeId,
+        fields: &SceneMetaFields,
+    ) -> Result<(), ProjectError> {
+        let node = self
+            .manuscript
+            .get(id)
+            .ok_or(ProjectError::UnknownNode(id))?;
+        if node.kind != NodeKind::Scene {
+            return Err(ProjectError::NotAScene(id));
+        }
+        let mut meta = node.meta.clone().unwrap_or_default();
+        meta.pov = fields.pov.trim().to_string();
+        meta.setting = fields.setting.trim().to_string();
+        meta.story_date = fields.story_date.trim().to_string();
+        meta.story_time = fields.story_time.trim().to_string();
+        meta.synopsis = fields.synopsis.trim().to_string();
+        meta.target_words = fields.target_words;
+        self.manuscript
+            .set_meta(id, meta)
+            .map_err(|err| ProjectError::Structure(err.to_string()))?;
+        self.lore.seed_from_manuscript(&self.manuscript);
+        self.save()?;
+        Ok(())
+    }
+
+    /// `(scene id, draft file)` pairs in the subtree under `id`.
+    fn scene_files_under(&self, id: NodeId) -> Vec<(NodeId, PathBuf)> {
+        let mut out = Vec::new();
+        let mut stack = vec![id];
+        while let Some(current) = stack.pop() {
+            let Some(node) = self.manuscript.get(current) else {
+                continue;
+            };
+            if node.kind == NodeKind::Scene {
+                if let Some(path) = node.meta.as_ref().and_then(|meta| meta.file.clone()) {
+                    out.push((current, path));
+                }
+            }
+            for child in self.manuscript.children(current) {
+                stack.push(child.id);
+            }
+        }
+        out
+    }
+
+    /// Copy a scene draft to `.yonro/history/<scene>/<unix-ts>.md`.
+    ///
+    /// Same-second collisions gain a `-n` suffix.
+    ///
+    /// # Errors
+    /// `Io` when the file cannot be read or the snapshot cannot be written.
+    fn snapshot_scene_file(&self, scene: NodeId, path: &Path) -> Result<(), ProjectError> {
+        let bytes = std::fs::read(path)
+            .map_err(|err| ProjectError::Io(format!("{}: {err}", path.display())))?;
+        let dir = self.root.join(format!(".yonro/history/{scene}"));
+        std::fs::create_dir_all(&dir)
+            .map_err(|err| ProjectError::Io(format!("{}: {err}", dir.display())))?;
+        let stamp = unix_timestamp();
+        let mut suffix: u32 = 0;
+        loop {
+            let name = if suffix == 0 {
+                format!("{stamp}.md")
+            } else {
+                format!("{stamp}-{suffix}.md")
+            };
+            let dest = dir.join(&name);
+            if dest.exists() {
+                suffix = suffix.saturating_add(1);
+                if suffix > 1000 {
+                    return Err(ProjectError::Io(format!(
+                        "{}: too many snapshots",
+                        dir.display()
+                    )));
+                }
+                continue;
+            }
+            std::fs::write(&dest, &bytes)
+                .map_err(|err| ProjectError::Io(format!("{}: {err}", dest.display())))?;
+            return Ok(());
+        }
+    }
+
     /// Scene-less `.md` files directly under the workspace root, sorted.
     ///
     /// Scene drafts linked from the manuscript are excluded; `.yonro/` is
@@ -394,6 +570,14 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), ProjectError> {
     std::fs::rename(&tmp, path)
         .map_err(|err| ProjectError::Io(format!("{}: {err}", path.display())))?;
     Ok(())
+}
+
+/// Seconds since the Unix epoch (`0` when the clock is unavailable).
+fn unix_timestamp() -> u64 {
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(span) => span.as_secs(),
+        Err(_) => 0,
+    }
 }
 
 #[cfg(test)]
@@ -641,6 +825,142 @@ mod tests {
         assert!(files[0].ends_with("diary.md"));
         assert!(files[1].ends_with("notes.md"));
         assert!(!files.iter().any(|f| *f == draft.to_string_lossy()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn set_scene_meta_saves_fields_seeds_lore_and_keeps_file() {
+        let dir = unique_dir("setmeta");
+        let mut project = sample_project(&dir);
+        project.save().unwrap();
+        let scene = {
+            let root = project.manuscript.root();
+            let act = project.manuscript.children(root)[0].id;
+            let ch = project.manuscript.children(act)[0].id;
+            project.manuscript.children(ch)[0].id
+        };
+        let path = project.scene_file(scene).unwrap();
+        assert!(project.sync_scene_words(&path, 33));
+        project
+            .set_scene_meta(
+                scene,
+                &SceneMetaFields {
+                    pov: "  Joren ".to_string(),
+                    setting: "Harbor".to_string(),
+                    story_date: "Day 4".to_string(),
+                    story_time: "dawn".to_string(),
+                    synopsis: "Joren sails.".to_string(),
+                    target_words: 500,
+                },
+            )
+            .unwrap();
+        let meta = project
+            .manuscript
+            .get(scene)
+            .and_then(|node| node.meta.clone())
+            .unwrap();
+        assert_eq!(meta.pov, "Joren");
+        assert_eq!(meta.setting, "Harbor");
+        assert_eq!(meta.target_words, 500);
+        assert_eq!(meta.file, Some(path));
+        assert_eq!(meta.current_words, 33);
+        // POV + setting seeded exactly like the TUI (Mara was already there).
+        assert!(project.lore.resolve("Joren").is_some());
+        assert!(project.lore.resolve("Harbor").is_some());
+        // Reload persists everything.
+        let loaded = Project::load(&dir);
+        let meta = loaded
+            .manuscript
+            .get(scene)
+            .and_then(|node| node.meta.clone())
+            .unwrap();
+        assert_eq!(meta.pov, "Joren");
+        assert_eq!(loaded.lore.live_count(), 3);
+        // Non-scenes and unknown ids are named.
+        let act = loaded.manuscript.root();
+        assert_eq!(
+            project.set_scene_meta(act, &SceneMetaFields::default()),
+            Err(ProjectError::NotAScene(act))
+        );
+        assert_eq!(
+            project.set_scene_meta(999, &SceneMetaFields::default()),
+            Err(ProjectError::UnknownNode(999))
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remove_scene_keeps_md_and_snapshots_history() {
+        let dir = unique_dir("rmscene");
+        let mut project = sample_project(&dir);
+        project.save().unwrap();
+        let scene = {
+            let root = project.manuscript.root();
+            let act = project.manuscript.children(root)[0].id;
+            let ch = project.manuscript.children(act)[0].id;
+            project.manuscript.children(ch)[0].id
+        };
+        let path = project.scene_file(scene).unwrap();
+        std::fs::write(&path, "dear draft").unwrap();
+        let message = project.remove_node(scene).unwrap();
+        assert!(
+            message.contains(&format!("kept scene-{scene}.md on disk")),
+            "message was: {message}"
+        );
+        // Original file untouched; snapshot holds the same prose.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "dear draft");
+        let history: Vec<_> = std::fs::read_dir(dir.join(format!(".yonro/history/{scene}")))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(history.len(), 1);
+        assert_eq!(std::fs::read_to_string(&history[0]).unwrap(), "dear draft");
+        assert!(project.manuscript.get(scene).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remove_chapter_snapshots_every_scene_and_names_root() {
+        let dir = unique_dir("rmchapter");
+        let mut project = sample_project(&dir);
+        project.save().unwrap();
+        let (chapter, first, second) = {
+            let root = project.manuscript.root();
+            let act = project.manuscript.children(root)[0].id;
+            let ch = project.manuscript.children(act)[0].id;
+            let first = project.manuscript.children(ch)[0].id;
+            let extra = project.manuscript.add_scene(ch, "Second").unwrap();
+            (ch, first, extra)
+        };
+        for scene in [first, second] {
+            let path = project.scene_file(scene).unwrap();
+            std::fs::write(&path, format!("words {scene}")).unwrap();
+        }
+        let message = project.remove_node(chapter).unwrap();
+        assert!(message.contains("kept"), "message was: {message}");
+        assert!(message.contains("scene-"));
+        for scene in [first, second] {
+            let snaps: Vec<_> = std::fs::read_dir(dir.join(format!(".yonro/history/{scene}")))
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .collect();
+            assert_eq!(snaps.len(), 1);
+            assert_eq!(
+                std::fs::read_to_string(&snaps[0]).unwrap(),
+                format!("words {scene}")
+            );
+            // Drafts stay on disk even though the nodes are gone.
+            assert!(dir.join(format!("scene-{scene}.md")).exists());
+        }
+        let root = project.manuscript.root();
+        assert_eq!(
+            project.remove_node(root).unwrap_err().to_string(),
+            "cannot remove the project node"
+        );
+        assert_eq!(
+            project.remove_node(999),
+            Err(ProjectError::UnknownNode(999))
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

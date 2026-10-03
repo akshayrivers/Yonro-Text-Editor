@@ -50,5 +50,5 @@ pub use history::UndoStack;
 pub use line::Line;
 pub use lore::{is_mention_char, Entity, EntityId, EntityKind, LoreBook, LoreError, Mention};
 pub use manuscript::{Manuscript, ManuscriptError, Node, NodeId, NodeKind, SceneMeta};
-pub use project::{Project, ProjectError};
+pub use project::{Project, ProjectError, SceneMetaFields};
 pub use timeline::{ContinuityNote, Timeline, TimelineEntry};
