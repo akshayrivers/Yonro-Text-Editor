@@ -581,7 +581,7 @@ fn get_graph(state: tauri::State<'_, AppState>) -> api::GraphDto {
 #[tauri::command]
 fn get_timeline(state: tauri::State<'_, AppState>) -> api::TimelineDto {
     let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
-    api::timeline_dto(&project.manuscript)
+    api::timeline_dto(&project.manuscript, &project.lore)
 }
 
 // ---------------------------------------------------------------------------

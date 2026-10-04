@@ -144,6 +144,8 @@ pub struct TimelineEntryDto {
     pub title: String,
     pub chapter: String,
     pub pov: String,
+    /// Lore kind of the POV (`"character"`, `"place"`, …), if registered.
+    pub pov_kind: Option<String>,
     pub setting: String,
     pub story_date: String,
     pub words: usize,
@@ -154,6 +156,8 @@ pub struct TimelineEntryDto {
 pub struct ContinuityNoteDto {
     pub message: String,
     pub scenes: Vec<usize>,
+    /// Titles parallel to `scenes` (same order) for note-card buttons.
+    pub scene_titles: Vec<String>,
 }
 
 /// Outline-ordered timeline plus continuity notes.
@@ -649,9 +653,18 @@ pub fn graph_dto(
 }
 
 /// Outline-ordered timeline plus continuity notes.
+///
+/// Scene titles for each note are resolved here (server-side) so the UI
+/// only renders buttons; POV kinds come from the lore book so chip colors
+/// stay a render concern driven by core facts.
 #[must_use]
-pub fn timeline_dto(manuscript: &Manuscript) -> TimelineDto {
+pub fn timeline_dto(manuscript: &Manuscript, lore: &LoreBook) -> TimelineDto {
     let timeline = super::timeline::Timeline::build(manuscript);
+    let title_of = |id: usize| {
+        manuscript
+            .get(id)
+            .map_or_else(|| format!("scene-{id}"), |node| node.title.clone())
+    };
     TimelineDto {
         entries: timeline
             .entries
@@ -662,6 +675,9 @@ pub fn timeline_dto(manuscript: &Manuscript) -> TimelineDto {
                 title: entry.title.clone(),
                 chapter: entry.chapter.clone(),
                 pov: entry.pov.clone(),
+                pov_kind: lore
+                    .resolve(&entry.pov)
+                    .map(|entity| entity_kind_label(entity.kind).to_string()),
                 setting: entry.setting.clone(),
                 story_date: entry.story_date.clone(),
                 words: entry.words,
@@ -673,6 +689,7 @@ pub fn timeline_dto(manuscript: &Manuscript) -> TimelineDto {
             .map(|note| ContinuityNoteDto {
                 message: note.message.clone(),
                 scenes: note.scenes.clone(),
+                scene_titles: note.scenes.iter().map(|id| title_of(*id)).collect(),
             })
             .collect(),
     }
@@ -790,13 +807,54 @@ mod tests {
 
     #[test]
     fn timeline_dto_orders_entries_and_notes() {
-        let (ms, _) = seed_story();
-        let dto = timeline_dto(&ms);
+        let (ms, lore) = seed_story();
+        let dto = timeline_dto(&ms, &lore);
         assert_eq!(dto.entries.len(), 1);
         assert_eq!(dto.entries[0].title, "The gate");
+        assert_eq!(dto.entries[0].pov_kind.as_deref(), Some("character"));
         // Seed scene has a POV but no setting → exactly one note.
         assert_eq!(dto.notes.len(), 1);
         assert!(dto.notes[0].message.contains("no setting"));
+        assert_eq!(dto.notes[0].scenes.len(), 1);
+        assert_eq!(dto.notes[0].scene_titles, vec!["The gate".to_string()]);
+    }
+
+    #[test]
+    fn timeline_dto_resolves_note_titles_and_unknown_pov_kind() {
+        let mut ms = Manuscript::new("Probe");
+        let act = ms.add_act("Act I").unwrap();
+        let ch = ms.add_chapter(act, "Chapter 1").unwrap();
+        for title in ["Gate", "River"] {
+            let sc = ms.add_scene(ch, title).unwrap();
+            ms.set_meta(
+                sc,
+                SceneMeta {
+                    pov: "Mara".to_string(),
+                    setting: if title == "Gate" {
+                        "Mill farm".to_string()
+                    } else {
+                        "Old bridge".to_string()
+                    },
+                    ..SceneMeta::default()
+                },
+            )
+            .unwrap();
+        }
+        // "Mara" is unregistered here → pov_kind is None.
+        let lore = LoreBook::new();
+        let dto = timeline_dto(&ms, &lore);
+        assert_eq!(dto.entries.len(), 2);
+        assert_eq!(dto.entries[0].pov_kind, None);
+        let travel = dto
+            .notes
+            .iter()
+            .find(|n| n.message.contains("travels"))
+            .unwrap();
+        assert_eq!(travel.scenes.len(), 2);
+        assert_eq!(
+            travel.scene_titles,
+            vec!["Gate".to_string(), "River".to_string()]
+        );
     }
 
     #[test]
