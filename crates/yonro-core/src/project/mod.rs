@@ -51,6 +51,21 @@ struct ProjectFile {
     daily_goal: usize,
 }
 
+/// One history snapshot: file name plus draft words at the time.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HistoryEntry {
+    /// Snapshot file name (`<unix-ts>.md`, `-n` suffixed on collisions).
+    pub name: String,
+    /// Draft words in the snapshot.
+    pub words: usize,
+}
+
+/// Snapshots kept per scene (oldest pruned first).
+pub const MAX_SNAPSHOTS_PER_SCENE: usize = 50;
+
+/// Minimum age of the newest snapshot before `save` takes another.
+pub const SNAPSHOT_THROTTLE_SECS: u64 = 600;
+
 /// One workspace: root directory plus in-memory documents.
 #[derive(Debug, Clone)]
 pub struct Project {
@@ -503,6 +518,131 @@ impl Project {
         out
     }
 
+    /// Snapshot `file` after a save when the newest snapshot is older than
+    /// ten minutes (cap 50 per scene, oldest pruned first).
+    ///
+    /// Returns `false` (no snapshot) when `file` backs no scene or the
+    /// throttle has not elapsed. Best-effort for callers: failures surface
+    /// as `Io`, but a failed snapshot must never block the save itself.
+    ///
+    /// # Errors
+    /// `Io` when the draft cannot be read or the snapshot cannot be written.
+    pub fn maybe_snapshot(&self, file: &Path) -> Result<bool, ProjectError> {
+        let Some(scene) = self.find_scene_by_file(file) else {
+            return Ok(false);
+        };
+        let dir = self.root.join(format!(".yonro/history/{scene}"));
+        if let Some(newest) = latest_snapshot_time(&dir) {
+            let elapsed = std::time::SystemTime::now()
+                .duration_since(newest)
+                .unwrap_or(std::time::Duration::ZERO);
+            if elapsed.as_secs() < SNAPSHOT_THROTTLE_SECS {
+                return Ok(false);
+            }
+        }
+        self.snapshot_scene_file(scene, file)?;
+        prune_history(&dir)?;
+        Ok(true)
+    }
+
+    /// Snapshot list for `scene`, newest first (name plus words).
+    ///
+    /// # Errors
+    /// `UnknownNode` for a bad id, `NotAScene` for structural nodes.
+    pub fn scene_history(&self, scene: NodeId) -> Result<Vec<HistoryEntry>, ProjectError> {
+        let node = self
+            .manuscript
+            .get(scene)
+            .ok_or(ProjectError::UnknownNode(scene))?;
+        if node.kind != NodeKind::Scene {
+            return Err(ProjectError::NotAScene(scene));
+        }
+        let dir = self.root.join(format!(".yonro/history/{scene}"));
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return Ok(Vec::new());
+        };
+        let mut names: Vec<String> = entries
+            .filter_map(std::result::Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_file()
+                    && path
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+            })
+            .filter_map(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .map(str::to_string)
+            })
+            .collect();
+        names.sort();
+        names.reverse();
+        let mut out = Vec::with_capacity(names.len());
+        for name in names {
+            let bytes = std::fs::read(dir.join(&name))
+                .map_err(|err| ProjectError::Io(format!("{}: {err}", dir.join(&name).display())))?;
+            let text = String::from_utf8_lossy(&bytes);
+            out.push(HistoryEntry {
+                name,
+                words: super::export::count_words(&text),
+            });
+        }
+        Ok(out)
+    }
+
+    /// Restore snapshot `name` over a scene's draft file, returning its text.
+    ///
+    /// The current draft is snapshotted first (unthrottled), so a restore
+    /// never loses prose.
+    ///
+    /// # Errors
+    /// `UnknownNode`/`NotAScene` for bad ids, `Structure` for bad names or
+    /// scenes with no draft file, `Io` on filesystem failures.
+    pub fn restore_snapshot(&self, scene: NodeId, name: &str) -> Result<String, ProjectError> {
+        if name.is_empty()
+            || name.contains('/')
+            || name.contains('\\')
+            || !Path::new(name)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+        {
+            return Err(ProjectError::Structure(format!(
+                "bad snapshot name {name:?}"
+            )));
+        }
+        let node = self
+            .manuscript
+            .get(scene)
+            .ok_or(ProjectError::UnknownNode(scene))?;
+        if node.kind != NodeKind::Scene {
+            return Err(ProjectError::NotAScene(scene));
+        }
+        let draft = node
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.file.clone())
+            .ok_or_else(|| ProjectError::Structure(format!("scene {scene} has no draft file")))?;
+        let source = self.root.join(format!(".yonro/history/{scene}")).join(name);
+        if !source.is_file() {
+            return Err(ProjectError::Structure(format!(
+                "snapshot {name:?} not found for scene {scene}"
+            )));
+        }
+        // Snapshot the present before overwriting (prune keeps the cap).
+        if draft.exists() {
+            let dir = self.root.join(format!(".yonro/history/{scene}"));
+            let _ = self.snapshot_scene_file(scene, &draft);
+            prune_history(&dir)?;
+        }
+        let bytes = std::fs::read(&source)
+            .map_err(|err| ProjectError::Io(format!("{}: {err}", source.display())))?;
+        write_atomic(&draft, &bytes)
+            .map_err(|err| ProjectError::Io(format!("{}: {err}", draft.display())))?;
+        String::from_utf8(bytes)
+            .map_err(|err| ProjectError::Io(format!("{}: {err}", source.display())))
+    }
+
     /// Copy a scene draft to `.yonro/history/<scene>/<unix-ts>.md`.
     ///
     /// Same-second collisions gain a `-n` suffix.
@@ -753,6 +893,59 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), ProjectError> {
     drop(file);
     std::fs::rename(&tmp, path)
         .map_err(|err| ProjectError::Io(format!("{}: {err}", path.display())))?;
+    Ok(())
+}
+
+/// Newest snapshot mtime in `dir` (`None` when empty/unreadable).
+fn latest_snapshot_time(dir: &Path) -> Option<std::time::SystemTime> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut newest: Option<std::time::SystemTime> = None;
+    for entry in entries.filter_map(std::result::Result::ok) {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if let Ok(meta) = std::fs::metadata(&path) {
+            if let Ok(modified) = meta.modified() {
+                let is_newer = newest.is_none_or(|known| modified > known);
+                if is_newer {
+                    newest = Some(modified);
+                }
+            }
+        }
+    }
+    newest
+}
+
+/// Keep the newest [`MAX_SNAPSHOTS_PER_SCENE`] snapshots (name order).
+///
+/// # Errors
+/// `Io` when the history dir cannot be listed or a stale file cannot be removed.
+fn prune_history(dir: &Path) -> Result<(), ProjectError> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Ok(());
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(std::result::Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file()
+                && path
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+        })
+        .filter_map(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_string)
+        })
+        .collect();
+    names.sort();
+    while names.len() > MAX_SNAPSHOTS_PER_SCENE {
+        let oldest = names.remove(0);
+        std::fs::remove_file(dir.join(&oldest))
+            .map_err(|err| ProjectError::Io(format!("{}: {err}", dir.join(&oldest).display())))?;
+    }
     Ok(())
 }
 
@@ -1230,6 +1423,44 @@ mod tests {
             .iter()
             .any(|warning| warning.contains("sessions.json")));
         assert_eq!(fallback.goal(), 500);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn snapshots_throttle_list_and_restore() {
+        let dir = unique_dir("snapshots");
+        let mut project = sample_project(&dir);
+        project.save().unwrap();
+        let scene = {
+            let root = project.manuscript.root();
+            let act = project.manuscript.children(root)[0].id;
+            let ch = project.manuscript.children(act)[0].id;
+            project.manuscript.children(ch)[0].id
+        };
+        let path = project.scene_file(scene).unwrap();
+        // Loose files never snapshot.
+        let loose = dir.join("notes.md");
+        std::fs::write(&loose, "stray").unwrap();
+        assert!(!project.maybe_snapshot(&loose).unwrap());
+        // First save snapshots; the immediate next one throttles.
+        std::fs::write(&path, "first words here").unwrap();
+        assert!(project.maybe_snapshot(&path).unwrap());
+        assert!(!project.maybe_snapshot(&path).unwrap());
+        let history = project.scene_history(scene).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].words, 3);
+        // Restore snapshots the present first, then swaps the text.
+        std::fs::write(&path, "second version live").unwrap();
+        let restored = project.restore_snapshot(scene, &history[0].name).unwrap();
+        assert_eq!(restored, "first words here");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "first words here");
+        let history = project.scene_history(scene).unwrap();
+        assert_eq!(history.len(), 2);
+        assert!(project.restore_snapshot(scene, "../evil.md").is_err());
+        assert_eq!(
+            project.restore_snapshot(999, "x.md"),
+            Err(ProjectError::UnknownNode(999))
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
