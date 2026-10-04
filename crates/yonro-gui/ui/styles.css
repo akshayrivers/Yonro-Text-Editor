@@ -353,7 +353,9 @@ dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
 .aliases, .povs { color: var(--muted); font-size: 0.88em; margin: 4px 0 0; }
 .sheet { white-space: pre-wrap; margin: 6px 0 0; }
 
-/* Graph: line style carries meaning, color only reinforces */
+/* Graph: flex column so the svg fills leftover height.
+ * Line style carries meaning, color only reinforces. */
+#view-graph { display: flex; flex-direction: column; min-height: 100%; }
 .graph-head {
   display: flex;
   align-items: center;
@@ -380,7 +382,9 @@ dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
 }
 #graph {
   width: 100%;
-  height: 480px;
+  flex: 1 1 auto;
+  min-height: 360px;
+  height: auto;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -395,6 +399,9 @@ dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
   font-size: 11px;
   font-family: var(--font-ui);
   pointer-events: none;
+  paint-order: stroke;
+  stroke: var(--panel);
+  stroke-width: 3px;
   /* Visible labels are pre-truncated in JS to ~14ch (SVG text honors no
    * box ellipsis); the full name stays in <title>/aria-label. This cap
    * keeps any HTML-rendered fallback to the same width. */
