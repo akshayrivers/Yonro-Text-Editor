@@ -231,6 +231,13 @@ pub struct ExportDto {
     pub scenes: usize,
 }
 
+/// One history snapshot: file name plus draft words.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HistoryDto {
+    pub name: String,
+    pub words: usize,
+}
+
 /// One project-wide text hit, anchored to a line.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ProjectHitDto {
@@ -857,6 +864,18 @@ pub fn export_dto(
         words: summary.words,
         scenes: summary.scenes,
     })
+}
+
+/// Snapshot list passthrough (newest first, from core).
+#[must_use]
+pub fn history_dto(entries: &[super::project::HistoryEntry]) -> Vec<HistoryDto> {
+    entries
+        .iter()
+        .map(|entry| HistoryDto {
+            name: entry.name.clone(),
+            words: entry.words,
+        })
+        .collect()
 }
 
 /// Scene detail for the inspector: breadcrumb, meta, file, live counts.

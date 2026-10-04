@@ -594,12 +594,12 @@ impl Project {
     /// Restore snapshot `name` over a scene's draft file, returning its text.
     ///
     /// The current draft is snapshotted first (unthrottled), so a restore
-    /// never loses prose.
+    /// never loses prose. Scene word counts update and persist with it.
     ///
     /// # Errors
     /// `UnknownNode`/`NotAScene` for bad ids, `Structure` for bad names or
     /// scenes with no draft file, `Io` on filesystem failures.
-    pub fn restore_snapshot(&self, scene: NodeId, name: &str) -> Result<String, ProjectError> {
+    pub fn restore_snapshot(&mut self, scene: NodeId, name: &str) -> Result<String, ProjectError> {
         if name.is_empty()
             || name.contains('/')
             || name.contains('\\')
@@ -639,8 +639,12 @@ impl Project {
             .map_err(|err| ProjectError::Io(format!("{}: {err}", source.display())))?;
         write_atomic(&draft, &bytes)
             .map_err(|err| ProjectError::Io(format!("{}: {err}", draft.display())))?;
-        String::from_utf8(bytes)
-            .map_err(|err| ProjectError::Io(format!("{}: {err}", source.display())))
+        let text = String::from_utf8(bytes)
+            .map_err(|err| ProjectError::Io(format!("{}: {err}", source.display())))?;
+        let words = super::export::count_words(&text);
+        let _ = self.manuscript.set_scene_words(scene, words);
+        self.save()?;
+        Ok(text)
     }
 
     /// Copy a scene draft to `.yonro/history/<scene>/<unix-ts>.md`.
