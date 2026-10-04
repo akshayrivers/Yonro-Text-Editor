@@ -18,6 +18,7 @@ pub mod annotationtype;
 pub mod api;
 pub mod buffers;
 pub mod command;
+pub mod custom_graphs;
 pub mod documentstatus;
 pub mod events;
 pub mod export;
@@ -41,6 +42,10 @@ pub use annotation::Annotation;
 pub use annotationtype::AnnotationType;
 pub use buffers::{Buffer, BufferManager};
 pub use command::{Command, Edit, MouseCommand, Move, System};
+pub use custom_graphs::{
+    CanvasEdge, CanvasEdgeId, CanvasNode, CanvasNodeId, CustomGraph, CustomGraphError,
+    CustomGraphId, CustomGraphStore, MAX_COORD,
+};
 pub use documentstatus::DocumentStatus;
 pub use events::EditorEvent;
 pub use export::{CompiledExport, ExportError, ExportFormat, ExportSummary, SCENE_SEPARATOR};
