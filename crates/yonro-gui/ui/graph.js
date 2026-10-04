@@ -99,13 +99,6 @@ function bindGraphControlsOnce() {
   if (graphControlsBound) return;
   graphControlsBound = true;
 
-  const slider = document.getElementById('graph-min-weight');
-  if (slider) {
-    slider.addEventListener('input', () => {
-      if (graphData) renderGraph(graphData);
-    });
-  }
-
   const btnIn = document.getElementById('graph-zoom-in');
   if (btnIn) btnIn.addEventListener('click', () => {
     zoomGraph(0.8);
@@ -205,6 +198,7 @@ function bindGraphControlsOnce() {
 async function loadGraph() {
   bindGraphControlsOnce();
   await loadGraphTabs();
+  await initGraphFilters();
   if (graphCustomId !== null && customGraphs.some((g) => g.id === graphCustomId)) {
     renderCustomGraph();
     return;
@@ -213,24 +207,108 @@ async function loadGraph() {
   graphSpotlight = null;
   pendingEdgeFrom = null;
   renderGraphTabs();
+  await reloadInferred();
+}
+
+/* Filtered reload of the inferred tab (custom tabs render separately and
+ * ignore the panel). Local-graph needs a selected node first.
+ */
+async function reloadInferred() {
+  const localBox = document.getElementById('graph-f-local');
+  if (localBox && localBox.checked && graphSpotlight === null && graphFocusedNodeId === null) {
+    localBox.checked = false;
+    saveGraphFilters(readGraphFilters());
+    setMessage('select a node first (click it), then local graph.');
+  }
   try {
-    graphData = await core.graph();
+    const query = graphCustomId === null ? buildGraphQuery() : null;
+    graphData = await core.graph(query);
+    if (query === null) graphFull = graphData;
     const nodes = graphData.nodes || [];
     const edges = graphData.edges || [];
-    // Slider spans the real data: max is never above every edge weight.
-    const slider = document.getElementById('graph-min-weight');
-    if (slider) {
-      const maxW = edges.reduce((m, e) => Math.max(m, e.weight || 0), 1);
-      slider.min = '1';
-      slider.max = String(Math.max(1, maxW));
-      slider.value = '1';
-    }
     graphLayout = forceLayout(nodes, edges);
     graphPos = graphLayout.pos;
     fitGraph();
   } catch (err) {
     document.getElementById('graph-legend').textContent = `could not load graph: ${errText(err)}`;
   }
+}
+
+const requeryGraphSoon = debounce(() => {
+  if (graphCustomId !== null) return;
+  reloadInferred();
+}, 150);
+
+function resetGraphFilters() {
+  const keep = readGraphFilters();
+  const fresh = defaultGraphFilters();
+  fresh.open = keep.open;
+  syncFilterControls(fresh);
+  saveGraphFilters(fresh);
+  requeryGraphSoon();
+}
+
+/* Option lists need the outline (scope/pov) and the unfiltered graph
+ * (kind counts). Runs once per view load, before the first render.
+ */
+async function initGraphFilters() {
+  bindGraphFiltersOnce();
+  let outline = null;
+  try {
+    outline = await core.outline();
+  } catch (err) {
+    void err;
+  }
+  graphOutlineCache = outline;
+  if (!graphFull) {
+    try {
+      graphFull = await core.graph(null);
+    } catch (err) {
+      void err;
+      graphFull = null;
+    }
+  }
+  const counts = {};
+  for (const n of (graphFull && graphFull.nodes) || []) {
+    counts[n.kind] = (counts[n.kind] || 0) + 1;
+  }
+  buildKindChecks(counts);
+  buildScopeOptions(outline);
+  buildPovOptions(outline);
+  syncFilterControls(loadGraphFilters());
+}
+
+function bindGraphFiltersOnce() {  if (graphFiltersBound) return;
+  graphFiltersBound = true;
+  const saved = loadGraphFilters();
+  const toggle = document.getElementById('graph-panel-toggle');
+  const body = document.getElementById('graph-panel-body');
+  if (toggle && body) {
+    toggle.setAttribute('aria-expanded', saved.open ? 'true' : 'false');
+    body.hidden = !saved.open;
+    toggle.addEventListener('click', () => {
+      const shut = !body.hidden;
+      body.hidden = shut;
+      toggle.setAttribute('aria-expanded', shut ? 'false' : 'true');
+      saveGraphFilters(readGraphFilters());
+    });
+  }
+  const text = document.getElementById('graph-f-text');
+  if (text) text.addEventListener('input', () => requeryGraphSoon());
+  for (const id of ['graph-f-scope', 'graph-f-pov', 'graph-f-depth']) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', () => requeryGraphSoon());
+  }
+  for (const id of ['graph-f-weight', 'graph-f-degree']) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', () => requeryGraphSoon());
+  }
+  for (const id of ['graph-f-orphans', 'graph-f-local']) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', () => requeryGraphSoon());
+  }
+  const reset = document.getElementById('graph-f-reset');
+  if (reset) reset.addEventListener('click', () => resetGraphFilters());
 }
 
 /* Custom canvases -------------------------------------------------------- */
@@ -276,8 +354,6 @@ function renderGraphTabs() {
   add.title = 'new hand-drawn graph';
   add.addEventListener('click', () => createCustomGraphFlow());
   bar.appendChild(add);
-  const slider = document.querySelector('.graph-slider-label');
-  if (slider) slider.style.display = graphCustomId === null ? '' : 'none';
   for (const id of ['graph-rename', 'graph-delete']) {
     const btn = document.getElementById(id);
     if (btn) btn.hidden = graphCustomId === null;
@@ -893,8 +969,11 @@ function renderGraph(graph) {
     return;
   }
 
-  const slider = document.getElementById('graph-min-weight');
-  const minWeight = slider ? Number(slider.value) || 1 : 1;
+  // Inferred min weight lives in the filter panel now; custom canvases
+  // draw everything (their edges are hand-placed, weight is fixed).
+  const weightInput = document.getElementById('graph-f-weight');
+  const panelWeight = weightInput ? Math.max(0, Number(weightInput.value) || 0) : 1;
+  const minWeight = graphCustomId === null ? panelWeight : 0;
   const aboveSlider = edges.filter((e) => (e.weight || 0) >= minWeight);
 
   const neighborIds = new Set();
@@ -1016,6 +1095,8 @@ function renderGraph(graph) {
         showEntityInspector(id, node);
       }
       renderGraph(graph);
+      const localBox = document.getElementById('graph-f-local');
+      if (localBox && localBox.checked) requeryGraphSoon();
     });
 
     g.addEventListener('focus', () => {
@@ -1122,19 +1203,27 @@ function renderGraph(graph) {
   });
 
   const legend = document.getElementById('graph-legend');
-  if (!drawnEdges.length && aboveSlider.length === 0 && edges.length > 0) {
-    legend.textContent = 'no links at this weight. lower the slider.';
+  legend.innerHTML = '';
+  if (graphCustomId !== null) return;
+  if (!nodes.length) {
+    const span = document.createElement('span');
+    span.textContent = 'nothing matches. loosen a filter or ';
+    legend.appendChild(span);
+    const reset = document.createElement('button');
+    reset.className = 'btn';
+    reset.textContent = 'reset';
+    reset.addEventListener('click', () => resetGraphFilters());
+    legend.appendChild(reset);
     return;
   }
   const shownEdges = drawnEdges.filter((e) =>
     graphSpotlight === null || e.a === graphSpotlight || e.b === graphSpotlight
   ).length;
-  const kindCounts = {};
-  for (const n of nodes) kindCounts[n.kind] = (kindCounts[n.kind] || 0) + 1;
-  const kindSummary = Object.keys(kindCounts)
-    .sort()
-    .map((k) => `${kindCounts[k]} ${k}${kindCounts[k] === 1 ? '' : 's'}`)
-    .join(' · ');
-  legend.textContent =
-    `${nodes.length} entities (${kindSummary}) · ${shownEdges} of ${edges.length} links shown. solid: @mention · dashed: shared scene.`;
+  const totalNodes = graph.total_nodes ?? graphData.total_nodes ?? nodes.length;
+  const totalEdges = graph.total_edges ?? graphData.total_edges ?? edges.length;
+  let line = `showing ${nodes.length} of ${totalNodes} entities · ${shownEdges} of ${totalEdges} links.`;
+  if (edges.length > 0 && shownEdges === 0) {
+    line += ' no links at this weight. lower min weight.';
+  }
+  legend.textContent = line;
 }

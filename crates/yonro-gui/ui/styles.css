@@ -370,16 +370,6 @@ dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
   flex-wrap: wrap;
   gap: 8px;
 }
-.graph-slider-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 0.82em;
-}
-.graph-slider-label input[type="range"] {
-  width: 90px;
-}
 #graph-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
 #graph-tabs .tab[aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
 #outline-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
