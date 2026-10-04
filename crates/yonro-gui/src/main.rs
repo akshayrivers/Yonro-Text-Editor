@@ -13,8 +13,8 @@ use std::time::Instant;
 use serde::Serialize;
 use tauri::Manager;
 use yonro_core::{
-    api, AltOutlineStore, Buffer, CustomGraphStore, Project, Recents, SceneMetaFields, SessionLog,
-    UndoStack,
+    api, AltOutlineStore, Buffer, CustomGraphStore, Lens, LensStore, Project, Recents,
+    SceneMetaFields, SessionLog, UndoStack,
 };
 
 // ---------------------------------------------------------------------------
@@ -28,6 +28,7 @@ struct AppState {
     sessions: Mutex<SessionLog>,
     graphs: Mutex<CustomGraphStore>,
     outlines: Mutex<AltOutlineStore>,
+    lenses: Mutex<LensStore>,
 }
 
 /// One open document: rope buffer plus coalescing whole-text undo.
@@ -61,6 +62,7 @@ impl AppState {
             CustomGraphStore::load(&CustomGraphStore::file_in(&workspace_dir.join(".yonro")));
         let outlines =
             AltOutlineStore::load(&AltOutlineStore::file_in(&workspace_dir.join(".yonro")));
+        let lenses = LensStore::load(&LensStore::file_in(&workspace_dir.join(".yonro")));
         Self {
             project: Mutex::new(project),
             buffers: Mutex::new(HashMap::new()),
@@ -68,6 +70,7 @@ impl AppState {
             sessions: Mutex::new(sessions),
             graphs: Mutex::new(graphs),
             outlines: Mutex::new(outlines),
+            lenses: Mutex::new(lenses),
         }
     }
 
@@ -313,6 +316,12 @@ fn adopt_project(state: &AppState, project: Project) {
     {
         let mut stored = state.outlines.lock().unwrap_or_else(|e| e.into_inner());
         *stored = AltOutlineStore::load(&outlines_path);
+    }
+    // And for saved lenses.
+    let lenses_path = LensStore::file_in(&state.workspace_root().join(".yonro"));
+    {
+        let mut stored = state.lenses.lock().unwrap_or_else(|e| e.into_inner());
+        *stored = LensStore::load(&lenses_path);
     }
 }
 fn get_workspace_impl(state: &AppState, recents_path: Option<PathBuf>) -> api::WorkspaceDto {
@@ -854,11 +863,12 @@ struct EditDto {
 
 /// Relationship graph: scene texts come from open buffers (path-matched to
 /// scene files) so mentions in *unsaved* drafts still link. A query filters
-/// the view in core (`None` = today's full output).
-#[tauri::command]
-fn get_graph(
-    state: tauri::State<'_, AppState>,
-    query: Option<yonro_core::GraphQuery>,
+/// the view in core (`None` = today's full output); a lens reframes it
+/// (pair rule, story map, or the `"table"` stub for presence lenses).
+fn get_graph_impl(
+    state: &AppState,
+    query: Option<&yonro_core::GraphQuery>,
+    lens: Option<&Lens>,
 ) -> api::GraphDto {
     let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
     let open_texts = state.open_texts();
@@ -867,9 +877,90 @@ fn get_graph(
         &project.manuscript,
         &project.lore,
         &scene_texts,
-        query.as_ref(),
-        None,
+        query,
+        lens,
     )
+}
+
+#[tauri::command]
+fn get_graph(
+    state: tauri::State<'_, AppState>,
+    query: Option<yonro_core::GraphQuery>,
+    lens: Option<Lens>,
+) -> api::GraphDto {
+    get_graph_impl(&state, query.as_ref(), lens.as_ref())
+}
+
+// ---------------------------------------------------------------------------
+// Lenses (builtin views plus workspace-saved customs in lenses.json)
+// ---------------------------------------------------------------------------
+
+/// Persist the in-memory lens store to this workspace's `lenses.json`.
+fn save_lenses(state: &AppState) -> Result<(), String> {
+    let path = LensStore::file_in(&state.workspace_root().join(".yonro"));
+    let lenses = state.lenses.lock().unwrap_or_else(|e| e.into_inner());
+    lenses.save(&path).map_err(|err| err.to_string())
+}
+
+fn list_lenses_impl(state: &AppState) -> Vec<Lens> {
+    let lenses = state.lenses.lock().unwrap_or_else(|e| e.into_inner());
+    yonro_core::builtin_lenses()
+        .into_iter()
+        .chain(lenses.customs().iter().cloned())
+        .collect()
+}
+
+/// Builtin views first, then this workspace's saved customs.
+#[tauri::command]
+fn list_lenses(state: tauri::State<'_, AppState>) -> Vec<Lens> {
+    list_lenses_impl(&state)
+}
+
+fn get_presence_impl(state: &AppState) -> api::PresenceDto {
+    let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+    let open_texts = state.open_texts();
+    let scene_texts = api::gather_scene_texts(&project, &open_texts);
+    api::presence_dto(&project.manuscript, &project.lore, &scene_texts)
+}
+
+/// Entity × act/chapter presence matrix for the presence lens.
+#[tauri::command]
+fn get_presence(state: tauri::State<'_, AppState>, lens: Option<Lens>) -> api::PresenceDto {
+    let _ = lens;
+    get_presence_impl(&state)
+}
+
+fn save_lens_impl(state: &AppState, name: &str, lens: Lens) -> Result<(), String> {
+    {
+        let mut lenses = state.lenses.lock().unwrap_or_else(|e| e.into_inner());
+        lenses
+            .save_lens(Lens {
+                name: name.trim().to_string(),
+                ..lens
+            })
+            .map_err(|err| err.to_string())?;
+    }
+    save_lenses(state)
+}
+
+/// Save a lens under `name` (rejects blanks, duplicates, past 24).
+#[tauri::command]
+fn save_lens(state: tauri::State<'_, AppState>, name: String, lens: Lens) -> Result<(), String> {
+    save_lens_impl(&state, &name, lens)
+}
+
+fn delete_lens_impl(state: &AppState, name: &str) -> Result<(), String> {
+    {
+        let mut lenses = state.lenses.lock().unwrap_or_else(|e| e.into_inner());
+        lenses.delete_lens(name).map_err(|err| err.to_string())?;
+    }
+    save_lenses(state)
+}
+
+/// Delete a saved lens (builtins refuse).
+#[tauri::command]
+fn delete_lens(state: tauri::State<'_, AppState>, name: String) -> Result<(), String> {
+    delete_lens_impl(&state, name.trim())
 }
 
 /// Outline-ordered timeline plus continuity notes.
@@ -1809,6 +1900,10 @@ fn main() {
             redo_buffer,
             get_graph,
             get_timeline,
+            list_lenses,
+            get_presence,
+            save_lens,
+            delete_lens,
             list_custom_graphs,
             create_custom_graph,
             rename_custom_graph,
@@ -2549,6 +2644,70 @@ mod tests {
         assert_eq!(pruned.children.len(), 1);
         assert!(alt_remove_node_impl(&state, 999, act).is_err());
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn lens_impls_filter_save_and_refuse_builtins() {
+        let (state, _path) = scene_workspace();
+        let dir = state.workspace_root();
+        {
+            let mut project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+            project.add_entity("character", "Mara").unwrap();
+            project.add_entity("place", "Mill farm").unwrap();
+            // Link them: lone entities form no edges, so the scene gets
+            // a setting to share with its POV.
+            let root = project.manuscript.root();
+            let act = project.manuscript.children(root)[0].id;
+            let ch = project.manuscript.children(act)[0].id;
+            let scene = project.manuscript.children(ch)[0].id;
+            let mut meta = project.manuscript.get(scene).unwrap().meta.clone().unwrap();
+            meta.setting = "Mill farm".to_string();
+            project.manuscript.set_meta(scene, meta).unwrap();
+        }
+        let cast = Lens {
+            name: "Cast".to_string(),
+            engine: yonro_core::Engine::Entity,
+            kinds_a: vec!["character".to_string()],
+            kinds_b: vec![],
+        };
+        // No character-character edge: pair view empty, totals survive.
+        let dto = get_graph_impl(&state, None, Some(&cast));
+        assert!(dto.nodes.is_empty());
+        assert_eq!((dto.total_nodes, dto.total_edges), (2, 1));
+        assert_eq!(dto.layout.as_str(), "force");
+        // Story map names the one scene; presence names Mara.
+        let map = Lens {
+            name: "Story map".to_string(),
+            engine: yonro_core::Engine::Scene,
+            kinds_a: vec![],
+            kinds_b: vec![],
+        };
+        let dto = get_graph_impl(&state, None, Some(&map));
+        assert_eq!(dto.layout.as_str(), "ordered");
+        assert_eq!(dto.nodes.len(), 1);
+        assert_eq!(dto.nodes[0].kind.as_str(), "scene");
+        let matrix = get_presence_impl(&state);
+        assert!(matrix.rows.iter().any(|row| row.name == "Mara"));
+        // Save/duplicate/delete flow with persistence across reload.
+        let mine = Lens {
+            name: "Mine".to_string(),
+            engine: yonro_core::Engine::Entity,
+            kinds_a: vec!["character".to_string()],
+            kinds_b: vec!["place".to_string()],
+        };
+        save_lens_impl(&state, "Mine", mine).unwrap();
+        assert!(save_lens_impl(&state, "mine", cast.clone()).is_err());
+        let listed = list_lenses_impl(&state);
+        assert!(listed.len() >= 7);
+        assert!(listed.iter().any(|lens| lens.name == "Mine"));
+        assert!(delete_lens_impl(&state, "Cast").is_err());
+        delete_lens_impl(&state, "Mine").unwrap();
+        assert!(delete_lens_impl(&state, "Mine").is_err());
+        let reloaded = AppState::load(dir.clone());
+        assert!(list_lenses_impl(&reloaded)
+            .iter()
+            .all(|lens| lens.name != "Mine"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
