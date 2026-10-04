@@ -136,8 +136,8 @@ body.hide-inspector #inspector, body.hide-inspector #split-inspector { display: 
 #editor-wrap {
   position: relative;
   width: 100%;
-  max-width: var(--measure);
-  margin: 0 auto;
+  max-width: 100%;
+  margin: 0;
   flex: 1 1 auto;
   display: flex;
   min-height: 30vh;
@@ -212,7 +212,7 @@ body.hide-inspector #inspector, body.hide-inspector #split-inspector { display: 
   border-color: transparent;
   resize: none;
 }
-#doc-status { margin-top: 6px; font-size: 12px; max-width: var(--measure); margin-left: auto; margin-right: auto; }
+#doc-status { margin-top: 6px; font-size: 12px; }
 #zen-count { display: none; }
 
 /* Outline */
@@ -1015,8 +1015,7 @@ body.zen #zen-count {
   display: flex;
   gap: 6px;
   align-items: center;
-  max-width: var(--measure);
-  margin: 0 auto 8px;
+  margin: 0 0 8px;
 }
 #find-bar[hidden] { display: none; }
 #find-input {
