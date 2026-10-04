@@ -1012,6 +1012,47 @@ fn get_mentions(
     get_mentions_impl(&state, buffer_id)
 }
 
+fn search_buffer_impl(
+    state: &AppState,
+    buffer_id: usize,
+    query: String,
+    case_sensitive: bool,
+) -> Result<Vec<api::BufferHitDto>, String> {
+    let text = with_buffer(state, buffer_id, |buf| buf.buffer.text())?;
+    Ok(api::search_buffer_dto(&text, &query, case_sensitive))
+}
+
+/// Literal matches in one buffer as UTF-16 offsets (find-bar highlights).
+#[tauri::command]
+fn search_buffer(
+    state: tauri::State<'_, AppState>,
+    buffer_id: usize,
+    query: String,
+    case_sensitive: bool,
+) -> Result<Vec<api::BufferHitDto>, String> {
+    search_buffer_impl(&state, buffer_id, query, case_sensitive)
+}
+
+fn search_project_impl(
+    state: &AppState,
+    query: String,
+    case_sensitive: bool,
+) -> Vec<api::ProjectHitDto> {
+    let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+    let open_texts = state.open_texts();
+    api::search_project_dto(&project, &open_texts, &query, case_sensitive)
+}
+
+/// Project-wide literal search (open buffers win; capped server-side).
+#[tauri::command]
+fn search_project(
+    state: tauri::State<'_, AppState>,
+    query: String,
+    case_sensitive: bool,
+) -> Vec<api::ProjectHitDto> {
+    search_project_impl(&state, query, case_sensitive)
+}
+
 fn save_project_on_exit(window: &tauri::Window) {
     let state = window.state::<AppState>();
     let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
@@ -1063,6 +1104,8 @@ fn main() {
             lore_search,
             get_entity,
             get_mentions,
+            search_buffer,
+            search_project,
             sweep_recovery,
             check_recovery,
             discard_recovery
@@ -1480,6 +1523,23 @@ mod tests {
         remove_entity_impl(&state, mara.id).unwrap();
         assert!(get_entity_impl(&state, mara.id).is_err());
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn search_impls_hit_open_buffers_and_name_unknown() {
+        let (state, path) = scene_workspace();
+        let dir = state.workspace_root();
+        let opened = open_file_impl(&state, Some(path.to_string_lossy().to_string())).unwrap();
+        set_text_impl(&state, opened.buffer_id, "Mara met Mara".to_string()).unwrap();
+        let hits = search_buffer_impl(&state, opened.buffer_id, "Mara".to_string(), true).unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!((hits[0].start, hits[0].end), (0, 4));
+        assert!(search_buffer_impl(&state, 999, "Mara".to_string(), true).is_err());
+        // Unsaved buffer text wins over disk in project search.
+        let found = search_project_impl(&state, "Mara".to_string(), true);
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].line, 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

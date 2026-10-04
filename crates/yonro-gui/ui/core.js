@@ -40,6 +40,8 @@ const core = {
   loreSearch: (prefix, limit) => core.invoke('lore_search', { prefix, limit: limit ?? null }),
   getEntity: (id) => core.invoke('get_entity', { id }),
   getMentions: (bufferId) => core.invoke('get_mentions', { bufferId }),
+  searchBuffer: (bufferId, query, caseSensitive) => core.invoke('search_buffer', { bufferId, query, caseSensitive: Boolean(caseSensitive) }),
+  searchProject: (query, caseSensitive) => core.invoke('search_project', { query, caseSensitive: Boolean(caseSensitive) }),
   onCloseRequested: (handler) => {
     try {
       const api = window.__TAURI__ && window.__TAURI__.window;
