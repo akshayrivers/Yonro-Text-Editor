@@ -421,6 +421,189 @@ function showMentionAtCaret() {
   if (m && typeof showEntityInspector === 'function') showEntityInspector(m.entity_id);
 }
 
+/* @mention autocomplete (P4.5b): `@` + chars before the caret (UI-only
+ * regex approximating core is_mention_char) → core.loreSearch(prefix, 8).
+ * Popup anchors near the caret via the typewriter mirror; fallback pins it
+ * to the bottom-left of the editor wrap (above the statusline).
+ */
+let mentionPopup = null;
+let mentionSearchSeq = 0;
+
+function mentionQueryAtCaret() {
+  if (!editor || activeDoc === null) return null;
+  const caret = editor.selectionStart;
+  if (caret === null || caret === undefined || editor.selectionEnd !== caret) return null;
+  const before = editor.value.slice(0, caret);
+  const m = before.match(/@([\p{L}\p{N}_'.\-]*)$/u);
+  if (!m) return null;
+  return { prefix: m[1], start: caret - m[0].length };
+}
+
+function ensureMentionPopup() {
+  let pop = document.getElementById('mention-popup');
+  if (pop) return pop;
+  pop = document.createElement('div');
+  pop.id = 'mention-popup';
+  pop.setAttribute('role', 'listbox');
+  pop.setAttribute('aria-label', 'mention suggestions');
+  pop.hidden = true;
+  const wrap = document.getElementById('editor-wrap');
+  (wrap || document.body).appendChild(pop);
+  return pop;
+}
+
+function hideMentionPopup() {
+  const pop = document.getElementById('mention-popup');
+  if (pop) pop.hidden = true;
+  mentionPopup = null;
+  if (editor) editor.removeAttribute('aria-activedescendant');
+}
+
+function caretPopupAnchor() {
+  try {
+    const mirror = ensureMirror();
+    syncMirrorStyle(mirror);
+    mirror.textContent = '';
+    mirror.appendChild(document.createTextNode(editor.value.slice(0, editor.selectionStart ?? 0)));
+    const span = document.createElement('span');
+    span.textContent = 'x';
+    mirror.appendChild(span);
+    const cs = getComputedStyle(editor);
+    const parsed = parseFloat(cs.lineHeight);
+    const lineH = Number.isFinite(parsed) ? parsed : 24;
+    return { x: span.offsetLeft, y: span.offsetTop, h: span.offsetHeight || lineH, lineH };
+  } catch (err) {
+    void err;
+    return null;
+  }
+}
+
+async function maybeShowMentionPopup() {
+  const q = mentionQueryAtCaret();
+  if (!q) {
+    hideMentionPopup();
+    return;
+  }
+  const seq = ++mentionSearchSeq;
+  let items = [];
+  try {
+    items = await core.loreSearch(q.prefix, 8);
+  } catch (err) {
+    void err;
+    hideMentionPopup();
+    return;
+  }
+  if (seq !== mentionSearchSeq) return;
+  const now = mentionQueryAtCaret();
+  if (!now || now.prefix !== q.prefix) return;
+  if (!items || !items.length) {
+    hideMentionPopup();
+    return;
+  }
+  mentionPopup = { prefix: q.prefix, start: q.start, items, active: 0 };
+  renderMentionPopup();
+}
+
+function renderMentionPopup() {
+  const pop = ensureMentionPopup();
+  if (!mentionPopup || !mentionPopup.items.length) {
+    hideMentionPopup();
+    return;
+  }
+  pop.innerHTML = '';
+  mentionPopup.items.forEach((item, i) => {
+    const opt = document.createElement('div');
+    opt.id = `mention-opt-${i}`;
+    opt.setAttribute('role', 'option');
+    opt.setAttribute('aria-selected', i === mentionPopup.active ? 'true' : 'false');
+    opt.className = 'mention-opt' + (i === mentionPopup.active ? ' active' : '');
+    const name = document.createElement('span');
+    name.textContent = `@${item.name}`;
+    opt.appendChild(name);
+    const kind = document.createElement('span');
+    kind.className = 'muted';
+    kind.textContent = ` ${item.kind}`;
+    opt.appendChild(kind);
+    if (item.matched_alias) {
+      const alias = document.createElement('span');
+      alias.className = 'muted';
+      alias.textContent = ` · ${item.matched_alias}`;
+      opt.appendChild(alias);
+    }
+    opt.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      if (mentionPopup) mentionPopup.active = i;
+      commitMentionPopup();
+    });
+    pop.appendChild(opt);
+  });
+  editor.setAttribute('aria-activedescendant', `mention-opt-${mentionPopup.active}`);
+  const wrap = document.getElementById('editor-wrap');
+  const wrapW = wrap ? wrap.clientWidth : 600;
+  const wrapH = wrap ? wrap.clientHeight : 400;
+  const anchor = caretPopupAnchor();
+  if (anchor) {
+    const x = Math.max(8, Math.min(anchor.x - editor.scrollLeft, wrapW - 240));
+    let y = anchor.y - editor.scrollTop + anchor.lineH + 4;
+    if (y > wrapH - 60) y = Math.max(8, anchor.y - editor.scrollTop - 150);
+    pop.style.left = `${x}px`;
+    pop.style.top = `${y}px`;
+  } else {
+    pop.style.left = '8px';
+    pop.style.top = `${Math.max(8, wrapH - 160)}px`;
+  }
+  pop.hidden = false;
+}
+
+function commitMentionPopup() {
+  if (!mentionPopup || !editor) return;
+  const item = mentionPopup.items[mentionPopup.active];
+  if (!item) {
+    hideMentionPopup();
+    return;
+  }
+  const caret = editor.selectionStart ?? 0;
+  editor.setRangeText(`@${item.name}`, mentionPopup.start, caret, 'end');
+  hideMentionPopup();
+  editor.dispatchEvent(new Event('input'));
+  editor.focus();
+}
+
+/* Popup-first keys. Returns true when the key was consumed. */
+function handleMentionPopupKey(e) {
+  if (!mentionPopup) return false;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    e.stopPropagation();
+    const n = mentionPopup.items.length;
+    mentionPopup.active = e.key === 'ArrowDown'
+      ? (mentionPopup.active + 1) % n
+      : (mentionPopup.active - 1 + n) % n;
+    renderMentionPopup();
+    return true;
+  }
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    e.stopPropagation();
+    commitMentionPopup();
+    return true;
+  }
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    e.stopPropagation();
+    const item = mentionPopup.items[mentionPopup.active];
+    if (item && typeof showEntityInspector === 'function') showEntityInspector(item.id);
+    return true;
+  }
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    e.stopPropagation();
+    hideMentionPopup();
+    return true;
+  }
+  return false;
+}
+
 function scheduleSync() {
   syncPending = true;
   lastEditAt = Date.now();
@@ -512,6 +695,7 @@ function adoptOpened(opened) {
   renderTabs();
   renderStatus(opened.stats);
   show('write');
+  hideMentionPopup();
   refreshMentionsNow();
   if (typeof refreshBinder === 'function') refreshBinder();
   if (opened.path) maybeOfferRecovery(opened.buffer_id, opened.path);
@@ -551,6 +735,7 @@ async function activateDoc(id) {
   }
   syncPending = false;
   renderStatus(docStats.get(id) || lastStats);
+  hideMentionPopup();
   refreshMentionsNow();
   const doc = docs.get(id);
   if (doc) {
@@ -576,6 +761,7 @@ editor.addEventListener('input', () => {
   updateCaret();
   scheduleSync();
   markMentionsStale();
+  maybeShowMentionPopup();
 });
 
 editor.addEventListener('click', () => {
@@ -586,6 +772,7 @@ editor.addEventListener('keyup', (e) => {
   updateCaret();
   if (e && e.key && (e.key.indexOf('Arrow') === 0 || e.key === 'Home' || e.key === 'End')) {
     showMentionAtCaret();
+    if (!mentionPopup) maybeShowMentionPopup();
   }
 });
 editor.addEventListener('scroll', syncBackdropScroll, { passive: true });
@@ -595,6 +782,7 @@ document.addEventListener('selectionchange', () => {
 });
 
 editor.addEventListener('keydown', async (e) => {
+  if (mentionPopup && handleMentionPopupKey(e)) return;
   if (e.key === 'Tab') {
     e.preventDefault();
     const { selectionStart: s, selectionEnd: t } = editor;

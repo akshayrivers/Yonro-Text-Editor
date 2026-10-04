@@ -169,6 +169,28 @@ body.hide-inspector #inspector, body.hide-inspector #split-inspector { display: 
 #editor-backdrop mark.mention.k-faction { border-bottom-color: var(--k-faction); }
 #editor-backdrop mark.mention.k-item { border-bottom-color: var(--k-item); }
 #editor-backdrop mark.mention.k-lore { border-bottom-color: var(--k-lore); }
+/* @mention autocomplete popup */
+#mention-popup {
+  position: absolute;
+  z-index: 20;
+  min-width: 200px;
+  max-width: 280px;
+  max-height: 240px;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 4px;
+}
+.mention-opt {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.mention-opt.active { background: var(--selection); }
 #editor {
   position: relative;
   display: block;
