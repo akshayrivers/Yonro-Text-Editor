@@ -12,6 +12,8 @@
 //! Inputs are plain data (`&Manuscript`, `&LoreBook`, scene texts), so the
 //! same computation serves the TUI, the Tauri GUI, and a future web build.
 
+pub mod query;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -75,8 +77,13 @@ impl fmt::Display for GraphError {
 
 impl std::error::Error for GraphError {}
 
+/// Entity presence: entity -> scenes present.
+pub(crate) type Presence = BTreeMap<EntityId, BTreeSet<NodeId>>;
+/// Directed mention pairs: (mentioner, mentioned) -> scenes.
+pub(crate) type Mentions = BTreeMap<(EntityId, EntityId), BTreeSet<NodeId>>;
+
 /// Computed relationship graph: nodes are lore entity ids.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Graph {
     /// lore entity ids present in at least one scene.
     pub nodes: BTreeSet<EntityId>,
@@ -85,18 +92,14 @@ pub struct Graph {
 }
 
 impl Graph {
-    /// Build from manuscript structure + lore + draft texts.
-    ///
-    /// `scene_texts` maps scene [`NodeId`] to its current draft text
-    /// (frontends sync this from live buffers; missing scenes simply
-    /// contribute POV/setting presence without mention edges).
-    /// Unknown/dead scenes in the map are ignored.
-    #[must_use]
-    pub fn build(
+    /// Per-scene evidence behind a graph: entity presence plus directed
+    /// mention pairs, both as scene sets. Shared by `build` and filtered
+    /// views (`query::apply`) so both see identical facts.
+    pub(crate) fn evidence(
         manuscript: &Manuscript,
         lore: &LoreBook,
         scene_texts: &BTreeMap<NodeId, String>,
-    ) -> Self {
+    ) -> (Presence, Mentions) {
         // entity -> scenes present; (pov, mentioned) -> scenes.
         let mut presence: BTreeMap<EntityId, BTreeSet<NodeId>> = BTreeMap::new();
         let mut mentions: BTreeMap<(EntityId, EntityId), BTreeSet<NodeId>> = BTreeMap::new();
@@ -144,6 +147,22 @@ impl Graph {
                 presence.entry(*id).or_default().insert(scene_id);
             }
         }
+        (presence, mentions)
+    }
+
+    /// Build from manuscript structure + lore + draft texts.
+    ///
+    /// `scene_texts` maps scene [`NodeId`] to its current draft text
+    /// (frontends sync this from live buffers; missing scenes simply
+    /// contribute POV/setting presence without mention edges).
+    /// Unknown/dead scenes in the map are ignored.
+    #[must_use]
+    pub fn build(
+        manuscript: &Manuscript,
+        lore: &LoreBook,
+        scene_texts: &BTreeMap<NodeId, String>,
+    ) -> Self {
+        let (presence, mentions) = Self::evidence(manuscript, lore, scene_texts);
 
         // Co-occurrence: every pair sharing ≥1 scene.
         let mut cooccur: BTreeMap<(EntityId, EntityId), BTreeSet<NodeId>> = BTreeMap::new();
