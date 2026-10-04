@@ -340,6 +340,10 @@ let mentionSpans = [];
 let mentionSeq = 0;
 let mentionRefreshFn = null;
 
+/* Find-bar matches (P5.3, owned by find.js UI): painted with mentions. */
+let findSpans = [];
+let findCurrent = -1;
+
 function editorBackdrop() {
   return document.getElementById('editor-backdrop');
 }
@@ -379,23 +383,42 @@ async function refreshMentionsNow() {
 
 function renderMentions(spans) {
   mentionSpans = Array.isArray(spans) ? spans : [];
+  paintBackdrop();
+}
+
+/* One backdrop for mentions + find matches (same layer, no nesting).
+ * Priority on overlap: current find, then find, then mention.
+ */
+function paintBackdrop() {
   const bd = editorBackdrop();
   if (!bd || !editor) return;
   bd.classList.remove('stale');
   const text = editor.value;
+  const marks = [];
   const sorted = mentionSpans.slice().sort((a, b) => a.start - b.start);
+  for (const m of sorted) {
+    const kind = String(m.kind || 'lore').toLowerCase();
+    marks.push({ start: m.start, end: m.end, cls: `mention k-${kind}`, ent: m.entity_id, pri: 0 });
+  }
+  findSpans.forEach((span, i) => {
+    marks.push({
+      start: span.start,
+      end: span.end,
+      cls: i === findCurrent ? 'find current' : 'find',
+      ent: null,
+      pri: i === findCurrent ? 2 : 1,
+    });
+  });
+  marks.sort((a, b) => (a.start - b.start) || (b.pri - a.pri));
   let html = '';
   let at = 0;
-  for (const m of sorted) {
+  for (const m of marks) {
     const start = Math.max(0, Math.min(m.start, text.length));
     const end = Math.max(start, Math.min(m.end, text.length));
-    if (start < at) continue;
+    if (start < at || start >= end) continue;
     html += esc(text.slice(at, start));
-    const kind = String(m.kind || 'lore').toLowerCase();
-    const ent = (m.entity_id === null || m.entity_id === undefined)
-      ? ''
-      : ` data-entity="${m.entity_id}"`;
-    html += `<mark class="mention k-${esc(kind)}"${ent}>${esc(text.slice(start, end))}</mark>`;
+    const ent = (m.ent === null || m.ent === undefined) ? '' : ` data-entity="${m.ent}"`;
+    html += `<mark class="${esc(m.cls)}"${ent}>${esc(text.slice(start, end))}</mark>`;
     at = end;
   }
   html += esc(text.slice(at));
@@ -697,6 +720,7 @@ function adoptOpened(opened) {
   show('write');
   hideMentionPopup();
   refreshMentionsNow();
+  if (typeof maybeRefreshFind === 'function') maybeRefreshFind();
   if (typeof refreshBinder === 'function') refreshBinder();
   if (opened.path) maybeOfferRecovery(opened.buffer_id, opened.path);
 }
@@ -721,6 +745,39 @@ async function openSceneDoc(id) {
   }
 }
 
+/* 1-based line + 1-based UTF-16 cols → absolute JS string offsets. */
+function lineColToOffsets(text, line, colStart, colEnd) {
+  const lines = String(text || '').split('\n');
+  const idx = Math.min(Math.max(line - 1, 0), lines.length - 1);
+  let at = 0;
+  for (let i = 0; i < idx; i++) at += lines[i].length + 1;
+  const len = lines[idx] ? lines[idx].length : 0;
+  const s = Math.min(Math.max(colStart - 1, 0), len);
+  const e = Math.min(Math.max(colEnd - 1, s), len);
+  return { start: at + s, end: at + e };
+}
+
+/* Palette "/" jump: open the scene, then select the hit range. */
+async function openSceneAndSelectRange(sceneId, line, colStart, colEnd) {
+  let opened = null;
+  try {
+    await flushSync();
+    opened = await core.openScene(sceneId);
+  } catch (err) {
+    setMessage(`could not open scene: ${err}`, { error: true });
+    return;
+  }
+  const abs = lineColToOffsets(opened.text, line, colStart, colEnd);
+  adoptOpened(opened);
+  try {
+    editor.focus();
+    editor.setSelectionRange(abs.start, abs.end);
+    updateCaret();
+  } catch (err) {
+    void err;
+  }
+}
+
 async function activateDoc(id) {
   if (!docs.has(id)) return;
   if (id !== activeDoc) await flushSync();
@@ -737,6 +794,7 @@ async function activateDoc(id) {
   renderStatus(docStats.get(id) || lastStats);
   hideMentionPopup();
   refreshMentionsNow();
+  if (typeof maybeRefreshFind === 'function') maybeRefreshFind();
   const doc = docs.get(id);
   if (doc) {
     const stFile = document.getElementById('st-file');
@@ -761,6 +819,7 @@ editor.addEventListener('input', () => {
   updateCaret();
   scheduleSync();
   markMentionsStale();
+  if (typeof maybeRefreshFindSoon === 'function') maybeRefreshFindSoon();
   maybeShowMentionPopup();
 });
 

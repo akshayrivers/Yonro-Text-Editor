@@ -59,8 +59,15 @@
           <button id="btn-new" title="New untitled document">New</button>
           <button id="btn-close" title="Close current document">Close</button>
         </div>
-        <div id="editor-wrap"><div id="editor-backdrop" aria-hidden="true"></div><textarea id="editor" spellcheck="true" placeholder="Once upon a time…"></textarea></div>
-        <div id="doc-status" class="muted" aria-label="Document statistics"></div>
+        <div id="find-bar" hidden>
+          <input id="find-input" type="text" aria-label="find in document" placeholder="find" />
+          <span id="find-count" class="muted" aria-live="polite">0/0</span>
+          <button id="find-prev" title="Previous match (Shift+Enter)">prev</button>
+          <button id="find-next" title="Next match (Enter)">next</button>
+          <button id="find-case" title="Match case" aria-pressed="false">Aa</button>
+          <button id="find-close" title="Close find (Esc)">close</button>
+        </div>
+        <div id="editor-wrap"><div id="editor-backdrop" aria-hidden="true"></div><textarea id="editor" spellcheck="true" placeholder="Once upon a time…"></textarea></div>        <div id="doc-status" class="muted" aria-label="Document statistics"></div>
         <div id="zen-count" class="muted" aria-label="Word count"></div>
       </section>
 
@@ -159,6 +166,7 @@
   <script src="inspector.js" defer></script>
   <script src="workspace.js" defer></script>
   <script src="palette.js" defer></script>
+  <script src="find.js" defer></script>
   <script src="app.js" defer></script>
 </body>
 </html>
