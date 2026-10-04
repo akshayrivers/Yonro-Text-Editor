@@ -156,6 +156,18 @@ function renderSceneInspector(box, detail, names) {
   err.hidden = true;
   form.appendChild(err);
   box.appendChild(form);
+  const histHead = document.createElement('div');
+  histHead.className = 'inspector-subhead';
+  histHead.textContent = 'history';
+  box.appendChild(histHead);
+  const histList = document.createElement('div');
+  histList.className = 'history-list';
+  const loading = document.createElement('p');
+  loading.className = 'muted';
+  loading.textContent = 'loading…';
+  histList.appendChild(loading);
+  box.appendChild(histList);
+  loadSceneHistory(detail.id, detail.file, histList);
   for (const input of fields) {
     input.addEventListener('blur', () => {
       if (input.dataset.skipBlur) {
@@ -360,4 +372,91 @@ function renderEntityInspector(box, detail, neighbors) {
     if (typeof selectLoreEntity === 'function') selectLoreEntity(detail.id);
   });
   box.appendChild(openLoreBtn);
+}
+
+/* Scene history (P5.6): snapshot list (timestamp + words) with restore.
+ * Restores adopt into the open buffer when present (dirty until saved),
+ * otherwise open the scene from the restored disk text.
+ */
+
+function historyDisplayName(name) {
+  const stem = String(name || '').replace(/\.md$/, '');
+  const secs = Number(stem.split('-')[0]);
+  if (Number.isFinite(secs) && secs > 0) {
+    try {
+      return new Date(secs * 1000).toLocaleString();
+    } catch (err) {
+      void err;
+    }
+  }
+  return name;
+}
+
+async function loadSceneHistory(sceneId, file, list) {
+  list.innerHTML = '';
+  let entries = [];
+  try {
+    entries = await core.history(sceneId);
+  } catch (err) {
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = `history unavailable: ${err}`;
+    list.appendChild(p);
+    return;
+  }
+  if (!entries.length) {
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = 'no snapshots yet. snapshots land on save, ten minutes apart.';
+    list.appendChild(p);
+    return;
+  }
+  for (const entry of entries) {
+    const row = document.createElement('div');
+    row.className = 'history-row';
+    const label = document.createElement('span');
+    label.textContent = `${historyDisplayName(entry.name)} · ${entry.words} words`;
+    row.appendChild(label);
+    const btn = document.createElement('button');
+    btn.textContent = 'restore';
+    btn.setAttribute('aria-label', `restore snapshot ${entry.name}`);
+    btn.addEventListener('click', () => restoreSceneSnapshot(sceneId, file, entry.name));
+    row.appendChild(btn);
+    list.appendChild(row);
+  }
+}
+
+async function restoreSceneSnapshot(sceneId, file, name) {
+  let text = null;
+  try {
+    text = await core.restoreSnapshot(sceneId, name);
+  } catch (err) {
+    setMessage(`restore failed: ${err}`, { error: true });
+    return;
+  }
+  let target = null;
+  for (const [id, doc] of docs) {
+    if (doc.path === file) {
+      target = id;
+      break;
+    }
+  }
+  if (target === null) {
+    if (typeof openSceneDoc === 'function') openSceneDoc(sceneId);
+  } else {
+    if (target !== activeDoc) await activateDoc(target);
+    applyingRemote = true;
+    editor.value = text;
+    applyingRemote = false;
+    docCache.set(target, text);
+    syncPending = false;
+    markDirtyLocal(target);
+    scheduleSync();
+    refreshMentionsNow();
+    renderTabs();
+    updateCaret();
+  }
+  setMessage(`restored ${historyDisplayName(name)} — save to keep it.`);
+  if (typeof refreshBinder === 'function') refreshBinder();
+  showInspectorFor(sceneId);
 }

@@ -1008,3 +1008,17 @@ body.zen #zen-count {
   border-bottom-color: var(--accent);
   background: var(--accent-dim);
 }
+
+/* Scene history (P5.6) */
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+.history-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
