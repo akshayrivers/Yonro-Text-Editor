@@ -32,6 +32,7 @@ pub mod prelude;
 pub mod project;
 pub mod recents;
 pub mod search;
+pub mod session;
 pub mod timeline;
 
 pub use annotatedstring::AnnotatedString;
@@ -55,4 +56,5 @@ pub use manuscript::{Manuscript, ManuscriptError, Node, NodeId, NodeKind, SceneM
 pub use project::{Project, ProjectError, SceneMetaFields};
 pub use recents::{RecentEntry, Recents, RecentsError, MAX_RECENTS};
 pub use search::{ProjectHit, Utf16Span, EXCERPT_CHARS, MAX_PROJECT_HITS};
+pub use session::{DayRecord, SessionLog};
 pub use timeline::{ContinuityNote, Timeline, TimelineEntry};
