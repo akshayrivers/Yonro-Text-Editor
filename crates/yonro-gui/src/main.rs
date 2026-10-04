@@ -13,7 +13,8 @@ use std::time::Instant;
 use serde::Serialize;
 use tauri::Manager;
 use yonro_core::{
-    api, Buffer, CustomGraphStore, Project, Recents, SceneMetaFields, SessionLog, UndoStack,
+    api, AltOutlineStore, Buffer, CustomGraphStore, Project, Recents, SceneMetaFields, SessionLog,
+    UndoStack,
 };
 
 // ---------------------------------------------------------------------------
@@ -26,6 +27,7 @@ struct AppState {
     next_buffer: Mutex<usize>,
     sessions: Mutex<SessionLog>,
     graphs: Mutex<CustomGraphStore>,
+    outlines: Mutex<AltOutlineStore>,
 }
 
 /// One open document: rope buffer plus coalescing whole-text undo.
@@ -57,12 +59,15 @@ impl AppState {
         project.warnings.append(&mut session_warnings);
         let graphs =
             CustomGraphStore::load(&CustomGraphStore::file_in(&workspace_dir.join(".yonro")));
+        let outlines =
+            AltOutlineStore::load(&AltOutlineStore::file_in(&workspace_dir.join(".yonro")));
         Self {
             project: Mutex::new(project),
             buffers: Mutex::new(HashMap::new()),
             next_buffer: Mutex::new(0),
             sessions: Mutex::new(sessions),
             graphs: Mutex::new(graphs),
+            outlines: Mutex::new(outlines),
         }
     }
 
@@ -303,8 +308,13 @@ fn adopt_project(state: &AppState, project: Project) {
         let mut stored = state.graphs.lock().unwrap_or_else(|e| e.into_inner());
         *stored = CustomGraphStore::load(&graphs_path);
     }
+    // Same for alternate outlines.
+    let outlines_path = AltOutlineStore::file_in(&state.workspace_root().join(".yonro"));
+    {
+        let mut stored = state.outlines.lock().unwrap_or_else(|e| e.into_inner());
+        *stored = AltOutlineStore::load(&outlines_path);
+    }
 }
-
 fn get_workspace_impl(state: &AppState, recents_path: Option<PathBuf>) -> api::WorkspaceDto {
     let recents = recents_path.map_or_else(Recents::new, |path| Recents::load(&path));
     let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
@@ -1079,6 +1089,79 @@ fn remove_graph_edge(
 }
 
 // ---------------------------------------------------------------------------
+// Alternate outlines (second trees; the manuscript stays exactly one)
+// ---------------------------------------------------------------------------
+
+/// Persist the in-memory outline store to this workspace's file.
+fn save_outlines(state: &AppState) -> Result<(), String> {
+    let path = AltOutlineStore::file_in(&state.workspace_root().join(".yonro"));
+    let outlines = state.outlines.lock().unwrap_or_else(|e| e.into_inner());
+    outlines.save(&path).map_err(|err| err.to_string())
+}
+
+fn list_alt_outlines_impl(state: &AppState) -> Vec<yonro_core::AltOutline> {
+    state
+        .outlines
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .list()
+        .to_vec()
+}
+
+/// Every alternate outline, creation order first.
+#[tauri::command]
+fn list_alt_outlines(state: tauri::State<'_, AppState>) -> Vec<yonro_core::AltOutline> {
+    list_alt_outlines_impl(&state)
+}
+
+fn create_alt_outline_impl(state: &AppState, title: &str) -> Result<usize, String> {
+    let id = {
+        let mut outlines = state.outlines.lock().unwrap_or_else(|e| e.into_inner());
+        outlines.create(title).map_err(|err| err.to_string())?
+    };
+    save_outlines(state)?;
+    Ok(id)
+}
+
+/// Create an empty alternate outline.
+#[tauri::command]
+fn create_alt_outline(state: tauri::State<'_, AppState>, title: String) -> Result<usize, String> {
+    create_alt_outline_impl(&state, &title)
+}
+
+fn rename_alt_outline_impl(state: &AppState, id: usize, title: &str) -> Result<(), String> {
+    {
+        let mut outlines = state.outlines.lock().unwrap_or_else(|e| e.into_inner());
+        outlines.rename(id, title).map_err(|err| err.to_string())?;
+    }
+    save_outlines(state)
+}
+
+/// Rename an alternate outline.
+#[tauri::command]
+fn rename_alt_outline(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+    title: String,
+) -> Result<(), String> {
+    rename_alt_outline_impl(&state, id, &title)
+}
+
+fn delete_alt_outline_impl(state: &AppState, id: usize) -> Result<(), String> {
+    {
+        let mut outlines = state.outlines.lock().unwrap_or_else(|e| e.into_inner());
+        outlines.remove(id).map_err(|err| err.to_string())?;
+    }
+    save_outlines(state)
+}
+
+/// Delete an alternate outline (draft files stay on disk).
+#[tauri::command]
+fn delete_alt_outline(state: tauri::State<'_, AppState>, id: usize) -> Result<(), String> {
+    delete_alt_outline_impl(&state, id)
+}
+
+// ---------------------------------------------------------------------------
 // Structure editing (thin over `Project`; every mutation persists and
 // returns the fresh outline so the UI re-renders from truth)
 // ---------------------------------------------------------------------------
@@ -1513,6 +1596,10 @@ fn main() {
             remove_graph_node,
             add_graph_edge,
             remove_graph_edge,
+            list_alt_outlines,
+            create_alt_outline,
+            rename_alt_outline,
+            delete_alt_outline,
             add_node,
             rename_node,
             move_node,
@@ -2168,6 +2255,35 @@ mod tests {
         remove_graph_node_impl(&state, id, a).unwrap();
         assert!(remove_graph_node_impl(&state, id, a).is_err());
         assert!(list_custom_graphs_impl(&state)[0].nodes.len() == 1);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn alt_outline_impls_persist_and_follow_workspace() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(100_000);
+        let n = NEXT.fetch_add(1, Ordering::SeqCst);
+        let base = std::env::temp_dir().join(format!("yonro-gui-ao-{n}"));
+        let _ = std::fs::remove_dir_all(&base);
+        let state = AppState::load(base.join("home"));
+        let a = base.join("a");
+        create_workspace_impl(&state, a.to_string_lossy().as_ref(), "A", None).unwrap();
+        let id = create_alt_outline_impl(&state, "Second").unwrap();
+        assert!(create_alt_outline_impl(&state, "  ").is_err());
+        rename_alt_outline_impl(&state, id, "Rethink").unwrap();
+        let listed = list_alt_outlines_impl(&state);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].title.as_str(), "Rethink");
+        assert!(a.join(".yonro/alt_outlines.json").is_file());
+        // The store follows the workspace like custom graphs do.
+        let b = base.join("b");
+        create_workspace_impl(&state, b.to_string_lossy().as_ref(), "B", None).unwrap();
+        assert!(list_alt_outlines_impl(&state).is_empty());
+        open_workspace_impl(&state, a.to_string_lossy().as_ref(), true, None).unwrap();
+        assert_eq!(list_alt_outlines_impl(&state).len(), 1);
+        delete_alt_outline_impl(&state, id).unwrap();
+        assert!(list_alt_outlines_impl(&state).is_empty());
+        assert!(delete_alt_outline_impl(&state, id).is_err());
         let _ = std::fs::remove_dir_all(&base);
     }
 
