@@ -271,6 +271,60 @@ function bindProsePop() {
   }
 }
 
+/* ---------- commands registry (palette ">" mode; every KEYMAP action) ---- */
+function focusFilesSection() {
+  if (document.body.classList.contains('hide-binder')) toggleBinder();
+  const files = document.getElementById('binder-files');
+  if (files) {
+    files.tabIndex = -1;
+    files.focus();
+  }
+  closeDrawersOnNarrow();
+}
+
+function focusBinderRow() {
+  if (document.body.classList.contains('hide-binder')) toggleBinder();
+  const box = document.getElementById('binder-outline');
+  if (!box) return;
+  const row = box.querySelector('.row[tabindex="0"]') || box.querySelector('.row');
+  if (row) row.focus();
+  closeDrawersOnNarrow();
+}
+
+function paletteOpen(mode) {
+  if (typeof openPalette === 'function') openPalette(mode);
+  else setMessage('palette lands in P5.2b — pick a scene in the binder for now.');
+}
+
+const COMMANDS = [
+  { id: 'save', title: 'save', keys: 'mod+S', run: () => saveActive() },
+  { id: 'save-as', title: 'save as', keys: 'mod+Shift+S', run: () => saveAsFlow() },
+  { id: 'new-draft', title: 'new draft', keys: 'mod+N', run: () => openDoc(null) },
+  { id: 'undo', title: 'undo', keys: 'mod+Z', run: () => historyStep('undo') },
+  { id: 'redo', title: 'redo', keys: 'mod+Shift+Z / mod+Y', run: () => historyStep('redo') },
+  { id: 'palette', title: 'palette: scenes + files', keys: 'mod+P', run: () => paletteOpen('') },
+  { id: 'palette-commands', title: 'palette: commands', keys: 'mod+Shift+P', run: () => paletteOpen('>') },
+  { id: 'find', title: 'find in doc', keys: 'mod+F', run: () => paletteOpen('/') },
+  { id: 'search-project', title: 'search project', keys: 'mod+Shift+F', run: () => paletteOpen('/') },
+  { id: 'toggle-binder', title: 'toggle binder', keys: 'mod+O', run: () => toggleBinder() },
+  { id: 'focus-files', title: 'focus files section', keys: 'mod+E', run: () => focusFilesSection() },
+  { id: 'toggle-inspector', title: 'toggle inspector', keys: 'mod+J', run: () => toggleInspector() },
+  { id: 'view-write', title: 'view: Write', keys: 'mod+1', run: () => show('write') },
+  { id: 'view-outline', title: 'view: Outline', keys: 'mod+2', run: () => show('outline') },
+  { id: 'view-graph', title: 'view: Graph', keys: 'mod+3', run: () => show('graph') },
+  { id: 'view-timeline', title: 'view: Timeline', keys: 'mod+4', run: () => show('timeline') },
+  { id: 'view-lore', title: 'view: Lore', keys: 'mod+5', run: () => show('lore') },
+  { id: 'cycle-tabs', title: 'cycle doc tabs', keys: 'Ctrl+Tab', run: () => cycleDoc(1) },
+  { id: 'zen', title: 'zen', keys: 'F11 / mod+.', run: () => toggleZen() },
+  { id: 'shortcuts', title: 'shortcut sheet', keys: '?', run: () => toggleShortcuts() },
+  { id: 'switch-project', title: 'switch project', keys: '', run: () => showStartScreen(true) },
+  { id: 'binder-add-act', title: 'binder: add act', keys: 'a', run: () => focusBinderRow() },
+  { id: 'binder-add-chapter', title: 'binder: add chapter', keys: 'c', run: () => focusBinderRow() },
+  { id: 'binder-add-scene', title: 'binder: add scene', keys: 's', run: () => focusBinderRow() },
+  { id: 'binder-rename', title: 'binder: rename', keys: 'F2', run: () => focusBinderRow() },
+  { id: 'binder-delete', title: 'binder: remove', keys: 'Del', run: () => focusBinderRow() },
+];
+
 /* ---------- overlays -------------------------------------------------------- */
 function toggleShortcuts(force) {
   const sheet = document.getElementById('shortcuts');
@@ -327,18 +381,13 @@ document.addEventListener('keydown', (e) => {
       toggleInspector();
     } else if (k === 'e') {
       e.preventDefault();
-      if (document.body.classList.contains('hide-binder')) toggleBinder();
-      const files = document.getElementById('binder-files');
-      if (files) {
-        files.tabIndex = -1;
-        files.focus();
-      }
+      focusFilesSection();
     } else if (k === 'n') {
       e.preventDefault();
       openDoc(null);
-    } else if (k === 'p' && !typingTarget(e)) {
+    } else if (k === 'p') {
       e.preventDefault();
-      setMessage(e.shiftKey ? 'command mode lands later — outline opens scenes for now.' : 'palette lands later — pick a scene in the binder.');
+      paletteOpen(e.shiftKey ? '>' : '');
     } else if (k === 'f' && !typingTarget(e)) {
       e.preventDefault();
       setMessage(e.shiftKey ? 'project search lands later.' : 'find in doc lands later — the editor keeps native find for now.');
