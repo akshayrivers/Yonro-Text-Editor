@@ -1161,6 +1161,200 @@ fn delete_alt_outline(state: tauri::State<'_, AppState>, id: usize) -> Result<()
     delete_alt_outline_impl(&state, id)
 }
 
+fn alt_outline_dto(
+    state: &AppState,
+    outline: usize,
+    f: impl FnOnce(&mut yonro_core::Manuscript) -> Result<usize, String>,
+) -> Result<api::AddNodeDto, String> {
+    let dto = {
+        let mut outlines = state.outlines.lock().unwrap_or_else(|e| e.into_inner());
+        let manuscript = outlines
+            .manuscript_mut(outline)
+            .map_err(|err| err.to_string())?;
+        let new_id = f(manuscript)?;
+        api::AddNodeDto {
+            outline: api::outline_dto(manuscript),
+            new_id,
+        }
+    };
+    save_outlines(state)?;
+    Ok(dto)
+}
+
+fn alt_add_node_impl(
+    state: &AppState,
+    outline: usize,
+    parent: Option<usize>,
+    kind: &str,
+    title: &str,
+) -> Result<api::AddNodeDto, String> {
+    let parsed = Project::parse_node_kind(kind).map_err(|err| err.to_string())?;
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        return Err("title cannot be empty".to_string());
+    }
+    alt_outline_dto(state, outline, |manuscript| {
+        let parent = match (parent, parsed) {
+            (Some(id), _) => {
+                if manuscript.get(id).is_none() {
+                    return Err(format!("unknown manuscript node {id}"));
+                }
+                id
+            }
+            (None, yonro_core::NodeKind::Act) => manuscript.root(),
+            (None, _) => {
+                return Err(format!(
+                    "cannot add {} {title:?}: select a parent first",
+                    kind.trim().to_lowercase()
+                ));
+            }
+        };
+        let id = match parsed {
+            yonro_core::NodeKind::Act => manuscript.add_act(&title),
+            yonro_core::NodeKind::Chapter => manuscript.add_chapter(parent, &title),
+            yonro_core::NodeKind::Scene => manuscript.add_scene(parent, &title),
+            yonro_core::NodeKind::Project => {
+                return Err("cannot add another project: one project per manuscript".to_string());
+            }
+        }
+        .map_err(|err| err.to_string())?;
+        Ok(id)
+    })
+}
+
+/// Add an act/chapter/scene to an alternate outline.
+#[tauri::command]
+fn alt_add_node(
+    state: tauri::State<'_, AppState>,
+    outline: usize,
+    parent: Option<usize>,
+    kind: String,
+    title: String,
+) -> Result<api::AddNodeDto, String> {
+    alt_add_node_impl(&state, outline, parent, &kind, &title)
+}
+
+fn alt_rename_node_impl(
+    state: &AppState,
+    outline: usize,
+    id: usize,
+    title: &str,
+) -> Result<api::OutlineNodeDto, String> {
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        return Err("title cannot be empty".to_string());
+    }
+    let dto = {
+        let mut outlines = state.outlines.lock().unwrap_or_else(|e| e.into_inner());
+        let manuscript = outlines
+            .manuscript_mut(outline)
+            .map_err(|err| err.to_string())?;
+        manuscript
+            .rename(id, &title)
+            .map_err(|err| err.to_string())?;
+        api::outline_dto(manuscript)
+    };
+    save_outlines(state)?;
+    Ok(dto)
+}
+
+/// Rename any node of an alternate outline.
+#[tauri::command]
+fn alt_rename_node(
+    state: tauri::State<'_, AppState>,
+    outline: usize,
+    id: usize,
+    title: String,
+) -> Result<api::OutlineNodeDto, String> {
+    alt_rename_node_impl(&state, outline, id, &title)
+}
+
+fn alt_move_node_impl(
+    state: &AppState,
+    outline: usize,
+    id: usize,
+    new_parent: usize,
+    index: Option<usize>,
+) -> Result<api::OutlineNodeDto, String> {
+    let dto = {
+        let mut outlines = state.outlines.lock().unwrap_or_else(|e| e.into_inner());
+        let manuscript = outlines
+            .manuscript_mut(outline)
+            .map_err(|err| err.to_string())?;
+        manuscript
+            .move_node_at(id, new_parent, index)
+            .map_err(|err| err.to_string())?;
+        api::outline_dto(manuscript)
+    };
+    save_outlines(state)?;
+    Ok(dto)
+}
+
+/// Reparent a node inside an alternate outline (`index: null` appends).
+#[tauri::command]
+fn alt_move_node(
+    state: tauri::State<'_, AppState>,
+    outline: usize,
+    id: usize,
+    new_parent: usize,
+    index: Option<usize>,
+) -> Result<api::OutlineNodeDto, String> {
+    alt_move_node_impl(&state, outline, id, new_parent, index)
+}
+
+fn alt_remove_node_impl(
+    state: &AppState,
+    outline: usize,
+    id: usize,
+) -> Result<api::OutlineNodeDto, String> {
+    let dto = {
+        let mut outlines = state.outlines.lock().unwrap_or_else(|e| e.into_inner());
+        let manuscript = outlines
+            .manuscript_mut(outline)
+            .map_err(|err| err.to_string())?;
+        if id == manuscript.root() {
+            return Err("cannot remove the outline root".to_string());
+        }
+        manuscript.remove(id).map_err(|err| err.to_string())?;
+        api::outline_dto(manuscript)
+    };
+    save_outlines(state)?;
+    Ok(dto)
+}
+
+/// Remove a node from an alternate outline (draft files stay on disk).
+#[tauri::command]
+fn alt_remove_node(
+    state: tauri::State<'_, AppState>,
+    outline: usize,
+    id: usize,
+) -> Result<api::OutlineNodeDto, String> {
+    alt_remove_node_impl(&state, outline, id)
+}
+
+fn alt_open_scene_impl(state: &AppState, outline: usize, id: usize) -> Result<OpenedDto, String> {
+    let root = state.workspace_root();
+    let path = {
+        let mut outlines = state.outlines.lock().unwrap_or_else(|e| e.into_inner());
+        outlines
+            .scene_file(outline, id, &root)
+            .map_err(|err| err.to_string())?
+    };
+    // Persist the new file link before opening.
+    save_outlines(state)?;
+    open_file_impl(state, Some(path.to_string_lossy().to_string()))
+}
+
+/// Materialize an alternate scene's draft file, then open it.
+#[tauri::command]
+fn alt_open_scene(
+    state: tauri::State<'_, AppState>,
+    outline: usize,
+    id: usize,
+) -> Result<OpenedDto, String> {
+    alt_open_scene_impl(&state, outline, id)
+}
+
 // ---------------------------------------------------------------------------
 // Structure editing (thin over `Project`; every mutation persists and
 // returns the fresh outline so the UI re-renders from truth)
@@ -1600,6 +1794,11 @@ fn main() {
             create_alt_outline,
             rename_alt_outline,
             delete_alt_outline,
+            alt_add_node,
+            alt_rename_node,
+            alt_move_node,
+            alt_remove_node,
+            alt_open_scene,
             add_node,
             rename_node,
             move_node,
@@ -2284,6 +2483,41 @@ mod tests {
         delete_alt_outline_impl(&state, id).unwrap();
         assert!(list_alt_outlines_impl(&state).is_empty());
         assert!(delete_alt_outline_impl(&state, id).is_err());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn alt_node_impls_edit_tree_and_open_scenes() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(110_000);
+        let n = NEXT.fetch_add(1, Ordering::SeqCst);
+        let base = std::env::temp_dir().join(format!("yonro-gui-an-{n}"));
+        let _ = std::fs::remove_dir_all(&base);
+        let state = AppState::load(base.join("home"));
+        let a = base.join("a");
+        create_workspace_impl(&state, a.to_string_lossy().as_ref(), "A", None).unwrap();
+        let outline = create_alt_outline_impl(&state, "Second").unwrap();
+        assert!(alt_add_node_impl(&state, outline, None, "scene", "Orphan").is_err());
+        let added = alt_add_node_impl(&state, outline, None, "act", "Act I").unwrap();
+        let act = added.new_id;
+        assert_eq!(added.outline.children.len(), 1);
+        let chapter =
+            alt_add_node_impl(&state, outline, Some(act), "chapter", "Chapter 1").unwrap();
+        let scene =
+            alt_add_node_impl(&state, outline, Some(chapter.new_id), "scene", "The gate").unwrap();
+        alt_rename_node_impl(&state, outline, scene.new_id, "The portal").unwrap();
+        assert!(alt_rename_node_impl(&state, outline, scene.new_id, "  ").is_err());
+        // Alt drafts live in their own namespace, next to scene-*.md.
+        let opened = alt_open_scene_impl(&state, outline, scene.new_id).unwrap();
+        assert!(opened.path.clone().unwrap().contains("scene-alt"));
+        assert!(std::path::Path::new(&opened.path.unwrap()).is_file());
+        // Move + remove round-trip through fresh DTOs.
+        let act2 = alt_add_node_impl(&state, outline, None, "act", "Act II").unwrap();
+        let moved = alt_move_node_impl(&state, outline, chapter.new_id, act2.new_id, None).unwrap();
+        assert_eq!(moved.children.len(), 2);
+        let pruned = alt_remove_node_impl(&state, outline, act).unwrap();
+        assert_eq!(pruned.children.len(), 1);
+        assert!(alt_remove_node_impl(&state, 999, act).is_err());
         let _ = std::fs::remove_dir_all(&base);
     }
 
