@@ -239,23 +239,37 @@ fn scene_prose(
     scene_index: usize,
     generated: &[String],
 ) -> String {
+    // Clustered mentions: the cast is dealt into groups of ~8 and each
+    // scene hosts one group, so members appear in 1-3 scenes together
+    // (a real neighborhood) instead of scattered singles. The only hero
+    // links are the POV and one handmade mention.
     let hand_a = HANDMADE[(scene_index.saturating_add(1)) % HANDMADE.len()].0;
-    let hand_b = HANDMADE[(scene_index.saturating_add(3)) % HANDMADE.len()].0;
-    let pick = |offset: usize| -> String {
-        if generated.is_empty() {
-            hand_a.to_string()
-        } else {
-            generated[(scene_index.saturating_mul(7).saturating_add(offset)) % generated.len()]
-                .clone()
-        }
-    };
-    let gen: Vec<String> = (0..7).map(pick).collect();
+    let members = cluster_members(scene_index, generated, hand_a);
+    let list = members
+        .iter()
+        .map(|name| format!("@{name}"))
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
         "{pov} left {setting} at {time} on {date}, thinking of @{hand_a}.\n\
-        The road was empty except for @{} and @{}, who argued about @{}.\n\
-        @{} had left a mark for @{} near the {setting} gate.\n\
-        \"Tell @{} I was here,\" {pov} told @{}, \"and keep @{hand_b} out of it.\"\n\
+        The road was empty except for {list}, who argued about the {date} market.\n\
+        \"Tell @{hand_a} I was here,\" {pov} said, \"and keep it quiet.\"\n\
         By nightfall the {date} entry was done.\n",
-        gen[0], gen[1], gen[2], gen[3], gen[4], gen[5], gen[6]
     )
+}
+
+/// Members of scene `scene_index`'s cluster (up to 8 names).
+fn cluster_members(scene_index: usize, generated: &[String], fallback: &str) -> Vec<String> {
+    if generated.is_empty() {
+        return vec![fallback.to_string()];
+    }
+    const SIZE: usize = 8;
+    let clusters = generated.len().div_ceil(SIZE).max(1);
+    let which = scene_index % clusters;
+    let start = which.saturating_mul(SIZE);
+    let end = start.saturating_add(SIZE).min(generated.len());
+    if start >= end {
+        return vec![fallback.to_string()];
+    }
+    generated[start..end].to_vec()
 }
