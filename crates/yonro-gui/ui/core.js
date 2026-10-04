@@ -44,6 +44,7 @@ const core = {
   searchProject: (query, caseSensitive) => core.invoke('search_project', { query, caseSensitive: Boolean(caseSensitive) }),
   session: () => core.invoke('get_session'),
   setGoal: (words) => core.invoke('set_goal', { words }),
+  exportManuscript: (format, path) => core.invoke('export_manuscript', { format, path: path ?? null }),
   onCloseRequested: (handler) => {
     try {
       const api = window.__TAURI__ && window.__TAURI__.window;

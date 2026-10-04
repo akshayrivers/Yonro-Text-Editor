@@ -1118,6 +1118,26 @@ fn set_goal(state: tauri::State<'_, AppState>, words: usize) -> Result<api::Sess
     set_goal_impl(&state, words)
 }
 
+fn export_manuscript_impl(
+    state: &AppState,
+    format: String,
+    path: Option<String>,
+) -> Result<api::ExportDto, String> {
+    let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+    let open_texts = state.open_texts();
+    api::export_dto(&project, &open_texts, &format, path.as_deref()).map_err(|err| err.to_string())
+}
+
+/// Compile + write the manuscript (unsaved buffers export too).
+#[tauri::command]
+fn export_manuscript(
+    state: tauri::State<'_, AppState>,
+    format: String,
+    path: Option<String>,
+) -> Result<api::ExportDto, String> {
+    export_manuscript_impl(&state, format, path)
+}
+
 fn save_project_on_exit(window: &tauri::Window) {
     let state = window.state::<AppState>();
     persist_sessions(&state);
@@ -1174,6 +1194,7 @@ fn main() {
             search_project,
             get_session,
             set_goal,
+            export_manuscript,
             sweep_recovery,
             check_recovery,
             discard_recovery
@@ -1684,6 +1705,24 @@ mod tests {
         let sessions = reloaded.sessions.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(sessions.goal(), 4);
         drop(sessions);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn export_impl_writes_md_and_names_bad_format() {
+        let (state, path) = scene_workspace();
+        let dir = state.workspace_root();
+        let opened = open_file_impl(&state, Some(path.to_string_lossy().to_string())).unwrap();
+        set_text_impl(
+            &state,
+            opened.buffer_id,
+            "Mara walked home today".to_string(),
+        )
+        .unwrap();
+        let receipt = export_manuscript_impl(&state, "md".to_string(), None).unwrap();
+        assert!(receipt.path.ends_with("export/probe.md"));
+        assert_eq!((receipt.words, receipt.scenes), (4, 1));
+        assert!(export_manuscript_impl(&state, "pdf".to_string(), None).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
