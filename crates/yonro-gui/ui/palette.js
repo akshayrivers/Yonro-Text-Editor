@@ -7,6 +7,7 @@
 let paletteState = null;
 let paletteSeq = 0;
 let paletteFilesCache = [];
+let paletteOpener = null;
 
 function paletteModeOf(value) {
   const first = (value || '').charAt(0);
@@ -80,6 +81,15 @@ function ensurePalette() {
   });
   dlg.addEventListener('close', () => {
     paletteState = null;
+    const back = paletteOpener;
+    paletteOpener = null;
+    if (back && typeof back.focus === 'function') {
+      try {
+        back.focus();
+      } catch (err) {
+        void err;
+      }
+    }
   });
   document.body.appendChild(dlg);
   return dlg;
@@ -90,7 +100,10 @@ function openPalette(mode) {
   const input = document.getElementById('palette-input');
   input.value = mode || '';
   paletteState = { mode: mode || '', items: [], active: 0 };
-  if (typeof dlg.showModal === 'function' && !dlg.open) dlg.showModal();
+  if (!dlg.open) {
+    paletteOpener = document.activeElement;
+    if (typeof dlg.showModal === 'function') dlg.showModal();
+  }
   input.focus();
   paletteFilesCache = [];
   if (typeof core.listFiles === 'function') {

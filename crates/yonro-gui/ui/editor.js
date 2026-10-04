@@ -88,9 +88,8 @@ function renderTabs() {
     const close = document.createElement('span');
     close.className = 'tab-x';
     close.textContent = ' ×';
-    close.setAttribute('role', 'button');
-    close.setAttribute('aria-label', `close ${label}`);
-    close.tabIndex = -1;
+    close.title = 'close (Delete)';
+    close.setAttribute('aria-hidden', 'true');
     close.addEventListener('click', (e) => {
       e.stopPropagation();
       closeDoc(id);
@@ -658,7 +657,8 @@ async function flushSync() {
     scheduleBinderRefresh();
     if (typeof maybeRefreshSessionSoon === 'function') maybeRefreshSessionSoon();
   } catch (err) {
-    setMessage(`sync failed: ${err}`, { error: true });
+    const doc = docs.get(id);
+    setMessage(`could not sync ${shortName(doc && doc.path)}: ${errText(err)}`, { error: true });
   }
 }
 
@@ -691,7 +691,7 @@ async function autosaveTick() {
     setMessage(`autosaved ${shortName(saved)} · ${hh}:${mm}`);
     if (typeof refreshBinder === 'function') refreshBinder();
   } catch (err) {
-    setMessage(`autosave failed ${shortName(doc.path)}: ${err}`, { error: true });
+    setMessage(`autosave failed ${shortName(doc.path)}: ${errText(err)}`, { error: true });
   }
 }
 
@@ -728,7 +728,7 @@ async function openDoc(path) {
     const opened = await core.openFile(path);
     adoptOpened(opened);
   } catch (err) {
-    setMessage(`could not open: ${err}`, { error: true });
+    setMessage(`could not open ${path || 'untitled draft'}: ${errText(err)}`, { error: true });
   }
 }
 
@@ -738,7 +738,7 @@ async function openSceneDoc(id) {
     const opened = await core.openScene(id);
     adoptOpened(opened);
   } catch (err) {
-    setMessage(`could not open scene: ${err}`, { error: true });
+    setMessage(`could not open scene ${id}: ${errText(err)}`, { error: true });
   }
 }
 
@@ -761,7 +761,7 @@ async function openSceneAndSelectRange(sceneId, line, colStart, colEnd) {
     await flushSync();
     opened = await core.openScene(sceneId);
   } catch (err) {
-    setMessage(`could not open scene: ${err}`, { error: true });
+    setMessage(`could not open scene ${sceneId}: ${errText(err)}`, { error: true });
     return;
   }
   const abs = lineColToOffsets(opened.text, line, colStart, colEnd);
@@ -877,7 +877,8 @@ async function historyStep(which) {
     refreshMentionsNow();
     scheduleBinderRefresh();
   } catch (err) {
-    setMessage(`history failed: ${err}`, { error: true });
+    const doc = docs.get(activeDoc);
+    setMessage(`could not ${which} ${shortName(doc && doc.path)}: ${errText(err)}`, { error: true });
   }
 }
 
@@ -907,7 +908,8 @@ async function saveActive() {
     setMessage(`saved ${shortName(saved)} · ${stampNow()}`);
     if (typeof refreshBinder === 'function') refreshBinder();
   } catch (err) {
-    setMessage(`save failed: ${err}`, { error: true });
+    const doc = docs.get(activeDoc);
+    setMessage(`could not save ${shortName(doc && doc.path)}: ${errText(err)}`, { error: true });
   }
 }
 
@@ -979,12 +981,10 @@ async function saveAsFlow() {
         dlg.close();
         resolve(true);
       } catch (e) {
-        err.textContent = `cannot save ${name}: ${e}`;
+        err.textContent = `cannot save ${name || 'untitled draft'}: ${errText(e)}`;
       }
     });
-    if (typeof dlg.showModal === 'function') dlg.showModal();
-    input.focus();
-    input.select();
+    openModal(dlg, input);
   });
 }
 
@@ -1015,8 +1015,7 @@ function confirmCloseDoc(id) {
     discardBtn.addEventListener('click', () => { dlg.close(); resolve('discard'); }, { once: true });
     cancelBtn.addEventListener('click', () => { dlg.close(); resolve('cancel'); }, { once: true });
     dlg.addEventListener('cancel', () => resolve('cancel'), { once: true });
-    if (typeof dlg.showModal === 'function') dlg.showModal();
-    saveBtn.focus();
+    openModal(dlg, saveBtn);
   });
 }
 
@@ -1051,14 +1050,16 @@ async function closeDoc(id) {
         if (doc) doc.dirty = false;
       }
     } catch (err) {
-      setMessage(`save failed: ${err}`, { error: true });
+      const failed = docs.get(id);
+      setMessage(`could not save ${shortName(failed && failed.path)}: ${errText(err)}`, { error: true });
       return;
     }
   }
   try {
     await core.closeBuffer(id);
   } catch (err) {
-    setMessage(`close failed: ${err}`, { error: true });
+    const failed = docs.get(id);
+    setMessage(`could not close ${shortName(failed && failed.path)}: ${errText(err)}`, { error: true });
     return;
   }
   docs.delete(id);
@@ -1131,8 +1132,7 @@ async function maybeOfferRecovery(bufferId, path) {
     }
     dlg.close();
   }, { once: true });
-  if (typeof dlg.showModal === 'function') dlg.showModal();
-  restoreBtn.focus();
+  openModal(dlg, restoreBtn);
 }
 
 function dirtyList() {
@@ -1153,7 +1153,7 @@ async function saveAllQuit() {
       doc.path = saved;
       doc.dirty = false;
     } catch (err) {
-      setMessage(`save failed ${shortName(doc.path)}: ${err}`, { error: true });
+      setMessage(`could not save ${shortName(doc.path)}: ${errText(err)}`, { error: true });
       return false;
     }
   }
@@ -1205,8 +1205,7 @@ function handleWindowClose(event) {
     window.close();
   }, { once: true });
   cancelBtn.addEventListener('click', () => dlg.close(), { once: true });
-  if (typeof dlg.showModal === 'function') dlg.showModal();
-  saveBtn.focus();
+  openModal(dlg, saveBtn);
 }
 
 document.getElementById('btn-save').addEventListener('click', saveActive);

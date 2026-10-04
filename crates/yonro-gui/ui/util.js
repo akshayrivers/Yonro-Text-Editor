@@ -87,3 +87,63 @@ function toast(text) {
 function toastError(text) {
   setMessage(text, { error: true });
 }
+
+/* Clean backend error text. Tauri rejects Err(String) with a string;
+ * JS throws give Error. Never surface "undefined" or "[object Object]".
+ */
+function errText(err) {
+  if (err === null || err === undefined) return 'unknown error';
+  if (typeof err === 'string') return err || 'unknown error';
+  if (err instanceof Error && err.message) return err.message;
+  try {
+    const s = String(err);
+    if (s === '[object Object]') {
+      try {
+        return JSON.stringify(err);
+      } catch (inner) {
+        void inner;
+        return 'unknown error';
+      }
+    }
+    return s || 'unknown error';
+  } catch (outer) {
+    void outer;
+    return 'unknown error';
+  }
+}
+
+/* Native dialog opener: showModal, focus first control, Esc closes
+ * natively, focus returns to the opener on close.
+ */
+let modalOpener = null;
+
+function openModal(dlg, focusEl) {
+  if (!dlg) return;
+  if (!dlg.open) {
+    modalOpener = document.activeElement;
+    if (typeof dlg.showModal === 'function') dlg.showModal();
+  }
+  const target = focusEl || dlg.querySelector('input, select, textarea, button');
+  if (target && typeof target.focus === 'function') {
+    try {
+      target.focus();
+      if (target.tagName === 'INPUT' && typeof target.select === 'function') target.select();
+    } catch (err) {
+      void err;
+    }
+  }
+  if (!dlg.dataset.returnBound) {
+    dlg.dataset.returnBound = '1';
+    dlg.addEventListener('close', () => {
+      const back = modalOpener;
+      modalOpener = null;
+      if (back && typeof back.focus === 'function') {
+        try {
+          back.focus();
+        } catch (err) {
+          void err;
+        }
+      }
+    });
+  }
+}
