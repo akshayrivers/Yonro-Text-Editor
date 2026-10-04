@@ -18,7 +18,7 @@ async function loadLore() {
   try {
     loreEntities = await core.lore();
   } catch (err) {
-    container.innerHTML = `<p class="muted">lore unavailable: ${esc(err)}</p>`;
+    container.innerHTML = `<p class="muted">could not load lore: ${esc(errText(err))}</p>`;
     return;
   }
   if (!loreEntities || loreEntities.length === 0) {
@@ -186,7 +186,7 @@ async function loadAndRenderLoreDetail(id, detailPane) {
       showEntityInspector(id);
     }
   } catch (err) {
-    detailPane.innerHTML = `<p class="muted">could not load detail: ${esc(err)}</p>`;
+    detailPane.innerHTML = `<p class="muted">could not load entity ${id} detail: ${esc(errText(err))}</p>`;
   }
 }
 
@@ -216,7 +216,7 @@ function renderLoreDetail(detail, pane) {
       toast('name updated');
       await refreshLoreListPreservingSelection();
     } catch (err) {
-      toastError(`rename failed: ${err}`);
+      toastError(`could not rename ${detail.name}: ${errText(err)}`);
       nameInput.value = nameInput.dataset.clean;
     }
   };
@@ -285,7 +285,7 @@ function renderLoreDetail(detail, pane) {
           toast('alias removed');
           await refreshLoreListPreservingSelection();
         } catch (err) {
-          toastError(`could not remove alias: ${err}`);
+          toastError(`could not remove alias ${alias} from ${detail.name}: ${errText(err)}`);
         }
       });
       chip.appendChild(removeBtn);
@@ -315,7 +315,7 @@ function renderLoreDetail(detail, pane) {
         toast('alias added');
         await refreshLoreListPreservingSelection();
       } catch (err) {
-        toastError(`could not add alias: ${err}`);
+        toastError(`could not add alias to ${detail.name}: ${errText(err)}`);
       }
     };
 
@@ -353,7 +353,7 @@ function renderLoreDetail(detail, pane) {
         sheetArea.dataset.clean = sheetArea.value;
         toast('sheet saved');
       } catch (err) {
-        toastError(`failed to save sheet: ${err}`);
+        toastError(`could not save sheet for ${detail.name}: ${errText(err)}`);
       }
     }
   });
@@ -507,14 +507,13 @@ function showAddEntityDialog() {
       toast(`added ${added.name}`);
       await loadLore();
     } catch (err) {
-      errP.textContent = String(err);
+      errP.textContent = `could not add entity ${name}: ${errText(err)}`;
       errP.hidden = false;
     }
   });
 
   dlg.appendChild(form);
-  dlg.showModal();
-  input.focus();
+  openModal(dlg, input);
 }
 
 function showDeleteEntityDialog(detail) {
@@ -560,11 +559,11 @@ function showDeleteEntityDialog(detail) {
       loreSelectedId = null;
       await loadLore();
     } catch (err) {
-      toastError(`delete failed: ${err}`);
+      toastError(`could not delete ${detail.name}: ${errText(err)}`);
     }
   });
   btnRow.appendChild(confirmBtn);
 
   dlg.appendChild(btnRow);
-  dlg.showModal();
+  openModal(dlg, cancelBtn);
 }

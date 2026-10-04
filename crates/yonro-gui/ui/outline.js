@@ -78,7 +78,7 @@ async function loadOutline() {
     element.innerHTML = '';
     const p = document.createElement('p');
     p.className = 'muted';
-    p.textContent = `Outline unavailable: ${err}`;
+    p.textContent = `could not load outline: ${errText(err)}`;
     element.appendChild(p);
   }
 }
@@ -197,7 +197,7 @@ async function loadBinder() {
       box.innerHTML = '';
       const p = document.createElement('p');
       p.className = 'muted';
-      p.textContent = `binder unavailable: ${err}`;
+      p.textContent = `could not load binder: ${errText(err)}`;
       box.appendChild(p);
     }
   }
@@ -289,7 +289,7 @@ function buildBinderNode(node) {
   row.setAttribute('role', 'treeitem');
   row.setAttribute('aria-level', String(binderDepthOf(node.id) + 1));
   row.tabIndex = node.id === binderFocusId ? 0 : -1;
-  if (node.id === binderSelectedId) row.setAttribute('aria-selected', 'true');
+  row.setAttribute('aria-selected', node.id === binderSelectedId ? 'true' : 'false');
   const hasKids = (node.children || []).length > 0;
   const collapsed = binderCollapsed.has(node.id);
   if (hasKids) row.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
@@ -368,7 +368,7 @@ function binderSelect(id) {
   const box = document.getElementById('binder-outline');
   if (!box) return;
   for (const row of box.querySelectorAll('.row[aria-selected="true"]')) {
-    row.removeAttribute('aria-selected');
+    row.setAttribute('aria-selected', 'false');
   }
   const row = binderRowFor(id);
   if (row) row.setAttribute('aria-selected', 'true');
@@ -551,7 +551,7 @@ function binderBeginRename(id) {
       binderSelect(id);
       setMessage(`renamed to ${title}`);
     } catch (err) {
-      setMessage(`rename failed: ${err}`, { error: true });
+      setMessage(`could not rename ${node.title}: ${errText(err)}`, { error: true });
       binderFocus(id, true);
     }
   });
@@ -612,7 +612,7 @@ function binderBeginAddAt(parent, kind) {
       binderSelect(res.new_id);
       setMessage(`added ${kind} ${title}`);
     } catch (err) {
-      setMessage(`add failed: ${err}`, { error: true });
+      setMessage(`could not add ${kind} ${title}: ${errText(err)}`, { error: true });
       temp.remove();
     }
   });
@@ -662,8 +662,7 @@ async function binderRemove(id) {
     const back = binderRowFor(id);
     if (back) back.focus();
   }, { once: true });
-  if (typeof dlg.showModal === 'function') dlg.showModal();
-  cancel.focus();
+  openModal(dlg, cancel);
 }
 
 async function binderDoRemove(id) {
@@ -682,7 +681,8 @@ async function binderDoRemove(id) {
     }
     setMessage(res.message);
   } catch (err) {
-    setMessage(`delete failed: ${err}`, { error: true });
+    const node = binderFind(id);
+    setMessage(`could not delete ${node ? node.title : `item ${id}`}: ${errText(err)}`, { error: true });
     binderFocus(id, true);
   }
 }
@@ -705,7 +705,8 @@ async function binderMove(id, dir) {
     binderFocus(id, true);
     binderSelect(id);
   } catch (err) {
-    setMessage(`move failed: ${err}`, { error: true });
+    const node = binderFind(id);
+    setMessage(`could not move ${node ? node.title : `item ${id}`}: ${errText(err)}`, { error: true });
   }
 }
 
@@ -838,7 +839,7 @@ async function refreshFiles() {
     box.innerHTML = '';
     const p = document.createElement('p');
     p.className = 'muted';
-    p.textContent = `files unavailable: ${err}`;
+    p.textContent = `could not list files: ${errText(err)}`;
     box.appendChild(p);
   }
 }

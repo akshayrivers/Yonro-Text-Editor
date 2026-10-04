@@ -43,7 +43,7 @@ async function showInspectorFor(id) {
     detail = res[0];
     names = (res[1] || []).map((e) => e.name);
   } catch (err) {
-    inspectorPlaceholder(`inspector unavailable: ${err}`);
+    inspectorPlaceholder(`could not load inspector for scene ${id}: ${errText(err)}`);
     return;
   }
   if (inspectorId !== id) return;
@@ -253,7 +253,7 @@ async function saveInspectorFormNow(id) {
   try {
     await core.setSceneMeta(id, meta);
   } catch (err) {
-    inspectorShowError(`save failed: ${err}`);
+    inspectorShowError(`could not save scene ${id} meta: ${errText(err)}`);
     return;
   }
   if (inspectorId !== id) return;
@@ -299,7 +299,7 @@ async function showEntityInspector(id, graphNode) {
     if (inspectorId !== id) return;
     renderEntityInspector(box, detail, graphNode && graphNode.neighbors ? graphNode.neighbors : null);
   } catch (err) {
-    inspectorPlaceholder(`entity unavailable: ${err}`);
+    inspectorPlaceholder(`could not load entity ${id}: ${errText(err)}`);
   }
 }
 
@@ -400,7 +400,7 @@ async function loadSceneHistory(sceneId, file, list) {
   } catch (err) {
     const p = document.createElement('p');
     p.className = 'muted';
-    p.textContent = `history unavailable: ${err}`;
+    p.textContent = `could not load history for scene ${sceneId}: ${errText(err)}`;
     list.appendChild(p);
     return;
   }
@@ -431,7 +431,7 @@ async function restoreSceneSnapshot(sceneId, file, name) {
   try {
     text = await core.restoreSnapshot(sceneId, name);
   } catch (err) {
-    setMessage(`restore failed: ${err}`, { error: true });
+    setMessage(`could not restore snapshot ${name} for scene ${sceneId}: ${errText(err)}`, { error: true });
     return;
   }
   let target = null;
