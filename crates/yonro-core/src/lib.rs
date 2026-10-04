@@ -30,6 +30,7 @@ pub mod lore;
 pub mod manuscript;
 pub mod prelude;
 pub mod project;
+pub mod recents;
 pub mod timeline;
 
 pub use annotatedstring::AnnotatedString;
@@ -51,4 +52,5 @@ pub use line::Line;
 pub use lore::{is_mention_char, Entity, EntityId, EntityKind, LoreBook, LoreError, Mention};
 pub use manuscript::{Manuscript, ManuscriptError, Node, NodeId, NodeKind, SceneMeta};
 pub use project::{Project, ProjectError, SceneMetaFields};
+pub use recents::{RecentEntry, Recents, RecentsError, MAX_RECENTS};
 pub use timeline::{ContinuityNote, Timeline, TimelineEntry};
