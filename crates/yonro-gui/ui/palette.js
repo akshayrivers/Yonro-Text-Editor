@@ -171,10 +171,14 @@ async function paletteSearchItems(query) {
     hits = [];
   }
   return (hits || []).map((hit) => ({
-    label: hit.title,
-    sub: `${hit.file}:${hit.line}`,
+    label: hit.excerpt,
+    sub: `${hit.title} · ${hit.line}:${hit.col_start}`,
     run: () => {
-      if (typeof openSceneDoc === 'function') openSceneDoc(hit.scene_id);
+      if (typeof openSceneAndSelectRange === 'function') {
+        openSceneAndSelectRange(hit.scene_id, hit.line, hit.col_start, hit.col_end);
+      } else if (typeof openSceneDoc === 'function') {
+        openSceneDoc(hit.scene_id);
+      }
     },
   }));
 }
@@ -199,6 +203,12 @@ async function paletteRefresh() {
     paletteRender();
     return;
   } else if (parsed.mode === '/') {
+    if (!parsed.query.trim()) {
+      paletteState.items = [];
+      paletteState.active = 0;
+      paletteRenderHint('type to search the project.');
+      return;
+    }
     const found = await paletteSearchItems(parsed.query);
     if (seq !== paletteSeq || !paletteState) return;
     if (found === null) {

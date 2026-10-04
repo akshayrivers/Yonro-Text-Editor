@@ -956,3 +956,35 @@ body.zen #zen-count {
   margin-top: 8px;
   font-size: 12px;
 }
+
+/* Find bar + matches (P5.3) */
+#find-bar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  max-width: var(--measure);
+  margin: 0 auto 8px;
+}
+#find-bar[hidden] { display: none; }
+#find-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font: inherit;
+}
+#find-input:focus { border-color: var(--accent); outline: none; }
+#find-count { min-width: 5ch; text-align: right; }
+#editor-backdrop mark.find {
+  color: transparent;
+  background: var(--selection);
+  border-bottom: 2px solid var(--warn);
+  border-radius: 2px;
+}
+#editor-backdrop mark.find.current {
+  border-bottom-color: var(--accent);
+  background: var(--accent-dim);
+}

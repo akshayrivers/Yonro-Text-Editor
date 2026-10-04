@@ -304,7 +304,7 @@ const COMMANDS = [
   { id: 'redo', title: 'redo', keys: 'mod+Shift+Z / mod+Y', run: () => historyStep('redo') },
   { id: 'palette', title: 'palette: scenes + files', keys: 'mod+P', run: () => paletteOpen('') },
   { id: 'palette-commands', title: 'palette: commands', keys: 'mod+Shift+P', run: () => paletteOpen('>') },
-  { id: 'find', title: 'find in doc', keys: 'mod+F', run: () => paletteOpen('/') },
+  { id: 'find', title: 'find in doc', keys: 'mod+F', run: () => openFindBar() },
   { id: 'search-project', title: 'search project', keys: 'mod+Shift+F', run: () => paletteOpen('/') },
   { id: 'toggle-binder', title: 'toggle binder', keys: 'mod+O', run: () => toggleBinder() },
   { id: 'focus-files', title: 'focus files section', keys: 'mod+E', run: () => focusFilesSection() },
@@ -352,6 +352,10 @@ document.addEventListener('keydown', (e) => {
       pop.hidden = true;
       return;
     }
+    if (typeof isFindBarOpen === 'function' && isFindBarOpen()) {
+      closeFindBar();
+      return;
+    }
     if (document.body.classList.contains('zen')) {
       toggleZen(false);
       return;
@@ -388,9 +392,10 @@ document.addEventListener('keydown', (e) => {
     } else if (k === 'p') {
       e.preventDefault();
       paletteOpen(e.shiftKey ? '>' : '');
-    } else if (k === 'f' && !typingTarget(e)) {
+    } else if (k === 'f') {
       e.preventDefault();
-      setMessage(e.shiftKey ? 'project search lands later.' : 'find in doc lands later — the editor keeps native find for now.');
+      if (e.shiftKey) paletteOpen('/');
+      else if (typeof openFindBar === 'function') openFindBar();
     } else if (k === 's' && !typingTarget(e)) {
       e.preventDefault();
       if (e.shiftKey && typeof saveAsFlow === 'function') saveAsFlow();
