@@ -815,6 +815,37 @@ function cycleDoc(dir) {
   activateDoc(next);
 }
 
+/* Workspace switch: the backend drops every buffer, so frontend doc state
+ * (buffer ids, caches, tabs) must go too. Otherwise the next sync/save hits
+ * "unknown buffer" and the tabs still show the previous project's files.
+ */
+function closeAllDocsLocal() {
+  if (syncTimer !== null) {
+    clearTimeout(syncTimer);
+    syncTimer = null;
+  }
+  if (autosaveTimer !== null) {
+    clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+  }
+  syncPending = false;
+  docs.clear();
+  docCache.clear();
+  docStats.clear();
+  activeDoc = null;
+  lastStats = null;
+  findSpans = [];
+  findCurrent = -1;
+  applyingRemote = true;
+  editor.value = '';
+  applyingRemote = false;
+  hideMentionPopup();
+  renderTabs();
+  renderStatus(null);
+  renderMentions([]);
+  updateCaret();
+}
+
 editor.addEventListener('input', () => {
   if (applyingRemote || activeDoc === null) return;
   const text = editor.value;

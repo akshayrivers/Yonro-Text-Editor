@@ -118,6 +118,12 @@ function afterWorkspaceSwitch(note) {
   renderWorkspaceWarnings();
   showStartScreen(false);
   setMessage(note);
+  // Backend buffers are gone: drop editor tabs/caches, inspector detail,
+  // and binder selection before reloading from the new project.
+  if (typeof closeAllDocsLocal === 'function') closeAllDocsLocal();
+  if (typeof showInspectorFor === 'function') showInspectorFor(null);
+  if (typeof binderSelectedId !== 'undefined') binderSelectedId = null;
+  if (typeof binderFocusId !== 'undefined') binderFocusId = null;
   if (typeof refreshBinder === 'function') refreshBinder();
   if (typeof refreshSession === 'function') refreshSession();
   if (typeof show === 'function') show('write');
