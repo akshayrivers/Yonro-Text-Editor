@@ -12,7 +12,9 @@ use std::time::Instant;
 
 use serde::Serialize;
 use tauri::Manager;
-use yonro_core::{api, Buffer, Project, Recents, SceneMetaFields, SessionLog, UndoStack};
+use yonro_core::{
+    api, Buffer, CustomGraphStore, Project, Recents, SceneMetaFields, SessionLog, UndoStack,
+};
 
 // ---------------------------------------------------------------------------
 // State
@@ -23,6 +25,7 @@ struct AppState {
     buffers: Mutex<HashMap<usize, GuiBuffer>>,
     next_buffer: Mutex<usize>,
     sessions: Mutex<SessionLog>,
+    graphs: Mutex<CustomGraphStore>,
 }
 
 /// One open document: rope buffer plus coalescing whole-text undo.
@@ -52,11 +55,14 @@ impl AppState {
         let mut project = Project::load(&workspace_dir);
         let (sessions, mut session_warnings) = project.load_sessions();
         project.warnings.append(&mut session_warnings);
+        let graphs =
+            CustomGraphStore::load(&CustomGraphStore::file_in(&workspace_dir.join(".yonro")));
         Self {
             project: Mutex::new(project),
             buffers: Mutex::new(HashMap::new()),
             next_buffer: Mutex::new(0),
             sessions: Mutex::new(sessions),
+            graphs: Mutex::new(graphs),
         }
     }
 
@@ -290,6 +296,12 @@ fn adopt_project(state: &AppState, project: Project) {
     {
         let mut stored = state.sessions.lock().unwrap_or_else(|e| e.into_inner());
         *stored = sessions;
+    }
+    // Custom graphs live beside the project: reload them for the new root.
+    let graphs_path = CustomGraphStore::file_in(&state.workspace_root().join(".yonro"));
+    {
+        let mut stored = state.graphs.lock().unwrap_or_else(|e| e.into_inner());
+        *stored = CustomGraphStore::load(&graphs_path);
     }
 }
 
@@ -848,6 +860,79 @@ fn get_timeline(state: tauri::State<'_, AppState>) -> api::TimelineDto {
 }
 
 // ---------------------------------------------------------------------------
+// Custom graphs (hand-drawn canvases; the inferred graph stays exactly one)
+// ---------------------------------------------------------------------------
+
+/// Persist the in-memory graph store to this workspace's `graphs.json`.
+fn save_graphs(state: &AppState) -> Result<(), String> {
+    let path = CustomGraphStore::file_in(&state.workspace_root().join(".yonro"));
+    let graphs = state.graphs.lock().unwrap_or_else(|e| e.into_inner());
+    graphs.save(&path).map_err(|err| err.to_string())
+}
+
+fn list_custom_graphs_impl(state: &AppState) -> Vec<yonro_core::CustomGraph> {
+    state
+        .graphs
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .list()
+        .to_vec()
+}
+
+/// Every hand-made graph, creation order first.
+#[tauri::command]
+fn list_custom_graphs(state: tauri::State<'_, AppState>) -> Vec<yonro_core::CustomGraph> {
+    list_custom_graphs_impl(&state)
+}
+
+fn create_custom_graph_impl(state: &AppState, title: &str) -> Result<usize, String> {
+    let id = {
+        let mut graphs = state.graphs.lock().unwrap_or_else(|e| e.into_inner());
+        graphs.create(title).map_err(|err| err.to_string())?
+    };
+    save_graphs(state)?;
+    Ok(id)
+}
+
+/// Create a named blank canvas.
+#[tauri::command]
+fn create_custom_graph(state: tauri::State<'_, AppState>, title: String) -> Result<usize, String> {
+    create_custom_graph_impl(&state, &title)
+}
+
+fn rename_custom_graph_impl(state: &AppState, id: usize, title: &str) -> Result<(), String> {
+    {
+        let mut graphs = state.graphs.lock().unwrap_or_else(|e| e.into_inner());
+        graphs.rename(id, title).map_err(|err| err.to_string())?;
+    }
+    save_graphs(state)
+}
+
+/// Rename a hand-made graph.
+#[tauri::command]
+fn rename_custom_graph(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+    title: String,
+) -> Result<(), String> {
+    rename_custom_graph_impl(&state, id, &title)
+}
+
+fn delete_custom_graph_impl(state: &AppState, id: usize) -> Result<(), String> {
+    {
+        let mut graphs = state.graphs.lock().unwrap_or_else(|e| e.into_inner());
+        graphs.remove(id).map_err(|err| err.to_string())?;
+    }
+    save_graphs(state)
+}
+
+/// Delete a hand-made graph and everything on it.
+#[tauri::command]
+fn delete_custom_graph(state: tauri::State<'_, AppState>, id: usize) -> Result<(), String> {
+    delete_custom_graph_impl(&state, id)
+}
+
+// ---------------------------------------------------------------------------
 // Structure editing (thin over `Project`; every mutation persists and
 // returns the fresh outline so the UI re-renders from truth)
 // ---------------------------------------------------------------------------
@@ -1272,6 +1357,10 @@ fn main() {
             redo_buffer,
             get_graph,
             get_timeline,
+            list_custom_graphs,
+            create_custom_graph,
+            rename_custom_graph,
+            delete_custom_graph,
             add_node,
             rename_node,
             move_node,
@@ -1863,6 +1952,38 @@ mod tests {
         let abs = absolute_workspace_path("/tmp").unwrap();
         assert_eq!(abs, PathBuf::from("/tmp"));
         assert!(absolute_workspace_path("   ").is_err());
+    }
+
+    #[test]
+    fn custom_graph_impls_persist_and_follow_workspace() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(80_000);
+        let n = NEXT.fetch_add(1, Ordering::SeqCst);
+        let base = std::env::temp_dir().join(format!("yonro-gui-cg-{n}"));
+        let _ = std::fs::remove_dir_all(&base);
+        let state = AppState::load(base.join("home"));
+        let a = base.join("a");
+        create_workspace_impl(&state, a.to_string_lossy().as_ref(), "A", None).unwrap();
+        let id = create_custom_graph_impl(&state, "Web").unwrap();
+        assert!(create_custom_graph_impl(&state, "  ").is_err());
+        rename_custom_graph_impl(&state, id, "Loom").unwrap();
+        let listed = list_custom_graphs_impl(&state);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].title.as_str(), "Loom");
+        assert!(a.join(".yonro/graphs.json").is_file());
+        // The store follows the workspace: a new root starts empty, and
+        // switching back restores the saved graph.
+        let b = base.join("b");
+        create_workspace_impl(&state, b.to_string_lossy().as_ref(), "B", None).unwrap();
+        assert!(list_custom_graphs_impl(&state).is_empty());
+        open_workspace_impl(&state, a.to_string_lossy().as_ref(), true, None).unwrap();
+        let back = list_custom_graphs_impl(&state);
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].title.as_str(), "Loom");
+        delete_custom_graph_impl(&state, id).unwrap();
+        assert!(list_custom_graphs_impl(&state).is_empty());
+        assert!(delete_custom_graph_impl(&state, id).is_err());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
