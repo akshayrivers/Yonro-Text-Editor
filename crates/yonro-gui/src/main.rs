@@ -644,6 +644,8 @@ fn save_file_impl(
     let mut project = state.project.lock().unwrap_or_else(|e| e.into_inner());
     let _ = project.sync_scene_words(&saved_path, words);
     project.save().map_err(|err| err.to_string())?;
+    // Draft snapshot when the last one is old (best-effort; never blocks save).
+    let _ = project.maybe_snapshot(&saved_path);
     drop(project);
     persist_sessions(state);
     if let Some(name) = saved_path.file_name().and_then(|name| name.to_str()) {
@@ -1138,6 +1140,40 @@ fn export_manuscript(
     export_manuscript_impl(&state, format, path)
 }
 
+fn get_history_impl(state: &AppState, id: usize) -> Result<Vec<api::HistoryDto>, String> {
+    let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+    project
+        .scene_history(id)
+        .map(|entries| api::history_dto(&entries))
+        .map_err(|err| err.to_string())
+}
+
+/// Snapshot list for a scene, newest first (name plus words).
+#[tauri::command]
+fn get_history(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+) -> Result<Vec<api::HistoryDto>, String> {
+    get_history_impl(&state, id)
+}
+
+fn restore_snapshot_impl(state: &AppState, id: usize, name: String) -> Result<String, String> {
+    let mut project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+    project
+        .restore_snapshot(id, &name)
+        .map_err(|err| err.to_string())
+}
+
+/// Restore a snapshot over a scene draft (snapshots the present first).
+#[tauri::command]
+fn restore_snapshot(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+    name: String,
+) -> Result<String, String> {
+    restore_snapshot_impl(&state, id, name)
+}
+
 fn save_project_on_exit(window: &tauri::Window) {
     let state = window.state::<AppState>();
     persist_sessions(&state);
@@ -1195,6 +1231,8 @@ fn main() {
             get_session,
             set_goal,
             export_manuscript,
+            get_history,
+            restore_snapshot,
             sweep_recovery,
             check_recovery,
             discard_recovery
@@ -1723,6 +1761,33 @@ mod tests {
         assert!(receipt.path.ends_with("export/probe.md"));
         assert_eq!((receipt.words, receipt.scenes), (4, 1));
         assert!(export_manuscript_impl(&state, "pdf".to_string(), None).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn history_impls_snapshot_on_save_and_restore() {
+        let (state, path) = scene_workspace();
+        let dir = state.workspace_root();
+        let scene = {
+            let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+            let root = project.manuscript.root();
+            let act = project.manuscript.children(root)[0].id;
+            let ch = project.manuscript.children(act)[0].id;
+            project.manuscript.children(ch)[0].id
+        };
+        let opened = open_file_impl(&state, Some(path.to_string_lossy().to_string())).unwrap();
+        set_text_impl(&state, opened.buffer_id, "first version here".to_string()).unwrap();
+        save_file_impl(&state, opened.buffer_id, None, false).unwrap();
+        let history = get_history_impl(&state, scene).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].words, 3);
+        // Immediate re-save throttles; restore swaps the text back.
+        save_file_impl(&state, opened.buffer_id, None, false).unwrap();
+        assert_eq!(get_history_impl(&state, scene).unwrap().len(), 1);
+        set_text_impl(&state, opened.buffer_id, "second version live".to_string()).unwrap();
+        let text = restore_snapshot_impl(&state, scene, history[0].name.clone()).unwrap();
+        assert_eq!(text, "first version here");
+        assert_eq!(get_history_impl(&state, scene).unwrap().len(), 2);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

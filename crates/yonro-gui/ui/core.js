@@ -45,6 +45,8 @@ const core = {
   session: () => core.invoke('get_session'),
   setGoal: (words) => core.invoke('set_goal', { words }),
   exportManuscript: (format, path) => core.invoke('export_manuscript', { format, path: path ?? null }),
+  history: (id) => core.invoke('get_history', { id }),
+  restoreSnapshot: (id, name) => core.invoke('restore_snapshot', { id, name }),
   onCloseRequested: (handler) => {
     try {
       const api = window.__TAURI__ && window.__TAURI__.window;
