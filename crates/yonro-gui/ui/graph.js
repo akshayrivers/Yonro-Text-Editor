@@ -8,104 +8,13 @@ let graphHoveredNodeId = null;
 let graphWalkNeighborIdx = 0;
 let graphData = null;
 let graphPos = null;
+let graphLayout = null; // { pos, bbox, spacing } from forceLayout()
+let graphFitBox = null; // fitted viewBox { x, y, w, h }; zoom clamps to it
+let graphLabelTopN = 25;
 let graphViewBox = { x: 0, y: 0, w: 900, h: 480 };
 let graphPanning = false;
 let graphPanStart = { x: 0, y: 0, vbx: 0, vby: 0 };
 let graphControlsBound = false;
-
-function computeGraphLayout(nodes, edges, W, H) {
-  const cx = W / 2;
-  const cy = H / 2;
-  const pos = {};
-  if (nodes.length <= 12) {
-    const radius = Math.min(W, H) / 2 - 60;
-    nodes.forEach((n, i) => {
-      const angle = (2 * Math.PI * i) / (nodes.length || 1) - Math.PI / 2;
-      pos[n.id] = { x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) };
-    });
-    return pos;
-  }
-
-  // Deterministic seed by node id
-  nodes.forEach((n, i) => {
-    let h = Math.imul(Number(n.id) ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul(i, 0xc2b2ae35);
-    h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
-    h = (h ^ (h >>> 15)) >>> 0;
-    const angle = ((h % 10000) / 10000) * 2 * Math.PI;
-    const dist = 30 + (((h >>> 14) % 10000) / 10000) * (Math.min(W, H) / 2 - 60);
-    pos[n.id] = {
-      x: cx + dist * Math.cos(angle),
-      y: cy + dist * Math.sin(angle),
-      vx: 0,
-      vy: 0
-    };
-  });
-
-  const iterations = 120;
-  const k = Math.sqrt((W * H) / (nodes.length || 1));
-  const k2 = k * k;
-
-  for (let iter = 0; iter < iterations; iter++) {
-    const temp = ((iterations - iter) / iterations) * 18;
-
-    for (let i = 0; i < nodes.length; i++) {
-      const p = pos[nodes[i].id];
-      p.vx = (cx - p.x) * 0.01;
-      p.vy = (cy - p.y) * 0.01;
-    }
-
-    for (let i = 0; i < nodes.length; i++) {
-      const p1 = pos[nodes[i].id];
-      for (let j = i + 1; j < nodes.length; j++) {
-        const p2 = pos[nodes[j].id];
-        let dx = p1.x - p2.x;
-        let dy = p1.y - p2.y;
-        let dist2 = dx * dx + dy * dy;
-        if (dist2 < 1) {
-          dx = 1;
-          dist2 = 1;
-        }
-        const dist = Math.sqrt(dist2);
-        const force = k2 / dist2;
-        const fx = (dx / dist) * force;
-        const fy = (dy / dist) * force;
-        p1.vx += fx;
-        p1.vy += fy;
-        p2.vx -= fx;
-        p2.vy -= fy;
-      }
-    }
-
-    for (let i = 0; i < edges.length; i++) {
-      const e = edges[i];
-      const p1 = pos[e.a];
-      const p2 = pos[e.b];
-      if (!p1 || !p2) continue;
-      const dx = p2.x - p1.x;
-      const dy = p2.y - p1.y;
-      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-      const force = ((dist * dist) / k) * 0.08 * Math.min(e.weight || 1, 4);
-      const fx = (dx / dist) * force;
-      const fy = (dy / dist) * force;
-      p1.vx += fx;
-      p1.vy += fy;
-      p2.vx -= fx;
-      p2.vy -= fy;
-    }
-
-    for (let i = 0; i < nodes.length; i++) {
-      const p = pos[nodes[i].id];
-      const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy) || 1;
-      const capped = Math.min(speed, temp);
-      p.x += (p.vx / speed) * capped;
-      p.y += (p.vy / speed) * capped;
-      p.x = Math.max(30, Math.min(W - 30, p.x));
-      p.y = Math.max(30, Math.min(H - 30, p.y));
-    }
-  }
-
-  return pos;
-}
 
 function updateGraphViewBox() {
   const svg = document.getElementById('graph');
@@ -114,11 +23,64 @@ function updateGraphViewBox() {
   }
 }
 
+/* Fit the layout bbox (+6% padding) into the svg's real aspect. The fitted
+ * box anchors zoom clamps (0.3x..8x) and label density.
+ */
+function fitGraph() {
+  const svg = document.getElementById('graph');
+  if (!svg || !graphLayout || !graphData) return;
+  const bb = graphLayout.bbox;
+  if (!Number.isFinite(bb.x0) || bb.x1 <= bb.x0 || bb.y1 <= bb.y0) return;
+  const pad = 0.06;
+  const bw = (bb.x1 - bb.x0) * (1 + pad * 2) || 1;
+  const bh = (bb.y1 - bb.y0) * (1 + pad * 2) || 1;
+  const cw = svg.clientWidth || 900;
+  const ch = svg.clientHeight || 480;
+  const scale = Math.max(bw / cw, bh / ch);
+  const w = cw * scale;
+  const h = ch * scale;
+  const cx = (bb.x0 + bb.x1) / 2;
+  const cy = (bb.y0 + bb.y1) / 2;
+  graphFitBox = { x: cx - w / 2, y: cy - h / 2, w, h };
+  graphViewBox = { ...graphFitBox };
+  updateGraphViewBox();
+  updateGraphLabelLod();
+  renderGraph(graphData);
+}
+
+function graphZoom() {
+  if (!graphFitBox || !graphFitBox.w) return 1;
+  return graphFitBox.w / (graphViewBox.w || graphFitBox.w);
+}
+
+/* Label budget grows with zoom^2 so zooming in reveals names. Runs on zoom
+ * end (debounced), never per wheel tick.
+ */
+function updateGraphLabelLod() {
+  const zoom = graphZoom();
+  graphLabelTopN = Math.max(5, Math.round(25 * zoom * zoom));
+}
+
+const refreshGraphLabelsSoon = debounce(() => {
+  updateGraphLabelLod();
+  if (graphData) renderGraph(graphData);
+}, 150);
+
 function zoomGraph(factor, rx, ry) {
   const rX = typeof rx === 'number' ? rx : 0.5;
   const rY = typeof ry === 'number' ? ry : 0.5;
-  const newW = Math.max(120, Math.min(4800, graphViewBox.w * factor));
-  const newH = newW * (480 / 900);
+  const svg = document.getElementById('graph');
+  const cw = (svg && svg.clientWidth) || 900;
+  const ch = (svg && svg.clientHeight) || 480;
+  const aspect = ch / (cw || 1);
+  let lo = 120;
+  let hi = 4800;
+  if (graphFitBox && graphFitBox.w > 0) {
+    lo = graphFitBox.w / 8;
+    hi = graphFitBox.w / 0.3;
+  }
+  const newW = Math.max(lo, Math.min(hi, graphViewBox.w * factor));
+  const newH = newW * aspect;
   graphViewBox.x += (graphViewBox.w - newW) * rX;
   graphViewBox.y += (graphViewBox.h - newH) * rY;
   graphViewBox.w = newW;
@@ -138,18 +100,28 @@ function bindGraphControlsOnce() {
   }
 
   const btnIn = document.getElementById('graph-zoom-in');
-  if (btnIn) btnIn.addEventListener('click', () => zoomGraph(0.8));
+  if (btnIn) btnIn.addEventListener('click', () => {
+    zoomGraph(0.8);
+    refreshGraphLabelsSoon();
+  });
 
   const btnOut = document.getElementById('graph-zoom-out');
-  if (btnOut) btnOut.addEventListener('click', () => zoomGraph(1.25));
+  if (btnOut) btnOut.addEventListener('click', () => {
+    zoomGraph(1.25);
+    refreshGraphLabelsSoon();
+  });
 
   const btnFit = document.getElementById('graph-zoom-fit');
   if (btnFit) {
     btnFit.addEventListener('click', () => {
-      graphViewBox = { x: 0, y: 0, w: 900, h: 480 };
-      updateGraphViewBox();
+      fitGraph();
     });
   }
+
+  window.addEventListener('resize', debounce(() => {
+    const view = document.getElementById('view-graph');
+    if (view && !view.classList.contains('hidden') && graphData) fitGraph();
+  }, 150));
 
   const svg = document.getElementById('graph');
   if (svg) {
@@ -186,6 +158,7 @@ function bindGraphControlsOnce() {
       const ry = rect.height ? (e.clientY - rect.top) / rect.height : 0.5;
       const factor = e.deltaY < 0 ? 0.9 : 1.1;
       zoomGraph(factor, rx, ry);
+      refreshGraphLabelsSoon();
     }, { passive: false });
   }
 }
@@ -194,8 +167,19 @@ async function loadGraph() {
   bindGraphControlsOnce();
   try {
     graphData = await core.graph();
-    graphPos = computeGraphLayout(graphData.nodes || [], graphData.edges || [], 900, 480);
-    renderGraph(graphData);
+    const nodes = graphData.nodes || [];
+    const edges = graphData.edges || [];
+    // Slider spans the real data: max is never above every edge weight.
+    const slider = document.getElementById('graph-min-weight');
+    if (slider) {
+      const maxW = edges.reduce((m, e) => Math.max(m, e.weight || 0), 1);
+      slider.min = '1';
+      slider.max = String(Math.max(1, maxW));
+      slider.value = '1';
+    }
+    graphLayout = forceLayout(nodes, edges);
+    graphPos = graphLayout.pos;
+    fitGraph();
   } catch (err) {
     document.getElementById('graph-legend').textContent = `could not load graph: ${errText(err)}`;
   }
@@ -249,7 +233,7 @@ function renderGraph(graph) {
 
   const slider = document.getElementById('graph-min-weight');
   const minWeight = slider ? Number(slider.value) || 1 : 1;
-  const filteredEdges = edges.filter((e) => (e.weight || 0) >= minWeight);
+  const aboveSlider = edges.filter((e) => (e.weight || 0) >= minWeight);
 
   const neighborIds = new Set();
   if (graphSpotlight !== null) {
@@ -260,10 +244,27 @@ function renderGraph(graph) {
     }
   }
 
-  const isDense = nodes.length > 200;
-  const top25Ids = isDense
-    ? new Set(nodes.slice().sort((a, b) => (b.degree || 0) - (a.degree || 0)).slice(0, 25).map((n) => n.id))
-    : null;
+  // Edge LOD: strongest first, capped at 2n; spotlight edges always drawn.
+  // Small graphs (<60 nodes) draw everything above the slider.
+  const ranked = aboveSlider.slice().sort((a, b) => (b.weight || 0) - (a.weight || 0));
+  let drawnEdges = ranked;
+  if (nodes.length >= 60) {
+    const cap = nodes.length * 2;
+    const must = new Set();
+    const rest = [];
+    for (const e of ranked) {
+      if (graphSpotlight !== null && (e.a === graphSpotlight || e.b === graphSpotlight)) must.add(e);
+      else rest.push(e);
+    }
+    drawnEdges = [...must, ...rest.slice(0, Math.max(0, cap - must.size))];
+  }
+
+  const byDegree = nodes.slice().sort((a, b) => (b.degree || 0) - (a.degree || 0));
+  const labelIds = new Set(byDegree.slice(0, graphLabelTopN).map((n) => n.id));
+
+  const spacing = (graphLayout && graphLayout.spacing) || 60;
+  const baseR = Math.min(8, Math.max(3, spacing * 0.12));
+  const nodeR = (n) => baseR + Math.min(4, Math.sqrt(n.degree || 0));
 
   // Determine active roving tabindex node
   let rovingId = graphFocusedNodeId;
@@ -282,14 +283,13 @@ function renderGraph(graph) {
     graphSpotlight === null || e.a === graphSpotlight || e.b === graphSpotlight ? '' : ' dim';
 
   let html = '';
-  for (const e of filteredEdges) {
+  for (const e of drawnEdges) {
     const a = graphPos[e.a];
     const b = graphPos[e.b];
     if (!a || !b) continue;
     const w = 1 + Math.min(6, e.weight || 1);
     const cls = (e.kinds || []).includes('mention') ? 'edge mention' : 'edge shared';
-    const titleTag = isDense ? '' : `<title>${e.shared || 0} shared · ${e.mentions || 0} mentions</title>`;
-    html += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" class="${cls}${dimEdge(e)}" stroke-width="${w}">${titleTag}</line>`;
+    html += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" class="${cls}${dimEdge(e)}" stroke-width="${w}"/>`;
   }
 
   for (const n of nodes) {
@@ -302,8 +302,7 @@ function renderGraph(graph) {
     const ariaLabel = `${esc(n.label)}, ${esc(n.kind)}, ${n.degree || 0} links`;
 
     const showLabel =
-      !isDense ||
-      top25Ids.has(n.id) ||
+      labelIds.has(n.id) ||
       n.id === graphSpotlight ||
       (graphSpotlight !== null && neighborIds.has(n.id)) ||
       n.id === graphFocusedNodeId ||
@@ -314,9 +313,9 @@ function renderGraph(graph) {
     const textTag = showLabel
       ? `<text x="${p.x}" y="${p.y + 4}" text-anchor="middle">${esc(displayLabel)}</text>`
       : '';
-    const titleTag = isDense ? '' : `<title>${esc(n.label)} (${esc(n.kind)})</title>`;
+    const titleTag = `<title>${esc(n.label)} (${esc(n.kind)})</title>`;
 
-    html += `<g role="button" data-id="${n.id}" tabindex="${tabIndex}" aria-label="${ariaLabel}" class="gnode${kindCls}${dimNode(n.id)}${isSpotlight}${isFocused}"><circle cx="${p.x}" cy="${p.y}" r="16"/>${textTag}${titleTag}</g>`;
+    html += `<g role="button" data-id="${n.id}" tabindex="${tabIndex}" aria-label="${ariaLabel}" class="gnode${kindCls}${dimNode(n.id)}${isSpotlight}${isFocused}"><circle cx="${p.x}" cy="${p.y}" r="${nodeR(n).toFixed(1)}"/>${textTag}${titleTag}</g>`;
   }
 
   svg.innerHTML = html;
@@ -348,30 +347,26 @@ function renderGraph(graph) {
     });
 
     g.addEventListener('mouseenter', () => {
-      if (isDense) {
-        graphHoveredNodeId = id;
-        if (!g.querySelector('text')) {
-          const p = graphPos[id];
-          const full = String(node ? node.label : '');
-          const label = full.length > 14 ? `${full.slice(0, 13)}…` : full;
-          const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-          text.setAttribute('x', String(p.x));
-          text.setAttribute('y', String(p.y + 4));
-          text.setAttribute('text-anchor', 'middle');
-          text.textContent = label;
-          g.appendChild(text);
-        }
+      graphHoveredNodeId = id;
+      if (!g.querySelector('text')) {
+        const p = graphPos[id];
+        if (!p) return;
+        const full = String(node ? node.label : '');
+        const label = full.length > 14 ? `${full.slice(0, 13)}…` : full;
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('x', String(p.x));
+        text.setAttribute('y', String(p.y + 4));
+        text.setAttribute('text-anchor', 'middle');
+        text.textContent = label;
+        text.dataset.hover = '1';
+        g.appendChild(text);
       }
     });
 
     g.addEventListener('mouseleave', () => {
-      if (isDense) {
-        graphHoveredNodeId = null;
-        if (!top25Ids.has(id) && id !== graphSpotlight && id !== graphFocusedNodeId && (!graphSpotlight || !neighborIds.has(id))) {
-          const text = g.querySelector('text');
-          if (text) text.remove();
-        }
-      }
+      graphHoveredNodeId = null;
+      const text = g.querySelector('text[data-hover="1"]');
+      if (text) text.remove();
     });
 
     g.addEventListener('keydown', (e) => {
@@ -420,7 +415,12 @@ function renderGraph(graph) {
     });
   });
 
-  const shownEdges = filteredEdges.filter((e) =>
+  const legend = document.getElementById('graph-legend');
+  if (!drawnEdges.length && aboveSlider.length === 0 && edges.length > 0) {
+    legend.textContent = 'no links at this weight. lower the slider.';
+    return;
+  }
+  const shownEdges = drawnEdges.filter((e) =>
     graphSpotlight === null || e.a === graphSpotlight || e.b === graphSpotlight
   ).length;
   const kindCounts = {};
@@ -429,6 +429,6 @@ function renderGraph(graph) {
     .sort()
     .map((k) => `${kindCounts[k]} ${k}${kindCounts[k] === 1 ? '' : 's'}`)
     .join(' · ');
-  document.getElementById('graph-legend').textContent =
-    `${nodes.length} entities (${kindSummary}) · ${edges.length} links (${shownEdges} shown). solid: @mention · dashed: shared scene.`;
+  legend.textContent =
+    `${nodes.length} entities (${kindSummary}) · ${shownEdges} of ${edges.length} links shown. solid: @mention · dashed: shared scene.`;
 }
