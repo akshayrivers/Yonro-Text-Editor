@@ -54,6 +54,7 @@ button.active { border-color: var(--accent); color: var(--accent); }
 }
 .brand { font-weight: bold; color: var(--accent); margin-right: 4px; }
 #project-title { margin-right: 8px; overflow: hidden; text-overflow: ellipsis; }
+#view-tabs { display: flex; gap: 6px; align-items: center; }
 #topnav [data-view][aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
 .hide-narrow { color: var(--muted); }
 
@@ -347,11 +348,14 @@ dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-bottom: 4px;
 }
 .graph-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 .graph-slider-label {
@@ -390,7 +394,7 @@ dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
   white-space: nowrap;
 }
 #graph .dim { opacity: 0.15; }
-#graph .edge { fill: none; transition: opacity 0.15s ease; }
+#graph .edge { fill: none; }
 #graph .edge.mention { stroke: var(--mention); }
 #graph .edge.shared { stroke: var(--shared); stroke-dasharray: 6 4; }
 #graph .gnode { cursor: pointer; outline: none; }
@@ -398,7 +402,6 @@ dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
   fill: var(--panel-2);
   stroke: var(--muted);
   stroke-width: 2;
-  transition: stroke 0.15s ease, stroke-width 0.15s ease;
 }
 #graph .gnode.k-character circle { stroke: var(--k-character); }
 #graph .gnode.k-place circle { stroke: var(--k-place); }
@@ -419,6 +422,8 @@ dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-bottom: 4px;
 }
 .timeline-filter-label {
@@ -583,19 +588,31 @@ body.zen #zen-count {
   }
   #split-binder { display: none; }
   #topnav { font-size: 12px; }
+  #center { padding: 8px 8px 24px; min-width: 0; }
+  #editor, #editor-backdrop { padding: 10px 12px; }
+  #find-bar { flex-wrap: wrap; }
+  .graph-toolbar { width: 100%; }
 }
 
 /* Motion: transitions only when the user wants them */
 @media (prefers-reduced-motion: no-preference) {
   button, .node .row, .splitter, #editor, .file-row { transition: border-color 120ms ease, background 120ms ease; }
   #inspector, #binder { transition: transform 160ms ease; }
+  #graph .edge { transition: opacity 0.15s ease; }
+  #graph .gnode circle { transition: stroke 0.15s ease, stroke-width 0.15s ease; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; }
 }
 
 @media (forced-colors: active) {
-  button, #editor, .entity, #graph, #prose-pop, #shortcuts, #binder, #inspector {
+  button, #editor, .entity, #graph, #prose-pop, #shortcuts, #binder, #inspector,
+  dialog, #palette, #palette-input, .tab, .lore-row, .outline-table, .chip, .scene-link-btn {
     border: 1px solid ButtonText;
   }
   :focus-visible { outline: 2px solid Highlight; }
+  .pbar, .pbar > div { border: 1px solid ButtonText; }
 }
 
 /* Lore view */

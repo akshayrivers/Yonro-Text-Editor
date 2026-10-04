@@ -9,15 +9,17 @@
   <script src="theme.js"></script>
 </head>
 <body>
-  <nav id="topnav" aria-label="Views">
+  <nav id="topnav" aria-label="Main">
     <span class="brand">yonro</span>
     <span id="project-title" class="muted">untitled</span>
     <button id="workspace-switch" title="Switch project (start screen)">switch</button>
-    <button data-view="write" class="active" role="tab" aria-selected="true" tabindex="0">Write</button>
-    <button data-view="outline" role="tab" aria-selected="false" tabindex="-1">Outline</button>
-    <button data-view="graph" role="tab" aria-selected="false" tabindex="-1">Graph</button>
-    <button data-view="timeline" role="tab" aria-selected="false" tabindex="-1">Timeline</button>
-    <button data-view="lore" role="tab" aria-selected="false" tabindex="-1">Lore</button>
+    <div id="view-tabs" role="tablist" aria-label="Views">
+      <button data-view="write" class="active" role="tab" aria-selected="true" aria-controls="view-write" tabindex="0">Write</button>
+      <button data-view="outline" role="tab" aria-selected="false" aria-controls="view-outline" tabindex="-1">Outline</button>
+      <button data-view="graph" role="tab" aria-selected="false" aria-controls="view-graph" tabindex="-1">Graph</button>
+      <button data-view="timeline" role="tab" aria-selected="false" aria-controls="view-timeline" tabindex="-1">Timeline</button>
+      <button data-view="lore" role="tab" aria-selected="false" aria-controls="view-lore" tabindex="-1">Lore</button>
+    </div>
     <span class="spacer"></span>
     <span class="muted hide-narrow">mod+P</span>
     <button id="prose-toggle" title="Prose settings (size, measure, leading)">Aa</button>
@@ -48,7 +50,7 @@
     </aside>
     <div class="splitter" id="split-binder" role="separator" aria-label="Resize binder" tabindex="0"></div>
     <main id="center">
-      <section id="view-write" class="view">
+      <section id="view-write" class="view" role="tabpanel" aria-label="Write">
         <div id="doc-tabs" role="tablist" aria-label="Open documents"></div>
         <div id="editor-bar">
           <span id="doc-name" class="muted">No document — open one from Outline, or start typing below.</span>
@@ -71,12 +73,12 @@
         <div id="zen-count" class="muted" aria-label="Word count"></div>
       </section>
 
-      <section id="view-outline" class="view hidden">
+      <section id="view-outline" class="view hidden" role="tabpanel" aria-label="Outline">
         <h2>Outline</h2>
         <div id="outline"><p class="muted">No manuscript yet — build one in the terminal (<code>Ctrl+O</code>, then <code>a</code> <code>c</code> <code>s</code>).</p></div>
       </section>
 
-      <section id="view-graph" class="view hidden">
+      <section id="view-graph" class="view hidden" role="tabpanel" aria-label="Graph">
         <div class="graph-head">
           <h2>Character graph</h2>
           <div class="graph-toolbar">
@@ -91,7 +93,7 @@
         <div id="graph-legend" class="muted"></div>
       </section>
 
-      <section id="view-timeline" class="view hidden">
+      <section id="view-timeline" class="view hidden" role="tabpanel" aria-label="Timeline">
         <div class="timeline-head">
           <h2>Timeline</h2>
           <label class="timeline-filter-label">pov
@@ -104,7 +106,7 @@
         <ol id="timeline"></ol>
       </section>
 
-      <section id="view-lore" class="view hidden">
+      <section id="view-lore" class="view hidden" role="tabpanel" aria-label="Lore">
         <h2>Lore</h2>
         <div id="lore"><p class="muted">No entities yet — they seed from scene POVs.</p></div>
       </section>

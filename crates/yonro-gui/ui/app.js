@@ -27,6 +27,21 @@ for (const btn of document.querySelectorAll('#topnav [data-view]')) {
   btn.addEventListener('click', () => show(btn.dataset.view));
 }
 
+document.getElementById('view-tabs').addEventListener('keydown', (e) => {
+  const tabs = Array.from(document.querySelectorAll('#view-tabs [data-view]'));
+  const at = tabs.indexOf(document.activeElement);
+  if (at === -1) return;
+  let next = -1;
+  if (e.key === 'ArrowRight') next = (at + 1) % tabs.length;
+  else if (e.key === 'ArrowLeft') next = (at - 1 + tabs.length) % tabs.length;
+  else if (e.key === 'Home') next = 0;
+  else if (e.key === 'End') next = tabs.length - 1;
+  else return;
+  e.preventDefault();
+  show(tabs[next].dataset.view);
+  tabs[next].focus();
+});
+
 /* ---------- binder (outline tree; full controller lives in outline.js) ------ */
 async function refreshBinder() {
   if (typeof loadBinder === 'function') {
