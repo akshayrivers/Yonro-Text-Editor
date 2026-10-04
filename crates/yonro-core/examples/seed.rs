@@ -242,8 +242,12 @@ fn scene_prose(
     // Clustered mentions: the cast is dealt into groups of ~8 and each
     // scene hosts one group, so members appear in 1-3 scenes together
     // (a real neighborhood) instead of scattered singles. The only hero
-    // links are the POV and one handmade mention.
-    let hand_a = HANDMADE[(scene_index.saturating_add(1)) % HANDMADE.len()].0;
+    // links are the POV and one handmade mention — and the mention walks
+    // a different cycle than the POV (round + seat), so no hero pair
+    // repeats and no hub star forms.
+    let seat = scene_index % HANDMADE.len();
+    let round = scene_index.div_euclid(HANDMADE.len());
+    let hand_a = HANDMADE[(round.saturating_add(1).saturating_add(seat)) % HANDMADE.len()].0;
     let members = cluster_members(scene_index, generated, hand_a);
     let list = members
         .iter()
