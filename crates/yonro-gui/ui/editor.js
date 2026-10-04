@@ -138,14 +138,10 @@ const scheduleBinderRefresh = debounce(() => {
 function setStatusline(stats) {
   const stFile = document.getElementById('st-file');
   const stWords = document.getElementById('st-words');
-  const stSession = document.getElementById('st-session');
-  const stGoal = document.getElementById('st-goal');
   const stMin = document.getElementById('st-min');
   const doc = docs.get(activeDoc);
   if (stFile) stFile.textContent = doc ? `${shortName(doc.path)}${doc.dirty ? ' ●' : ''}` : '—';
   if (stWords) stWords.textContent = stats ? `${stats.words} w` : '—';
-  if (stSession) stSession.textContent = '—';
-  if (stGoal) stGoal.textContent = '—';
   if (stMin) stMin.textContent = stats ? `~${stats.reading_min} min` : '—';
   const zen = document.getElementById('zen-count');
   if (zen) zen.textContent = stats ? `${stats.words} words` : '';
@@ -660,6 +656,7 @@ async function flushSync() {
     }
     renderStatus(stats);
     scheduleBinderRefresh();
+    if (typeof maybeRefreshSessionSoon === 'function') maybeRefreshSessionSoon();
   } catch (err) {
     setMessage(`sync failed: ${err}`, { error: true });
   }
