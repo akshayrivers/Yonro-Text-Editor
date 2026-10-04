@@ -11,7 +11,7 @@ async function loadWorkspace() {
   try {
     yonroWorkspace = await core.workspace();
   } catch (err) {
-    setMessage(`workspace unavailable: ${err}`, { error: true });
+    setMessage(`could not load workspace: ${errText(err)}`, { error: true });
     return;
   }
   const title = document.getElementById('project-title');
@@ -105,7 +105,7 @@ async function switchWorkspace(path, force) {
       if (choice === 'force') return switchWorkspace(path, true);
       return;
     }
-    setMessage(`could not open ${path}: ${err}`, { error: true });
+    setMessage(`could not open workspace ${path}: ${errText(err)}`, { error: true });
     return;
   }
   yonroWorkspace = next;
@@ -149,8 +149,7 @@ function confirmForceSwitch() {
     forceBtn.addEventListener('click', () => { dlg.close(); resolve('force'); }, { once: true });
     cancelBtn.addEventListener('click', () => { dlg.close(); resolve('cancel'); }, { once: true });
     dlg.addEventListener('cancel', () => resolve('cancel'), { once: true });
-    if (typeof dlg.showModal === 'function') dlg.showModal();
-    saveBtn.focus();
+    openModal(dlg, saveBtn);
   });
 }
 
@@ -216,19 +215,14 @@ function workspaceDialog(mode) {
         return;
       }
     } catch (e) {
-      fail(`cannot ${mode} ${path}: ${e}`);
+      fail(`cannot ${mode} workspace ${path}: ${errText(e)}`);
       return;
     }
     dlg.close();
     afterWorkspaceSwitch(`created ${(yonroWorkspace && yonroWorkspace.title) || path}`);
   });
   cancelBtn.addEventListener('click', () => dlg.close(), { once: true });
-  if (typeof dlg.showModal === 'function') dlg.showModal();
-  if (titleInput) {
-    titleInput.focus();
-  } else {
-    pathInput.focus();
-  }
+  openModal(dlg, titleInput || pathInput);
 }
 
 document.getElementById('start-create').addEventListener('click', () => workspaceDialog('create'));

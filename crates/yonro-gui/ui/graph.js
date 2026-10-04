@@ -197,7 +197,7 @@ async function loadGraph() {
     graphPos = computeGraphLayout(graphData.nodes || [], graphData.edges || [], 900, 480);
     renderGraph(graphData);
   } catch (err) {
-    document.getElementById('graph-legend').textContent = `Graph unavailable: ${err}`;
+    document.getElementById('graph-legend').textContent = `could not load graph: ${errText(err)}`;
   }
 }
 

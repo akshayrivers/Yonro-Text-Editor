@@ -15,7 +15,7 @@ async function loadTimeline() {
     document.getElementById('timeline').innerHTML = '';
     const p = document.createElement('p');
     p.className = 'muted';
-    p.textContent = `timeline unavailable: ${err}`;
+    p.textContent = `could not load timeline: ${errText(err)}`;
     document.getElementById('timeline').appendChild(p);
   }
 }
