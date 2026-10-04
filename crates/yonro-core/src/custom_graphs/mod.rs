@@ -7,6 +7,7 @@
 //! rendering, core only stores and validates.
 
 use std::fmt;
+use std::path::{Path, PathBuf};
 
 /// Opaque id of one custom graph (stable while it lives in the store).
 pub type CustomGraphId = usize;
@@ -74,7 +75,8 @@ pub struct CustomGraphStore {
     next_id: CustomGraphId,
 }
 
-/// Validation failures (messages name the graph/node/edge and the reason).
+/// Validation / persistence failures (messages name the graph/node/edge
+/// or file and the reason).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CustomGraphError {
     /// Blank graph title or node label.
@@ -89,6 +91,8 @@ pub enum CustomGraphError {
     BadEdge(String),
     /// Coordinate is `NaN` or infinite.
     BadCoord(String),
+    /// `graphs.json` cannot be written (message names the file).
+    Io(String),
 }
 
 impl fmt::Display for CustomGraphError {
@@ -102,7 +106,9 @@ impl fmt::Display for CustomGraphError {
             Self::UnknownEdge(graph, edge) => {
                 write!(formatter, "graph {graph} has no edge {edge}")
             }
-            Self::BadEdge(message) | Self::BadCoord(message) => write!(formatter, "{message}"),
+            Self::BadEdge(message) | Self::BadCoord(message) | Self::Io(message) => {
+                write!(formatter, "{message}")
+            }
         }
     }
 }
@@ -349,6 +355,52 @@ impl CustomGraphStore {
         target.edges.remove(at);
         Ok(())
     }
+
+    /// `graphs.json` inside a workspace `.yonro/` dir.
+    #[must_use]
+    pub fn file_in(dot_yonro: &Path) -> PathBuf {
+        dot_yonro.join("graphs.json")
+    }
+
+    /// Load `path`, falling back to an empty store on any failure.
+    ///
+    /// Missing files (old workspaces) and corrupt JSON yield zero graphs —
+    /// never an error, never a crash.
+    #[must_use]
+    pub fn load(path: &Path) -> Self {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return Self::new();
+        };
+        serde_json::from_str(&text).unwrap_or_else(|_| Self::new())
+    }
+
+    /// Persist as pretty JSON (creates parent dirs; atomic tmp + rename).
+    ///
+    /// # Errors
+    /// `Io` when the directory cannot be created or any write/sync/rename
+    /// step fails.
+    pub fn save(&self, path: &Path) -> Result<(), CustomGraphError> {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|err| CustomGraphError::Io(format!("{}: {err}", parent.display())))?;
+            }
+        }
+        let json = serde_json::to_string_pretty(&self)
+            .map_err(|err| CustomGraphError::Io(format!("{}: {err}", path.display())))?;
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, json.as_bytes())
+            .map_err(|err| CustomGraphError::Io(format!("{}: {err}", tmp.display())))?;
+        let handle = std::fs::File::open(&tmp)
+            .map_err(|err| CustomGraphError::Io(format!("{}: {err}", tmp.display())))?;
+        handle
+            .sync_all()
+            .map_err(|err| CustomGraphError::Io(format!("{}: {err}", tmp.display())))?;
+        drop(handle);
+        std::fs::rename(&tmp, path)
+            .map_err(|err| CustomGraphError::Io(format!("{}: {err}", path.display())))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -395,6 +447,27 @@ mod tests {
         assert_eq!(kept.nodes.len(), 1);
         assert!(kept.edges.is_empty());
         assert!(store.remove_edge(graph, edge).is_err());
+    }
+
+    #[test]
+    fn store_saves_and_reloads_from_disk() {
+        let dir = std::env::temp_dir().join(format!("yonro-graphs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // Missing file loads as empty.
+        let path = CustomGraphStore::file_in(&dir.join(".yonro"));
+        assert!(CustomGraphStore::load(&path).list().is_empty());
+        let mut store = CustomGraphStore::new();
+        let graph = store.create("Web").unwrap();
+        let a = store.add_node(graph, "A", 1.0, 2.0).unwrap();
+        let b = store.add_node(graph, "B", 3.0, 4.0).unwrap();
+        store.add_edge(graph, a, b, "kin").unwrap();
+        store.save(&path).unwrap();
+        let back = CustomGraphStore::load(&path);
+        assert_eq!(store, back);
+        // Corrupt file falls back to empty, never crashes.
+        std::fs::write(&path, "broken{{").unwrap();
+        assert!(CustomGraphStore::load(&path).list().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
