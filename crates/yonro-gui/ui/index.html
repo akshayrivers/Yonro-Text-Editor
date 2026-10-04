@@ -82,7 +82,14 @@
       </section>
 
       <section id="view-timeline" class="view hidden">
-        <h2>Timeline</h2>
+        <div class="timeline-head">
+          <h2>Timeline</h2>
+          <label class="timeline-filter-label">pov
+            <select id="timeline-pov" aria-label="Filter timeline by POV">
+              <option value="">all</option>
+            </select>
+          </label>
+        </div>
         <div id="continuity"></div>
         <ol id="timeline"></ol>
       </section>

@@ -358,9 +358,39 @@ dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
 }
 
 /* Timeline */
+.timeline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.timeline-filter-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.82em;
+}
+.timeline-filter-label select {
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  font: inherit;
+}
+.timeline-chapter {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-family: var(--font-ui);
+  margin: 14px 0 4px;
+}
 #timeline { padding-left: 22px; font-family: var(--font-prose); }
 #timeline li { margin-bottom: 8px; }
 #timeline .when { color: var(--muted); font-size: 0.85em; font-family: var(--font-ui); }
+#timeline .timeline-pov { margin: 0 2px; }
 .note {
   border-left: 3px solid var(--warn);
   background: var(--panel);
@@ -368,6 +398,8 @@ dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
   margin-bottom: 8px;
   border-radius: 0 6px 6px 0;
 }
+.note-message { margin-bottom: 6px; }
+.note-scenes { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* Statusline */
 #statusline {
