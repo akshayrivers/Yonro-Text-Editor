@@ -206,13 +206,31 @@ fn today_stamp() -> String {
     format!("{year:04}-{month:02}-{day:02}")
 }
 
+/// Home folder for resolving relative workspace paths. A GUI app's
+/// working directory is wherever it was launched from, so it is a bad
+/// base; `Desktop` (no slash) means `$HOME/Desktop`, while `/Desktop`
+/// is the disk root and correctly fails the write check.
+fn home_dir() -> PathBuf {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_or_else(
+            |_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            PathBuf::from,
+        )
+}
+
+/// Home folder string for prefilling the workspace dialogs.
+#[tauri::command]
+fn get_home() -> String {
+    home_dir().to_string_lossy().to_string()
+}
+
 fn absolute_workspace_path(raw: &str) -> Result<PathBuf, String> {
     let resolved = Project::resolve_workspace_path(raw).map_err(|err| err.to_string())?;
     if resolved.is_absolute() {
         Ok(resolved)
     } else {
-        let cwd = std::env::current_dir().map_err(|err| format!("cannot resolve {raw}: {err}"))?;
-        Ok(cwd.join(resolved))
+        Ok(home_dir().join(resolved))
     }
 }
 
@@ -1242,6 +1260,7 @@ fn main() {
             get_stats,
             get_lore,
             get_workspace_dir,
+            get_home,
             get_workspace,
             open_workspace,
             create_workspace,
@@ -1832,6 +1851,18 @@ mod tests {
         drop(project);
         assert!(std::path::Path::new(&file).is_file(), "missing {file}");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn relative_paths_resolve_under_home() {
+        let home = home_dir();
+        assert!(!home.as_os_str().is_empty());
+        assert!(!get_home().is_empty());
+        let joined = absolute_workspace_path("Desktop").unwrap();
+        assert_eq!(joined, home.join("Desktop"));
+        let abs = absolute_workspace_path("/tmp").unwrap();
+        assert_eq!(abs, PathBuf::from("/tmp"));
+        assert!(absolute_workspace_path("   ").is_err());
     }
 
     #[test]

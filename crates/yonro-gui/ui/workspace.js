@@ -184,6 +184,17 @@ function workspaceDialog(mode) {
   pathInput.setAttribute('aria-label', 'workspace folder path');
   pathLabel.appendChild(pathInput);
   dlg.appendChild(pathLabel);
+  const pathHint = document.createElement('p');
+  pathHint.className = 'muted';
+  pathHint.textContent = 'absolute path, or relative to your home folder. Desktop is your desktop; /Desktop is the disk root.';
+  dlg.appendChild(pathHint);
+  if (pathInput.value === '' && typeof core.home === 'function') {
+    core.home().then((home) => {
+      if (pathInput.value !== '' || !home) return;
+      pathInput.placeholder = `${home}/novels/my-novel`;
+      if (mode === 'create') pathInput.value = `${home}/novels/`;
+    }).catch(() => {});
+  }
   const err = document.createElement('p');
   err.className = 'field-error';
   err.setAttribute('aria-live', 'polite');

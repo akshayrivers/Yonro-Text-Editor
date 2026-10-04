@@ -13,6 +13,7 @@ const core = {
   stats: () => core.invoke('get_stats'),
   lore: () => core.invoke('get_lore'),
   workspace: () => core.invoke('get_workspace'),
+  home: () => core.invoke('get_home'),
   openWorkspace: (path, force) => core.invoke('open_workspace', { path, force: Boolean(force) }),
   createWorkspace: (path, title) => core.invoke('create_workspace', { path, title }),
   graph: () => core.invoke('get_graph'),
