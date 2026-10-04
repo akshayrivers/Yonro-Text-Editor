@@ -42,6 +42,8 @@ const core = {
   getMentions: (bufferId) => core.invoke('get_mentions', { bufferId }),
   searchBuffer: (bufferId, query, caseSensitive) => core.invoke('search_buffer', { bufferId, query, caseSensitive: Boolean(caseSensitive) }),
   searchProject: (query, caseSensitive) => core.invoke('search_project', { query, caseSensitive: Boolean(caseSensitive) }),
+  session: () => core.invoke('get_session'),
+  setGoal: (words) => core.invoke('set_goal', { words }),
   onCloseRequested: (handler) => {
     try {
       const api = window.__TAURI__ && window.__TAURI__.window;

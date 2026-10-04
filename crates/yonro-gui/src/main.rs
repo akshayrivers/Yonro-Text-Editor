@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use serde::Serialize;
 use tauri::Manager;
-use yonro_core::{api, Buffer, Project, Recents, SceneMetaFields, UndoStack};
+use yonro_core::{api, Buffer, Project, Recents, SceneMetaFields, SessionLog, UndoStack};
 
 // ---------------------------------------------------------------------------
 // State
@@ -22,6 +22,7 @@ struct AppState {
     project: Mutex<Project>,
     buffers: Mutex<HashMap<usize, GuiBuffer>>,
     next_buffer: Mutex<usize>,
+    sessions: Mutex<SessionLog>,
 }
 
 /// One open document: rope buffer plus coalescing whole-text undo.
@@ -48,11 +49,14 @@ impl GuiBuffer {
 
 impl AppState {
     fn load(workspace_dir: PathBuf) -> Self {
-        let project = Project::load(&workspace_dir);
+        let mut project = Project::load(&workspace_dir);
+        let (sessions, mut session_warnings) = project.load_sessions();
+        project.warnings.append(&mut session_warnings);
         Self {
             project: Mutex::new(project),
             buffers: Mutex::new(HashMap::new()),
             next_buffer: Mutex::new(0),
+            sessions: Mutex::new(sessions),
         }
     }
 
@@ -228,6 +232,31 @@ fn touch_recents(recents_path: Option<&PathBuf>, dir: &std::path::Path, title: &
     let _ = recents.save(path);
 }
 
+/// Best-effort session persist (save/exit/switch paths).
+fn persist_sessions(state: &AppState) {
+    let sessions = state
+        .sessions
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+    let _ = project.save_sessions(&sessions);
+}
+
+/// Swap in a freshly loaded project plus its sessions (switch paths).
+fn adopt_project(state: &AppState, project: Project) {
+    let (sessions, mut warnings) = project.load_sessions();
+    {
+        let mut guard = state.project.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = project;
+        guard.warnings.append(&mut warnings);
+    }
+    {
+        let mut stored = state.sessions.lock().unwrap_or_else(|e| e.into_inner());
+        *stored = sessions;
+    }
+}
+
 fn get_workspace_impl(state: &AppState, recents_path: Option<PathBuf>) -> api::WorkspaceDto {
     let recents = recents_path.map_or_else(Recents::new, |path| Recents::load(&path));
     let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
@@ -244,11 +273,10 @@ fn open_workspace_impl(
         return Err("unsaved changes: save or discard first, or retry with force".to_string());
     }
     let absolute = absolute_workspace_path(path)?;
-    let title = Project::load(&absolute).manuscript.title().to_string();
-    {
-        let mut guard = state.project.lock().unwrap_or_else(|e| e.into_inner());
-        *guard = Project::load(&absolute);
-    }
+    persist_sessions(state);
+    let loaded = Project::load(&absolute);
+    let title = loaded.manuscript.title().to_string();
+    adopt_project(state, loaded);
     state
         .buffers
         .lock()
@@ -268,12 +296,10 @@ fn create_workspace_impl(
         return Err("unsaved changes: save or discard first, then create".to_string());
     }
     let absolute = absolute_workspace_path(path)?;
-    let project = Project::create(&absolute, title).map_err(|err| err.to_string())?;
-    let saved_title = project.manuscript.title().to_string();
-    {
-        let mut guard = state.project.lock().unwrap_or_else(|e| e.into_inner());
-        *guard = project;
-    }
+    persist_sessions(state);
+    let created = Project::create(&absolute, title).map_err(|err| err.to_string())?;
+    let saved_title = created.manuscript.title().to_string();
+    adopt_project(state, created);
     state
         .buffers
         .lock()
@@ -384,6 +410,12 @@ fn set_text_impl(state: &AppState, buffer_id: usize, text: String) -> Result<Tex
         let words = stats.words;
         let mut project = state.project.lock().unwrap_or_else(|e| e.into_inner());
         let _ = project.sync_scene_words(&path, words);
+    }
+    // Session piggyback: cheap in-memory observe (persists on save/exit).
+    {
+        let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+        let mut sessions = state.sessions.lock().unwrap_or_else(|e| e.into_inner());
+        project.observe_session_words(&mut sessions, &today_stamp());
     }
     Ok(stats)
 }
@@ -612,6 +644,8 @@ fn save_file_impl(
     let mut project = state.project.lock().unwrap_or_else(|e| e.into_inner());
     let _ = project.sync_scene_words(&saved_path, words);
     project.save().map_err(|err| err.to_string())?;
+    drop(project);
+    persist_sessions(state);
     if let Some(name) = saved_path.file_name().and_then(|name| name.to_str()) {
         // NOTE: `root` (not `workspace_root()`) — the project lock above
         // is still held and `Mutex` is not reentrant.
@@ -665,6 +699,8 @@ fn close_buffer_impl(state: &AppState, buffer_id: usize) -> Result<(), String> {
     }
     let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
     project.save().map_err(|err| err.to_string())?;
+    drop(project);
+    persist_sessions(state);
     Ok(())
 }
 
@@ -1053,8 +1089,38 @@ fn search_project(
     search_project_impl(&state, query, case_sensitive)
 }
 
+fn get_session_impl(state: &AppState) -> api::SessionDto {
+    let sessions = state.sessions.lock().unwrap_or_else(|e| e.into_inner());
+    api::session_dto(&sessions, &today_stamp())
+}
+
+/// Daily session: net words, goal, streak, and 0..1 progress for the UI bar.
+#[tauri::command]
+fn get_session(state: tauri::State<'_, AppState>) -> api::SessionDto {
+    get_session_impl(&state)
+}
+
+fn set_goal_impl(state: &AppState, words: usize) -> Result<api::SessionDto, String> {
+    {
+        let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+        let mut sessions = state.sessions.lock().unwrap_or_else(|e| e.into_inner());
+        sessions.set_goal(words);
+        project
+            .save_sessions(&sessions)
+            .map_err(|err| err.to_string())?;
+    }
+    Ok(get_session_impl(state))
+}
+
+/// Set the daily word goal (persists immediately).
+#[tauri::command]
+fn set_goal(state: tauri::State<'_, AppState>, words: usize) -> Result<api::SessionDto, String> {
+    set_goal_impl(&state, words)
+}
+
 fn save_project_on_exit(window: &tauri::Window) {
     let state = window.state::<AppState>();
+    persist_sessions(&state);
     let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
     let _ = project.save();
 }
@@ -1106,6 +1172,8 @@ fn main() {
             get_mentions,
             search_buffer,
             search_project,
+            get_session,
+            set_goal,
             sweep_recovery,
             check_recovery,
             discard_recovery
@@ -1591,5 +1659,31 @@ mod tests {
         assert_eq!(back.dir, first.to_string_lossy().to_string());
         assert_eq!(back.recent.len(), 2);
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn session_observes_text_and_goal_persists() {
+        let (state, path) = scene_workspace();
+        let dir = state.workspace_root();
+        let opened = open_file_impl(&state, Some(path.to_string_lossy().to_string())).unwrap();
+        // First observation pins the start; the second yields the delta.
+        set_text_impl(&state, opened.buffer_id, "one two three".to_string()).unwrap();
+        assert_eq!(get_session_impl(&state).words_today, 0);
+        set_text_impl(
+            &state,
+            opened.buffer_id,
+            "one two three four five".to_string(),
+        )
+        .unwrap();
+        assert_eq!(get_session_impl(&state).words_today, 2);
+        // Goal persists to project.json and progress follows core math.
+        let summary = set_goal_impl(&state, 4).unwrap();
+        assert_eq!(summary.goal, 4);
+        assert!((summary.progress - 0.5).abs() < f64::EPSILON);
+        let reloaded = AppState::load(dir.clone());
+        let sessions = reloaded.sessions.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(sessions.goal(), 4);
+        drop(sessions);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
