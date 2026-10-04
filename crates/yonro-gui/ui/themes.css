@@ -7,6 +7,7 @@
   --danger:#e06c5f; --warn:#e0b84f; --ok:#8fb573;
   --focus:#f0c27a; --selection:#4a3a24; --scrim:#000000b3;
   --k-character:#d6a35c; --k-place:#8fb573; --k-faction:#c28fd1; --k-item:#7fb4d6; --k-lore:#a8a29e;
+  --edge-opacity:0.35;
   --radius:10px; --radius-sm:6px;
   --font-ui: ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
   --font-prose: "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
@@ -22,6 +23,7 @@
   --danger:#b3392e; --warn:#8a6200; --ok:#4f7a35;
   --focus:#6b3a05; --selection:#ead3a6; --scrim:#2a252199;
   --k-character:#8f5410; --k-place:#4f7a35; --k-faction:#7a3d8c; --k-item:#1f5f8c; --k-lore:#675e55;
+  --edge-opacity:0.35;
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
@@ -33,6 +35,7 @@
     --danger:#b3392e; --warn:#8a6200; --ok:#4f7a35;
     --focus:#6b3a05; --selection:#ead3a6; --scrim:#2a252199;
     --k-character:#8f5410; --k-place:#4f7a35; --k-faction:#7a3d8c; --k-item:#1f5f8c; --k-lore:#675e55;
+    --edge-opacity:0.35;
   }
 }
 /* Theme choice values in localStorage "yonro.theme": "dark" (default) | "light" | "system". For "system", theme.js sets data-theme from matchMedia and listens for changes. */

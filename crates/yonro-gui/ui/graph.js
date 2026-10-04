@@ -277,9 +277,10 @@ async function initGraphFilters() {
   buildPovOptions(outline);
   syncFilterControls(loadGraphFilters());
 }
-
-function bindGraphFiltersOnce() {  if (graphFiltersBound) return;
+function bindGraphFiltersOnce() {
+  if (graphFiltersBound) return;
   graphFiltersBound = true;
+  buildDisplayControls();
   const saved = loadGraphFilters();
   const toggle = document.getElementById('graph-panel-toggle');
   const body = document.getElementById('graph-panel-body');
@@ -924,6 +925,126 @@ function buildPovOptions(outline) {
   if (sel.value !== saved.pov) sel.value = '';
 }
 
+/* Display settings (UI-only, prefs) ---------------------------------------
+ * Thickness/opacity/size/labels/arrows change rendering only — never the
+ * query. Opacity defaults to the --edge-opacity token; the slider
+ * overrides it at runtime on :root.
+ */
+let graphDisplayState = null;
+
+function defaultGraphDisplay() {
+  return { thick: 1, opacity: 0.35, nodeSize: 1, labelZoom: 1, arrows: false, animate: true };
+}
+
+function clampNum(value, fallback, lo, hi) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(hi, Math.max(lo, n));
+}
+
+function loadGraphDisplay() {
+  const fallback = defaultGraphDisplay();
+  try {
+    const raw = localStorage.getItem('yonro.graphDisplay');
+    if (!raw) return fallback;
+    const saved = JSON.parse(raw);
+    if (!saved || typeof saved !== 'object') return fallback;
+    return {
+      thick: clampNum(saved.thick, 1, 0.5, 3),
+      opacity: clampNum(saved.opacity, 0.35, 0.1, 0.8),
+      nodeSize: clampNum(saved.nodeSize, 1, 0.5, 2),
+      labelZoom: clampNum(saved.labelZoom, 1, 0.5, 4),
+      arrows: saved.arrows === true,
+      animate: saved.animate !== false,
+    };
+  } catch (err) {
+    void err;
+    return fallback;
+  }
+}
+
+function saveGraphDisplay(state) {
+  try {
+    localStorage.setItem('yonro.graphDisplay', JSON.stringify(state));
+  } catch (err) {
+    void err;
+  }
+}
+
+function applyEdgeOpacityToken(value) {
+  try {
+    document.documentElement.style.setProperty('--edge-opacity', String(value));
+  } catch (err) {
+    void err;
+  }
+}
+
+function buildDisplayControls() {
+  const body = document.getElementById('graph-panel-body');
+  if (!body || document.getElementById('graph-f-display')) return;
+  if (!graphDisplayState) graphDisplayState = loadGraphDisplay();
+  const state = graphDisplayState;
+  const box = document.createElement('fieldset');
+  box.id = 'graph-f-display';
+  const legend = document.createElement('legend');
+  legend.textContent = 'display';
+  box.appendChild(legend);
+  const mkRange = (id, key, label, min, max, step, value, fmt) => {
+    const row = document.createElement('label');
+    row.className = 'gf-row';
+    const head = document.createElement('span');
+    head.textContent = label + ' ';
+    const val = document.createElement('span');
+    val.className = 'gf-val';
+    val.textContent = fmt(value);
+    head.appendChild(val);
+    row.appendChild(head);
+    const input = document.createElement('input');
+    input.id = id;
+    input.type = 'range';
+    input.min = String(min);
+    input.max = String(max);
+    input.step = String(step);
+    input.value = String(value);
+    input.setAttribute('aria-label', label);
+    input.addEventListener('input', () => {
+      const next = clampNum(input.value, value, min, max);
+      val.textContent = fmt(next);
+      graphDisplayState = { ...graphDisplayState, [key]: next };
+      saveGraphDisplay(graphDisplayState);
+      if (key === 'opacity') applyEdgeOpacityToken(next);
+      if (graphData) renderGraph(graphData);
+    });
+    row.appendChild(input);
+    box.appendChild(row);
+  };
+  const oneDecimal = (n) => String(Math.round(n * 10) / 10);
+  mkRange('graph-d-thick', 'thick', 'link thickness', 0.5, 3, 0.5, state.thick, oneDecimal);
+  mkRange('graph-d-opacity', 'opacity', 'link opacity', 0.1, 0.8, 0.05, state.opacity, oneDecimal);
+  mkRange('graph-d-size', 'nodeSize', 'node size', 0.5, 2, 0.25, state.nodeSize, oneDecimal);
+  mkRange('graph-d-zoom', 'labelZoom', 'label zoom', 0.5, 4, 0.25, state.labelZoom, oneDecimal);
+  const mkCheck = (id, label, value, key) => {
+    const row = document.createElement('label');
+    row.className = 'gf-check';
+    const input = document.createElement('input');
+    input.id = id;
+    input.type = 'checkbox';
+    input.checked = value;
+    input.addEventListener('change', () => {
+      graphDisplayState = { ...graphDisplayState, [key]: input.checked };
+      saveGraphDisplay(graphDisplayState);
+      if (graphData) renderGraph(graphData);
+    });
+    row.appendChild(input);
+    row.appendChild(document.createTextNode(` ${label}`));
+    box.appendChild(row);
+  };
+  mkCheck('graph-d-arrows', 'arrows (custom graphs)', state.arrows, 'arrows');
+  mkCheck('graph-d-animate', 'animate layout', state.animate, 'animate');
+  body.appendChild(box);
+  applyEdgeOpacityToken(state.opacity);
+}
+
 function updateGraphRovingTabindex(activeId) {  const nodes = document.querySelectorAll('#graph g.gnode');
   nodes.forEach((el) => {
     const isTarget = Number(el.dataset.id) === activeId;
@@ -1004,8 +1125,17 @@ function renderGraph(graph) {
   const labelIds = new Set(byDegree.slice(0, graphLabelTopN).map((n) => n.id));
 
   const spacing = (graphLayout && graphLayout.spacing) || 60;
+  const display = graphDisplayState || defaultGraphDisplay();
   const baseR = Math.min(8, Math.max(3, spacing * 0.12));
-  const nodeR = (n) => baseR + Math.min(4, Math.sqrt(n.degree || 0));
+  const nodeR = (n) => (baseR + Math.min(4, Math.sqrt(n.degree || 0))) * display.nodeSize;
+  const byId = {};
+  for (const n of nodes) byId[n.id] = n;
+  const showTopLabels = graphZoom() >= display.labelZoom;
+  const wantArrows = display.arrows && graphCustomId !== null;
+  let defs = '';
+  if (wantArrows) {
+    defs = '<defs><marker id="graph-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/></marker></defs>';
+  }
 
   // Determine active roving tabindex node
   let rovingId = graphFocusedNodeId;
@@ -1020,21 +1150,40 @@ function renderGraph(graph) {
   }
 
   const dimNode = (id) => (graphSpotlight === null || neighborIds.has(id) ? '' : ' dim');
-  const dimEdge = (e) =>
-    graphSpotlight === null || e.a === graphSpotlight || e.b === graphSpotlight ? '' : ' dim';
 
-  let html = '';
+  let html = defs;
   for (const e of drawnEdges) {
     const a = graphPos[e.a];
     const b = graphPos[e.b];
     if (!a || !b) continue;
-    const w = 1 + Math.min(6, e.weight || 1);
     const kinds = e.kinds || [];
     const cls = kinds.includes('mention')
       ? 'edge mention'
       : kinds.includes('custom') ? 'edge custom' : 'edge shared';
+    const spot = graphSpotlight !== null && (e.a === graphSpotlight || e.b === graphSpotlight);
+    let w = (1 + Math.min(6, e.weight || 1)) * display.thick;
+    if (spot) w *= 1.5;
+    const dimmed = graphSpotlight !== null && !spot;
+    const op = spot ? ' stroke-opacity="0.9"' : dimmed ? ' stroke-opacity="0.08"' : '';
     const edgeTitle = e.label ? `<title>${esc(e.label)}</title>` : '';
-    html += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" class="${cls}${dimEdge(e)}" stroke-width="${w}">${edgeTitle}</line>`;
+    let x1 = a.x;
+    let y1 = a.y;
+    let x2 = b.x;
+    let y2 = b.y;
+    let marker = '';
+    if (wantArrows && cls === 'edge custom') {
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const d = Math.hypot(dx, dy) || 1;
+      const r1 = nodeR(byId[e.a] || { degree: 0 }) + 3;
+      const r2 = nodeR(byId[e.b] || { degree: 0 }) + 3;
+      x1 += (dx / d) * r1;
+      y1 += (dy / d) * r1;
+      x2 -= (dx / d) * r2;
+      y2 -= (dy / d) * r2;
+      marker = ' marker-end="url(#graph-arrow)"';
+    }
+    html += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" class="${cls}${dimmed ? ' dim' : ''}" stroke-width="${w.toFixed(2)}"${op}${marker}>${edgeTitle}</line>`;
   }
 
   for (const n of nodes) {
@@ -1047,7 +1196,7 @@ function renderGraph(graph) {
     const ariaLabel = `${esc(n.label)}, ${esc(n.kind)}, ${n.degree || 0} links`;
 
     const showLabel =
-      labelIds.has(n.id) ||
+      (showTopLabels && labelIds.has(n.id)) ||
       n.id === graphSpotlight ||
       (graphSpotlight !== null && neighborIds.has(n.id)) ||
       n.id === graphFocusedNodeId ||

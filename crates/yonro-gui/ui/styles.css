@@ -408,6 +408,10 @@ dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
 .gf-check input { accent-color: var(--accent); }
 #graph-f-kinds { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px 8px; margin: 0; min-width: 0; }
 #graph-f-kinds legend { font-size: 11px; color: var(--muted); padding: 0 4px; }
+#graph-f-display { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px 8px; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+#graph-f-display legend { font-size: 11px; color: var(--muted); padding: 0 4px; }
+.gf-row input[type="range"] { accent-color: var(--accent); padding: 0; }
+.gf-val { color: var(--ink); }
 .kind-check { display: flex; gap: 6px; align-items: center; font-size: 12px; }
 .kind-check input { accent-color: var(--accent); }
 .kind-check .count { margin-left: auto; color: var(--muted); }
@@ -447,7 +451,7 @@ dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
   white-space: nowrap;
 }
 #graph .dim { opacity: 0.15; }
-#graph .edge { fill: none; }
+#graph .edge { fill: none; stroke-opacity: var(--edge-opacity); }
 #graph .edge.mention { stroke: var(--mention); }
 #graph .edge.shared { stroke: var(--shared); stroke-dasharray: 6 4; }
 #graph .edge.custom { stroke: var(--accent); }
