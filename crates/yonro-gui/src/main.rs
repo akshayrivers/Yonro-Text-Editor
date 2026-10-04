@@ -305,6 +305,26 @@ fn open_workspace_impl(
     Ok(get_workspace_impl(state, recents_path))
 }
 
+/// Fresh projects open on a ready-to-write skeleton (Act I, Chapter 1,
+/// Scene 1 with its draft file materialized) so the binder, outline, and
+/// Write view work immediately, no manual `a c s` needed.
+///
+/// # Errors
+/// When a skeleton node cannot be added or the draft cannot be written.
+fn seed_starter_skeleton(project: &mut Project) -> Result<(), String> {
+    let act = project
+        .add_node(None, "act", "Act I")
+        .map_err(|err| err.to_string())?;
+    let chapter = project
+        .add_node(Some(act), "chapter", "Chapter 1")
+        .map_err(|err| err.to_string())?;
+    let scene = project
+        .add_node(Some(chapter), "scene", "Scene 1")
+        .map_err(|err| err.to_string())?;
+    project.scene_file(scene).map_err(|err| err.to_string())?;
+    Ok(())
+}
+
 fn create_workspace_impl(
     state: &AppState,
     path: &str,
@@ -317,7 +337,8 @@ fn create_workspace_impl(
     let absolute = absolute_workspace_path(path)?;
     ensure_writable_dir(&absolute)?;
     persist_sessions(state);
-    let created = Project::create(&absolute, title).map_err(|err| err.to_string())?;
+    let mut created = Project::create(&absolute, title).map_err(|err| err.to_string())?;
+    seed_starter_skeleton(&mut created)?;
     let saved_title = created.manuscript.title().to_string();
     adopt_project(state, created);
     state
@@ -1774,6 +1795,43 @@ mod tests {
         // No permission restore: the read-only dir stays empty (the probe
         // never lands), so removing the writable parent clears it.
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn create_seeds_starter_skeleton_with_draft() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(70_000);
+        let n = NEXT.fetch_add(1, Ordering::SeqCst);
+        let base = std::env::temp_dir().join(format!("yonro-gui-seed-{n}"));
+        let _ = std::fs::remove_dir_all(&base);
+        let state = AppState::load(base.join("home"));
+        let made = create_workspace_impl(
+            &state,
+            base.join("novel").to_string_lossy().as_ref(),
+            "Seeded",
+            None,
+        )
+        .unwrap();
+        assert!(made.has_project);
+        assert_eq!(made.title, "Seeded");
+        let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+        let outline = api::outline_dto(&project.manuscript);
+        assert_eq!(outline.children.len(), 1);
+        let act = &outline.children[0];
+        assert_eq!(act.kind.as_str(), "act");
+        assert_eq!(act.title.as_str(), "Act I");
+        assert_eq!(act.children.len(), 1);
+        let chapter = &act.children[0];
+        assert_eq!(chapter.kind.as_str(), "chapter");
+        assert_eq!(chapter.title.as_str(), "Chapter 1");
+        assert_eq!(chapter.children.len(), 1);
+        let scene = &chapter.children[0];
+        assert_eq!(scene.kind.as_str(), "scene");
+        assert_eq!(scene.title.as_str(), "Scene 1");
+        let file = scene.file.clone().expect("scene draft materialized");
+        drop(project);
+        assert!(std::path::Path::new(&file).is_file(), "missing {file}");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
