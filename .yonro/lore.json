@@ -7,6 +7,14 @@
       "aliases": [],
       "sheet": "",
       "alive": true
+    },
+    {
+      "id": 1,
+      "kind": "Character",
+      "name": "Maya",
+      "aliases": [],
+      "sheet": "",
+      "alive": true
     }
   ]
 }

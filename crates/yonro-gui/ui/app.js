@@ -297,42 +297,106 @@ function paletteOpen(mode) {
 }
 
 const COMMANDS = [
-  { id: 'save', title: 'save', keys: 'mod+S', run: () => saveActive() },
-  { id: 'save-as', title: 'save as', keys: 'mod+Shift+S', run: () => saveAsFlow() },
-  { id: 'new-draft', title: 'new draft', keys: 'mod+N', run: () => openDoc(null) },
-  { id: 'undo', title: 'undo', keys: 'mod+Z', run: () => historyStep('undo') },
-  { id: 'redo', title: 'redo', keys: 'mod+Shift+Z / mod+Y', run: () => historyStep('redo') },
-  { id: 'palette', title: 'palette: scenes + files', keys: 'mod+P', run: () => paletteOpen('') },
-  { id: 'palette-commands', title: 'palette: commands', keys: 'mod+Shift+P', run: () => paletteOpen('>') },
-  { id: 'find', title: 'find in doc', keys: 'mod+F', run: () => openFindBar() },
-  { id: 'search-project', title: 'search project', keys: 'mod+Shift+F', run: () => paletteOpen('/') },
-  { id: 'toggle-binder', title: 'toggle binder', keys: 'mod+O', run: () => toggleBinder() },
-  { id: 'focus-files', title: 'focus files section', keys: 'mod+E', run: () => focusFilesSection() },
-  { id: 'toggle-inspector', title: 'toggle inspector', keys: 'mod+J', run: () => toggleInspector() },
-  { id: 'view-write', title: 'view: Write', keys: 'mod+1', run: () => show('write') },
-  { id: 'view-outline', title: 'view: Outline', keys: 'mod+2', run: () => show('outline') },
-  { id: 'view-graph', title: 'view: Graph', keys: 'mod+3', run: () => show('graph') },
-  { id: 'view-timeline', title: 'view: Timeline', keys: 'mod+4', run: () => show('timeline') },
-  { id: 'view-lore', title: 'view: Lore', keys: 'mod+5', run: () => show('lore') },
-  { id: 'cycle-tabs', title: 'cycle doc tabs', keys: 'Ctrl+Tab', run: () => cycleDoc(1) },
-  { id: 'zen', title: 'zen', keys: 'F11 / mod+.', run: () => toggleZen() },
-  { id: 'shortcuts', title: 'shortcut sheet', keys: '?', run: () => toggleShortcuts() },
-  { id: 'switch-project', title: 'switch project', keys: '', run: () => showStartScreen(true) },
-  { id: 'set-goal', title: 'set daily goal', keys: '', run: () => promptGoalDialog() },
-  { id: 'export-md', title: 'export manuscript as markdown', keys: '', run: () => exportFlow('md') },
-  { id: 'export-html', title: 'export manuscript as html', keys: '', run: () => exportFlow('html') },
-  { id: 'binder-add-act', title: 'binder: add act', keys: 'a', run: () => focusBinderRow() },
-  { id: 'binder-add-chapter', title: 'binder: add chapter', keys: 'c', run: () => focusBinderRow() },
-  { id: 'binder-add-scene', title: 'binder: add scene', keys: 's', run: () => focusBinderRow() },
-  { id: 'binder-rename', title: 'binder: rename', keys: 'F2', run: () => focusBinderRow() },
-  { id: 'binder-delete', title: 'binder: remove', keys: 'Del', run: () => focusBinderRow() },
+  { id: 'save', title: 'save', keys: 'mod+S', group: 'file', run: () => saveActive() },
+  { id: 'save-as', title: 'save as', keys: 'mod+Shift+S', group: 'file', run: () => saveAsFlow() },
+  { id: 'new-draft', title: 'new draft', keys: 'mod+N', group: 'file', run: () => openDoc(null) },
+  { id: 'undo', title: 'undo', keys: 'mod+Z', group: 'editor', run: () => historyStep('undo') },
+  { id: 'redo', title: 'redo', keys: 'mod+Shift+Z / mod+Y', group: 'editor', run: () => historyStep('redo') },
+  { id: 'palette', title: 'palette: scenes + files', keys: 'mod+P', group: 'navigation', run: () => paletteOpen('') },
+  { id: 'palette-commands', title: 'palette: commands', keys: 'mod+Shift+P', group: 'navigation', run: () => paletteOpen('>') },
+  { id: 'find', title: 'find in doc', keys: 'mod+F', group: 'editor', run: () => openFindBar() },
+  { id: 'search-project', title: 'search project', keys: 'mod+Shift+F', group: 'navigation', run: () => paletteOpen('/') },
+  { id: 'toggle-binder', title: 'toggle binder', keys: 'mod+O', group: 'view', run: () => toggleBinder() },
+  { id: 'focus-files', title: 'focus files section', keys: 'mod+E', group: 'view', run: () => focusFilesSection() },
+  { id: 'toggle-inspector', title: 'toggle inspector', keys: 'mod+J', group: 'view', run: () => toggleInspector() },
+  { id: 'view-write', title: 'view: Write', keys: 'mod+1', group: 'view', run: () => show('write') },
+  { id: 'view-outline', title: 'view: Outline', keys: 'mod+2', group: 'view', run: () => show('outline') },
+  { id: 'view-graph', title: 'view: Graph', keys: 'mod+3', group: 'view', run: () => show('graph') },
+  { id: 'view-timeline', title: 'view: Timeline', keys: 'mod+4', group: 'view', run: () => show('timeline') },
+  { id: 'view-lore', title: 'view: Lore', keys: 'mod+5', group: 'view', run: () => show('lore') },
+  { id: 'cycle-tabs', title: 'cycle doc tabs', keys: 'Ctrl+Tab', group: 'navigation', run: () => cycleDoc(1) },
+  { id: 'zen', title: 'zen', keys: 'F11 / mod+.', group: 'view', run: () => toggleZen() },
+  { id: 'shortcuts', title: 'keyboard shortcuts', keys: '?', group: 'view', run: () => toggleShortcuts(true) },
+  { id: 'switch-project', title: 'switch project', keys: '', group: 'file', run: () => showStartScreen(true) },
+  { id: 'set-goal', title: 'set daily goal', keys: '', group: 'file', run: () => promptGoalDialog() },
+  { id: 'export-md', title: 'export manuscript as markdown', keys: '', group: 'file', run: () => exportFlow('md') },
+  { id: 'export-html', title: 'export manuscript as html', keys: '', group: 'file', run: () => exportFlow('html') },
+  { id: 'binder-add-act', title: 'binder: add act', keys: 'a', group: 'binder', run: () => focusBinderRow() },
+  { id: 'binder-add-chapter', title: 'binder: add chapter', keys: 'c', group: 'binder', run: () => focusBinderRow() },
+  { id: 'binder-add-scene', title: 'binder: add scene', keys: 's', group: 'binder', run: () => focusBinderRow() },
+  { id: 'binder-rename', title: 'binder: rename', keys: 'F2', group: 'binder', run: () => focusBinderRow() },
+  { id: 'binder-delete', title: 'binder: remove', keys: 'Del', group: 'binder', run: () => focusBinderRow() },
 ];
 
+const SHORTCUT_GROUPS = ['file', 'navigation', 'view', 'editor', 'binder'];
+
 /* ---------- overlays -------------------------------------------------------- */
+let shortcutsOpener = null;
+
+function renderShortcutsDialog() {
+  const dlg = document.getElementById('shortcuts');
+  if (!dlg) return null;
+  dlg.innerHTML = '';
+  const h = document.createElement('h2');
+  h.textContent = 'keyboard shortcuts';
+  dlg.appendChild(h);
+  for (const group of SHORTCUT_GROUPS) {
+    const cmds = COMMANDS.filter((c) => (c.group || 'view') === group);
+    if (!cmds.length) continue;
+    const gh = document.createElement('h3');
+    gh.className = 'shortcuts-group';
+    gh.textContent = group;
+    dlg.appendChild(gh);
+    const list = document.createElement('ul');
+    list.className = 'shortcuts-list';
+    for (const cmd of cmds) {
+      const li = document.createElement('li');
+      const name = document.createElement('span');
+      name.textContent = cmd.title;
+      li.appendChild(name);
+      li.appendChild(document.createTextNode(' '));
+      const keys = document.createElement('span');
+      keys.className = 'muted';
+      keys.textContent = cmd.keys ? `· ${cmd.keys}` : '· palette only';
+      li.appendChild(keys);
+      list.appendChild(li);
+    }
+    dlg.appendChild(list);
+  }
+  const row = document.createElement('div');
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = 'close';
+  closeBtn.addEventListener('click', () => dlg.close(), { once: true });
+  row.appendChild(closeBtn);
+  dlg.appendChild(row);
+  return closeBtn;
+}
+
 function toggleShortcuts(force) {
-  const sheet = document.getElementById('shortcuts');
-  if (!sheet) return;
-  sheet.hidden = force !== undefined ? !force : !sheet.hidden;
+  const dlg = document.getElementById('shortcuts');
+  if (!dlg) return;
+  const wantOpen = force !== undefined ? force : !dlg.open;
+  if (!wantOpen) {
+    if (dlg.open) dlg.close();
+    return;
+  }
+  if (dlg.open) return;
+  shortcutsOpener = document.activeElement;
+  const closeBtn = renderShortcutsDialog();
+  const restore = () => {
+    dlg.removeEventListener('close', restore);
+    if (shortcutsOpener && typeof shortcutsOpener.focus === 'function') {
+      try {
+        shortcutsOpener.focus();
+      } catch (err) {
+        void err;
+      }
+    }
+    shortcutsOpener = null;
+  };
+  dlg.addEventListener('close', restore);
+  if (typeof dlg.showModal === 'function') dlg.showModal();
+  if (closeBtn) closeBtn.focus();
 }
 
 function typingTarget(e) {
@@ -345,12 +409,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     const openDlg = document.querySelector('dialog[open]');
     if (openDlg) return;
-    const sheet = document.getElementById('shortcuts');
     const pop = document.getElementById('prose-pop');
-    if (sheet && !sheet.hidden) {
-      toggleShortcuts(false);
-      return;
-    }
     if (pop && !pop.hidden) {
       pop.hidden = true;
       return;

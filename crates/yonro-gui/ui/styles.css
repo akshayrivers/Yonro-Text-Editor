@@ -500,22 +500,21 @@ dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
   z-index: 30;
 }
 
-#shortcuts {
-  position: fixed;
-  top: 15vh;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(440px, 90vw);
-  max-height: 70vh;
+dialog#shortcuts {
+  width: min(480px, 92vw);
+  max-height: 76vh;
   overflow: auto;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 16px 18px;
-  z-index: 50;
 }
-#shortcuts h2 { margin-top: 0; }
-#shortcuts li { margin-bottom: 4px; }
+dialog#shortcuts h2 { margin-top: 0; }
+dialog#shortcuts .shortcuts-group {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 12px 0 4px;
+}
+dialog#shortcuts .shortcuts-list { margin: 0 0 4px; padding-left: 18px; }
+dialog#shortcuts .shortcuts-list li { margin-bottom: 4px; }
 
 /* Zen: document only + faint count */
 body.zen #topnav,
