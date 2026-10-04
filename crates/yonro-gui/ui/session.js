@@ -128,7 +128,7 @@ function promptGoalDialog() {
     try {
       await core.setGoal(words);
     } catch (e) {
-      fail(`could not set goal: ${e}`);
+      fail(`could not set daily goal ${words}: ${errText(e)}`);
       return;
     }
     dlg.close();
@@ -136,9 +136,7 @@ function promptGoalDialog() {
     refreshSession();
   });
   cancelBtn.addEventListener('click', () => dlg.close(), { once: true });
-  if (typeof dlg.showModal === 'function') dlg.showModal();
-  input.focus();
-  input.select();
+  openModal(dlg, input);
 }
 
 refreshSession();

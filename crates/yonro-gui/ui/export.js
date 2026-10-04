@@ -16,7 +16,7 @@ async function exportFlow(format) {
   try {
     receipt = await core.exportManuscript(format, null);
   } catch (err) {
-    setMessage(`export failed: ${err}`, { error: true });
+    setMessage(`could not export manuscript as ${format}: ${errText(err)}`, { error: true });
     return;
   }
   const words = Number(receipt.words || 0).toLocaleString('en-US');
