@@ -12,6 +12,7 @@
 //! Inputs are plain data (`&Manuscript`, `&LoreBook`, scene texts), so the
 //! same computation serves the TUI, the Tauri GUI, and a future web build.
 
+pub mod lens;
 pub mod query;
 
 use std::collections::{BTreeMap, BTreeSet};

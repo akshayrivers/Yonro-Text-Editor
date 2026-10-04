@@ -53,6 +53,10 @@ pub use events::EditorEvent;
 pub use export::{CompiledExport, ExportError, ExportFormat, ExportSummary, SCENE_SEPARATOR};
 pub use fileinfo::FileInfo;
 pub use filetype::FileType;
+pub use graph::lens::{
+    builtin_lenses, Engine, Lens, LensError, LensStore, PresenceColumn, PresenceRow, SceneEdge,
+    SceneNode, MAX_LENSES,
+};
 pub use graph::query::GraphQuery;
 pub use graph::{Edge, EdgeKind, Graph, GraphError};
 pub use highlighter::{
