@@ -922,3 +922,37 @@ body.zen #zen-count {
   padding: 5px 8px;
   font: inherit;
 }
+
+/* Command palette (P5.2) */
+#palette {
+  width: min(560px, 92vw);
+  padding: 10px;
+}
+#palette-input {
+  width: 100%;
+  background: var(--panel-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font: inherit;
+}
+#palette-input:focus { border-color: var(--accent); outline: none; }
+#palette-list {
+  max-height: 320px;
+  overflow: auto;
+  margin-top: 8px;
+}
+.palette-opt {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.palette-opt.active { background: var(--selection); }
+#palette-foot {
+  margin-top: 8px;
+  font-size: 12px;
+}
