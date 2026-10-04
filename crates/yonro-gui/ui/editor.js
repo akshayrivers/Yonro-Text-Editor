@@ -522,6 +522,13 @@ async function maybeShowMentionPopup() {
   renderMentionPopup();
 }
 
+/* @ popup search hits the backend; debounce off the keystroke path so
+ * typing stays local (dirty flag) with stats/mentions/find trailing.
+ */
+const maybeShowMentionPopupSoon = debounce(() => {
+  maybeShowMentionPopup();
+}, 150);
+
 function renderMentionPopup() {
   const pop = ensureMentionPopup();
   if (!mentionPopup || !mentionPopup.items.length) {
@@ -817,7 +824,7 @@ editor.addEventListener('input', () => {
   scheduleSync();
   markMentionsStale();
   if (typeof maybeRefreshFindSoon === 'function') maybeRefreshFindSoon();
-  maybeShowMentionPopup();
+  maybeShowMentionPopupSoon();
 });
 
 editor.addEventListener('click', () => {
