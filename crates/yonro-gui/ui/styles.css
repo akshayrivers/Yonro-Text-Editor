@@ -123,7 +123,10 @@ body.hide-inspector #inspector, body.hide-inspector #split-inspector { display: 
   font-family: var(--font-ui);
 }
 
-/* Write view */
+/* Write view: column fills the center height; the editor wrap takes the
+ * leftover space (flex) and is hand-resizable on both axes (persisted).
+ */
+#view-write { display: flex; flex-direction: column; min-height: 100%; }
 #doc-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
 #doc-tabs .tab { background: var(--panel); }
 #doc-tabs .tab[aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
@@ -135,6 +138,11 @@ body.hide-inspector #inspector, body.hide-inspector #split-inspector { display: 
   width: 100%;
   max-width: var(--measure);
   margin: 0 auto;
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 30vh;
+  resize: both;
+  overflow: hidden;
 }
 #editor-backdrop,
 #editor {
@@ -196,11 +204,13 @@ body.hide-inspector #inspector, body.hide-inspector #split-inspector { display: 
   position: relative;
   display: block;
   margin: 0 auto;
-  height: 55vh;
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
   background: transparent;
   color: var(--ink);
   border-color: transparent;
-  resize: vertical;
+  resize: none;
 }
 #doc-status { margin-top: 6px; font-size: 12px; max-width: var(--measure); margin-left: auto; margin-right: auto; }
 #zen-count { display: none; }

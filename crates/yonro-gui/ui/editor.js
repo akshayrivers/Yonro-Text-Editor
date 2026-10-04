@@ -815,6 +815,50 @@ function cycleDoc(dir) {
   activateDoc(next);
 }
 
+/* Editor wrap size: fills leftover space by default (flex); a hand drag
+ * on the wrap corner resizes both axes and persists in prefs.
+ */
+function clampWrapPx(n, lo, hi) {
+  if (!Number.isFinite(n)) return null;
+  return Math.min(hi, Math.max(lo, Math.round(n)));
+}
+
+function applyEditorWrapSize() {
+  const wrap = document.getElementById('editor-wrap');
+  if (!wrap) return;
+  try {
+    const w = clampWrapPx(Number(localStorage.getItem('yonro.editorW')), 280, 1400);
+    const h = clampWrapPx(Number(localStorage.getItem('yonro.editorH')), 180, 2200);
+    if (w !== null) wrap.style.width = `${w}px`;
+    if (h !== null) wrap.style.height = `${h}px`;
+  } catch (err) {
+    void err;
+  }
+}
+
+function bindEditorWrapSize() {
+  const wrap = document.getElementById('editor-wrap');
+  if (!wrap || typeof ResizeObserver !== 'function') return;
+  applyEditorWrapSize();
+  let t = null;
+  const ro = new ResizeObserver(() => {
+    if (t !== null) clearTimeout(t);
+    t = setTimeout(() => {
+      t = null;
+      if (wrap.clientWidth === 0 || wrap.clientHeight === 0) return;
+      const w = clampWrapPx(wrap.clientWidth, 280, 1400);
+      const h = clampWrapPx(wrap.clientHeight, 180, 2200);
+      try {
+        if (w !== null) localStorage.setItem('yonro.editorW', String(w));
+        if (h !== null) localStorage.setItem('yonro.editorH', String(h));
+      } catch (err) {
+        void err;
+      }
+    }, 400);
+  });
+  ro.observe(wrap);
+}
+
 /* Workspace switch: the backend drops every buffer, so frontend doc state
  * (buffer ids, caches, tabs) must go too. Otherwise the next sync/save hits
  * "unknown buffer" and the tabs still show the previous project's files.
@@ -1256,6 +1300,7 @@ window.addEventListener('beforeunload', () => { flushSync(); });
 
 ensureEmptyState();
 ensureTypewriterToggle();
+bindEditorWrapSize();
 renderTabs();
 renderStatus(null);
 setInterval(sweepRecoveryTick, 30000);
