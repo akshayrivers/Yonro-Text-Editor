@@ -37,17 +37,29 @@ function fitGraph() {
   const svg = document.getElementById('graph');
   if (!svg || !graphLayout || !graphData) return;
   const bb = graphLayout.bbox;
-  if (!Number.isFinite(bb.x0) || bb.x1 <= bb.x0 || bb.y1 <= bb.y0) return;
+  if (!Number.isFinite(bb.x0 + bb.y0 + bb.x1 + bb.y1)) return;
+  let x0 = bb.x0;
+  let y0 = bb.y0;
+  let x1 = bb.x1;
+  let y1 = bb.y1;
+  if (x1 <= x0) {
+    x0 -= 100;
+    x1 += 100;
+  }
+  if (y1 <= y0) {
+    y0 -= 100;
+    y1 += 100;
+  }
   const pad = 0.06;
-  const bw = (bb.x1 - bb.x0) * (1 + pad * 2) || 1;
-  const bh = (bb.y1 - bb.y0) * (1 + pad * 2) || 1;
+  const bw = (x1 - x0) * (1 + pad * 2) || 1;
+  const bh = (y1 - y0) * (1 + pad * 2) || 1;
   const cw = svg.clientWidth || 900;
   const ch = svg.clientHeight || 480;
   const scale = Math.max(bw / cw, bh / ch);
   const w = cw * scale;
   const h = ch * scale;
-  const cx = (bb.x0 + bb.x1) / 2;
-  const cy = (bb.y0 + bb.y1) / 2;
+  const cx = (x0 + x1) / 2;
+  const cy = (y0 + y1) / 2;
   graphFitBox = { x: cx - w / 2, y: cy - h / 2, w, h };
   graphViewBox = { ...graphFitBox };
   updateGraphViewBox();
@@ -95,18 +107,110 @@ function zoomGraph(factor, rx, ry) {
   updateGraphViewBox();
 }
 
+/* Incremental simulation --------------------------------------------------
+ * The loop renders each step and stops below alpha 0.02 (no idle CPU).
+ * Reduced motion forces the synchronous path. simDirty marks user
+ * interaction so converge-end never yanks a hand-placed camera.
+ */
+let graphSim = null;
+let simRAF = 0;
+let simDirty = false;
+let dragNode = null;
+
+function graphAnimates() {
+  const on = graphDisplayState ? graphDisplayState.animate !== false : true;
+  if (!on) return false;
+  try {
+    return !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  } catch (err) {
+    void err;
+    return true;
+  }
+}
+
+function simParams() {
+  const d = graphDisplayState || defaultGraphDisplay();
+  return { gravity: d.gravity ?? 0.01, repel: d.repel ?? 1, linkDist: d.linkDist ?? 1 };
+}
+
+function runSimSync() {
+  if (!graphSim) return;
+  let guard = 0;
+  while (graphSim.alpha() >= 0.02 && guard++ < 2000) graphSim.step();
+}
+
+function stopSimLoop() {
+  if (simRAF) {
+    cancelAnimationFrame(simRAF);
+    simRAF = 0;
+  }
+}
+
+function ensureSimLoop() {
+  if (simRAF || !graphSim) return;
+  const tick = () => {
+    simRAF = 0;
+    if (!graphSim) return;
+    const a = graphSim.step();
+    if (graphData) renderGraph(graphData);
+    if (a >= 0.02) {
+      simRAF = requestAnimationFrame(tick);
+    } else if (!simDirty && graphLayout) {
+      graphLayout.bbox = graphSim.bbox();
+      fitGraph();
+    }
+  };
+  simRAF = requestAnimationFrame(tick);
+}
+
+function buildSimAndRun(nodes, edges, initPos) {
+  stopSimLoop();
+  simDirty = false;
+  if (!nodes.length) {
+    graphSim = null;
+    graphPos = {};
+    graphLayout = null;
+    renderGraph(graphData);
+    return;
+  }
+  graphSim = createSim(nodes, edges, simParams(), initPos || null);
+  graphPos = graphSim.positions();
+  graphLayout = { pos: graphPos, bbox: graphSim.bbox(), spacing: graphSim.spacing };
+  if (graphAnimates()) {
+    fitGraph();
+    ensureSimLoop();
+  } else {
+    runSimSync();
+    fitGraph();
+  }
+}
+
+function onAnimateToggle() {
+  if (!graphSim) return;
+  if (graphAnimates()) {
+    graphSim.reheat(0.3);
+    ensureSimLoop();
+  } else {
+    stopSimLoop();
+    runSimSync();
+    if (graphData) renderGraph(graphData);
+  }
+}
+
 function bindGraphControlsOnce() {
   if (graphControlsBound) return;
   graphControlsBound = true;
 
   const btnIn = document.getElementById('graph-zoom-in');
   if (btnIn) btnIn.addEventListener('click', () => {
+    simDirty = true;
     zoomGraph(0.8);
     refreshGraphLabelsSoon();
   });
 
   const btnOut = document.getElementById('graph-zoom-out');
   if (btnOut) btnOut.addEventListener('click', () => {
+    simDirty = true;
     zoomGraph(1.25);
     refreshGraphLabelsSoon();
   });
@@ -114,6 +218,7 @@ function bindGraphControlsOnce() {
   const btnFit = document.getElementById('graph-zoom-fit');
   if (btnFit) {
     btnFit.addEventListener('click', () => {
+      simDirty = true;
       fitGraph();
     });
   }
@@ -143,6 +248,7 @@ function bindGraphControlsOnce() {
       if (e.button !== 0) return;
       // Node drags spotlight on click; only empty canvas starts a pan.
       if (e.target && e.target.closest && e.target.closest('g.gnode')) return;
+      simDirty = true;
       graphPanning = true;
       graphPanStart = { x: e.clientX, y: e.clientY, vbx: graphViewBox.x, vby: graphViewBox.y };
       svg.classList.add('panning');
@@ -158,15 +264,48 @@ function bindGraphControlsOnce() {
       updateGraphViewBox();
     });
 
-    window.addEventListener('mouseup', () => {
-      if (graphPanning) {
-        graphPanning = false;
-        svg.classList.remove('panning');
+  window.addEventListener('mouseup', () => {
+    if (graphPanning) {
+      graphPanning = false;
+      svg.classList.remove('panning');
+    }
+    if (!dragNode) return;
+    const done = dragNode;
+    dragNode = null;
+    if (!graphSim) return;
+    if (done.custom) {
+      // Custom canvases stay hand-placed: persist on release, no reload.
+      if (done.moved) {
+        const g = customById(graphCustomId);
+        const found = g ? g.nodes.find((nn) => nn.id === done.id) : null;
+        const p = graphPos[done.id];
+        if (found && p) {
+          found.x = p.x;
+          found.y = p.y;
+          core.moveGraphNode(graphCustomId, done.id, p.x, p.y).catch((err) => {
+            setMessage(`could not move node: ${errText(err)}`, { error: true });
+          });
+        }
       }
-    });
+    } else {
+      graphSim.unpin(done.i);
+    }
+  });
+
+  window.addEventListener('mousemove', (ev) => {
+    if (!dragNode || !graphSim) return;
+    const pt = svgPoint(ev);
+    graphSim.move(dragNode.i, pt.x, pt.y);
+    if (Math.hypot(ev.clientX - dragNode.sx, ev.clientY - dragNode.sy) > 4) {
+      dragNode.moved = true;
+      graphDragged = true;
+    }
+    if (!simRAF && graphData) renderGraph(graphData);
+  });
 
     svg.addEventListener('wheel', (e) => {
       e.preventDefault();
+      simDirty = true;
       const rect = svg.getBoundingClientRect();
       const rx = rect.width ? (e.clientX - rect.left) / rect.width : 0.5;
       const ry = rect.height ? (e.clientY - rect.top) / rect.height : 0.5;
@@ -226,9 +365,7 @@ async function reloadInferred() {
     if (query === null) graphFull = graphData;
     const nodes = graphData.nodes || [];
     const edges = graphData.edges || [];
-    graphLayout = forceLayout(nodes, edges);
-    graphPos = graphLayout.pos;
-    fitGraph();
+    buildSimAndRun(nodes, edges, null);
   } catch (err) {
     document.getElementById('graph-legend').textContent = `could not load graph: ${errText(err)}`;
   }
@@ -310,6 +447,8 @@ function bindGraphFiltersOnce() {
   }
   const reset = document.getElementById('graph-f-reset');
   if (reset) reset.addEventListener('click', () => resetGraphFilters());
+  const animBox = document.getElementById('graph-d-animate');
+  if (animBox) animBox.addEventListener('change', () => onAnimateToggle());
 }
 
 /* Custom canvases -------------------------------------------------------- */
@@ -411,6 +550,8 @@ function renderCustomGraph() {
     return;
   }
   if (!g.nodes.length) {
+    stopSimLoop();
+    graphSim = null;
     graphLayout = null;
     graphPos = {};
     graphData = { nodes: [], edges: [] };
@@ -442,30 +583,10 @@ function renderCustomGraph() {
     kinds: ['custom'],
     label: e.label || '',
   }));
-  const pos = {};
-  let x0 = Infinity;
-  let y0 = Infinity;
-  let x1 = -Infinity;
-  let y1 = -Infinity;
-  for (const n of g.nodes) {
-    pos[n.id] = { x: n.x, y: n.y };
-    x0 = Math.min(x0, n.x);
-    x1 = Math.max(x1, n.x);
-    y0 = Math.min(y0, n.y);
-    y1 = Math.max(y1, n.y);
-  }
-  if (!Number.isFinite(x0) || x1 <= x0) {
-    x0 -= 100;
-    x1 += 100;
-  }
-  if (!Number.isFinite(y0) || y1 <= y0) {
-    y0 -= 100;
-    y1 += 100;
-  }
-  graphLayout = { pos, bbox: { x0, y0, x1, y1 }, spacing: 50 };
-  graphPos = pos;
+  const initPos = {};
+  for (const n of g.nodes) initPos[n.id] = { x: n.x, y: n.y };
   graphData = { nodes, edges };
-  fitGraph();
+  buildSimAndRun(nodes, edges, initPos);
   document.getElementById('graph-legend').textContent =
     `${nodes.length} nodes · ${edges.length} edges. double-click adds a node, shift-click two nodes to link, drag moves.`;
 }
@@ -933,7 +1054,10 @@ function buildPovOptions(outline) {
 let graphDisplayState = null;
 
 function defaultGraphDisplay() {
-  return { thick: 1, opacity: 0.35, nodeSize: 1, labelZoom: 1, arrows: false, animate: true };
+  return {
+    thick: 1, opacity: 0.35, nodeSize: 1, labelZoom: 1, arrows: false, animate: true,
+    gravity: 0.01, repel: 1, linkDist: 1,
+  };
 }
 
 function clampNum(value, fallback, lo, hi) {
@@ -956,6 +1080,9 @@ function loadGraphDisplay() {
       labelZoom: clampNum(saved.labelZoom, 1, 0.5, 4),
       arrows: saved.arrows === true,
       animate: saved.animate !== false,
+      gravity: clampNum(saved.gravity, 0.01, 0, 0.05),
+      repel: clampNum(saved.repel, 1, 0, 3),
+      linkDist: clampNum(saved.linkDist, 1, 0.5, 2),
     };
   } catch (err) {
     void err;
@@ -989,7 +1116,7 @@ function buildDisplayControls() {
   const legend = document.createElement('legend');
   legend.textContent = 'display';
   box.appendChild(legend);
-  const mkRange = (id, key, label, min, max, step, value, fmt) => {
+  const mkRange = (id, key, label, min, max, step, value, fmt, after) => {
     const row = document.createElement('label');
     row.className = 'gf-row';
     const head = document.createElement('span');
@@ -1013,7 +1140,8 @@ function buildDisplayControls() {
       graphDisplayState = { ...graphDisplayState, [key]: next };
       saveGraphDisplay(graphDisplayState);
       if (key === 'opacity') applyEdgeOpacityToken(next);
-      if (graphData) renderGraph(graphData);
+      if (typeof after === 'function') after(next);
+      else if (graphData) renderGraph(graphData);
     });
     row.appendChild(input);
     box.appendChild(row);
@@ -1041,6 +1169,24 @@ function buildDisplayControls() {
   };
   mkCheck('graph-d-arrows', 'arrows (custom graphs)', state.arrows, 'arrows');
   mkCheck('graph-d-animate', 'animate layout', state.animate, 'animate');
+  const simAfter = (key) => (next) => {
+    if (graphSim) {
+      const patch = {};
+      patch[key] = next;
+      graphSim.setParams(patch);
+      graphLayout.spacing = graphSim.spacing;
+      graphSim.reheat(0.3);
+      if (graphAnimates()) ensureSimLoop();
+      else {
+        runSimSync();
+        if (graphData) renderGraph(graphData);
+      }
+    }
+  };
+  const threeDecimal = (n) => String(Math.round(n * 1000) / 1000);
+  mkRange('graph-d-grav', 'gravity', 'center gravity', 0, 0.05, 0.005, state.gravity, threeDecimal, simAfter('gravity'));
+  mkRange('graph-d-repel', 'repel', 'repel', 0, 3, 0.25, state.repel, oneDecimal, simAfter('repel'));
+  mkRange('graph-d-link', 'linkDist', 'link distance', 0.5, 2, 0.25, state.linkDist, oneDecimal, simAfter('linkDist'));
   body.appendChild(box);
   applyEdgeOpacityToken(state.opacity);
 }
@@ -1281,23 +1427,18 @@ function renderGraph(graph) {
       if (text) text.remove();
     });
 
-    let downAt = null;
     g.addEventListener('pointerdown', (ev) => {
-      if (graphCustomId === null || ev.shiftKey || ev.button !== 0) return;
-      downAt = { x: ev.clientX, y: ev.clientY };
-    });
-    g.addEventListener('pointerup', (ev) => {
-      if (!downAt || graphCustomId === null) return;
-      const moved = Math.hypot(ev.clientX - downAt.x, ev.clientY - downAt.y);
-      downAt = null;
-      if (moved < 4) return;
-      graphDragged = true;
-      const pt = svgPoint(ev);
-      core.moveGraphNode(graphCustomId, id, pt.x, pt.y).then(() => {
-        reloadCustomGraphs(graphCustomId);
-      }).catch((err) => {
-        setMessage(`could not move node: ${errText(err)}`, { error: true });
-      });
+      if (ev.button !== 0 || ev.shiftKey || !graphSim) return;
+      const i = graphSim.nodeIndex(id);
+      if (i < 0) return;
+      simDirty = true;
+      const p = graphPos[id];
+      graphSim.pin(i, p ? p.x : 0, p ? p.y : 0);
+      graphSim.reheat(0.3);
+      dragNode = {
+        id, i, custom: graphCustomId !== null, moved: false, sx: ev.clientX, sy: ev.clientY,
+      };
+      ensureSimLoop();
     });
 
     g.addEventListener('keydown', (e) => {
