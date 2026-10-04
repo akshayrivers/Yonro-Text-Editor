@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use serde::Serialize;
 use tauri::Manager;
-use yonro_core::{api, Buffer, Project, SceneMetaFields, UndoStack};
+use yonro_core::{api, Buffer, Project, Recents, SceneMetaFields, UndoStack};
 
 // ---------------------------------------------------------------------------
 // State
@@ -143,6 +143,172 @@ fn get_lore(state: tauri::State<'_, AppState>) -> Vec<api::EntityDto> {
 #[tauri::command]
 fn get_workspace_dir(state: tauri::State<'_, AppState>) -> String {
     state.workspace_root().to_string_lossy().to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Workspaces (P5.1): start screen + recents. Thin over core: `Recents` owns
+// the file logic, `Project` owns load/create, this layer only swaps state,
+// guards dirty buffers, and stamps `last_opened`.
+// ---------------------------------------------------------------------------
+
+fn config_recents_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .map(|dir| Recents::file_in(&dir))
+        .ok()
+}
+
+/// Days since civil 1970-01-01 → (year, month, day).
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days.saturating_add(719_468);
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = doe
+        .saturating_sub(doe.div_euclid(1_460))
+        .saturating_add(doe.div_euclid(36_524))
+        .saturating_sub(doe.div_euclid(146_096))
+        .div_euclid(365);
+    let mut year = yoe.saturating_add(era.saturating_mul(400));
+    let doy = doe.saturating_sub(
+        yoe.saturating_mul(365)
+            .saturating_add(yoe.div_euclid(4))
+            .saturating_sub(yoe.div_euclid(100)),
+    );
+    let mp = doy.saturating_mul(5).saturating_add(2).div_euclid(153);
+    let day = doy
+        .saturating_sub(mp.saturating_mul(153).saturating_add(2).div_euclid(5))
+        .saturating_add(1);
+    let month = if mp < 10 {
+        mp.saturating_add(3)
+    } else {
+        mp.saturating_sub(9)
+    };
+    year = year.saturating_add(i64::from(month <= 2));
+    (
+        year,
+        u32::try_from(month).unwrap_or(1),
+        u32::try_from(day).unwrap_or(1),
+    )
+}
+
+/// `YYYY-MM-DD` in UTC (`"1970-01-01"` when the clock is unavailable).
+fn today_stamp() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|span| span.as_secs())
+        .unwrap_or(0);
+    let days_i64 = i64::try_from(secs.div_euclid(86_400)).unwrap_or(0);
+    let (year, month, day) = civil_from_days(days_i64);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+fn absolute_workspace_path(raw: &str) -> Result<PathBuf, String> {
+    let resolved = Project::resolve_workspace_path(raw).map_err(|err| err.to_string())?;
+    if resolved.is_absolute() {
+        Ok(resolved)
+    } else {
+        let cwd = std::env::current_dir().map_err(|err| format!("cannot resolve {raw}: {err}"))?;
+        Ok(cwd.join(resolved))
+    }
+}
+
+fn any_dirty(state: &AppState) -> bool {
+    state
+        .buffers
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .any(|buf| buf.buffer.is_dirty())
+}
+
+fn touch_recents(recents_path: Option<&PathBuf>, dir: &std::path::Path, title: &str) {
+    let Some(path) = recents_path else { return };
+    let mut recents = Recents::load(path);
+    recents.touch(&dir.to_string_lossy(), title, &today_stamp());
+    let _ = recents.save(path);
+}
+
+fn get_workspace_impl(state: &AppState, recents_path: Option<PathBuf>) -> api::WorkspaceDto {
+    let recents = recents_path.map_or_else(Recents::new, |path| Recents::load(&path));
+    let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
+    api::workspace_dto(&project, &recents)
+}
+
+fn open_workspace_impl(
+    state: &AppState,
+    path: &str,
+    force: bool,
+    recents_path: Option<PathBuf>,
+) -> Result<api::WorkspaceDto, String> {
+    if !force && any_dirty(state) {
+        return Err("unsaved changes: save or discard first, or retry with force".to_string());
+    }
+    let absolute = absolute_workspace_path(path)?;
+    let title = Project::load(&absolute).manuscript.title().to_string();
+    {
+        let mut guard = state.project.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = Project::load(&absolute);
+    }
+    state
+        .buffers
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
+    touch_recents(recents_path.as_ref(), &absolute, &title);
+    Ok(get_workspace_impl(state, recents_path))
+}
+
+fn create_workspace_impl(
+    state: &AppState,
+    path: &str,
+    title: &str,
+    recents_path: Option<PathBuf>,
+) -> Result<api::WorkspaceDto, String> {
+    if any_dirty(state) {
+        return Err("unsaved changes: save or discard first, then create".to_string());
+    }
+    let absolute = absolute_workspace_path(path)?;
+    let project = Project::create(&absolute, title).map_err(|err| err.to_string())?;
+    let saved_title = project.manuscript.title().to_string();
+    {
+        let mut guard = state.project.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = project;
+    }
+    state
+        .buffers
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
+    touch_recents(recents_path.as_ref(), &absolute, &saved_title);
+    Ok(get_workspace_impl(state, recents_path))
+}
+
+/// Start-screen payload: dir, title, project presence, recents, warnings.
+#[tauri::command]
+fn get_workspace(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> api::WorkspaceDto {
+    get_workspace_impl(&state, config_recents_path(&app))
+}
+
+/// Switch workspace (drops all buffers). Dirty buffers block unless `force`.
+#[tauri::command]
+fn open_workspace(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+    force: bool,
+) -> Result<api::WorkspaceDto, String> {
+    open_workspace_impl(&state, &path, force, config_recents_path(&app))
+}
+
+/// Create a workspace (mkdir + fresh project) and switch to it.
+#[tauri::command]
+fn create_workspace(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+    title: String,
+) -> Result<api::WorkspaceDto, String> {
+    create_workspace_impl(&state, &path, &title, config_recents_path(&app))
 }
 
 // ---------------------------------------------------------------------------
@@ -872,6 +1038,9 @@ fn main() {
             get_stats,
             get_lore,
             get_workspace_dir,
+            get_workspace,
+            open_workspace,
+            create_workspace,
             open_file,
             set_text,
             save_file,
@@ -1312,5 +1481,55 @@ mod tests {
         assert!(get_entity_impl(&state, mara.id).is_err());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn workspace_impls_guard_dirty_create_and_remember() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(50_000);
+        let n = NEXT.fetch_add(1, Ordering::SeqCst);
+        let base = std::env::temp_dir().join(format!("yonro-gui-ws-{n}"));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let recents = base.join("recents.json");
+        let first = base.join("first");
+        std::fs::create_dir_all(&first).unwrap();
+        let state = AppState::load(first.clone());
+
+        // Fresh dir reports no project; creating flips it and stamps recents.
+        let empty = get_workspace_impl(&state, Some(recents.clone()));
+        assert!(!empty.has_project);
+        let made = create_workspace_impl(
+            &state,
+            base.join("novel").to_string_lossy().as_ref(),
+            "Novel",
+            Some(recents.clone()),
+        )
+        .unwrap();
+        assert!(made.has_project);
+        assert_eq!(made.title, "Novel");
+        assert_eq!(made.recent.len(), 1);
+        assert_eq!(made.recent[0].last_opened.len(), 10);
+
+        // A dirty buffer blocks a plain switch but yields to force.
+        let opened = open_file_impl(&state, None).unwrap();
+        set_text_impl(&state, opened.buffer_id, "unsaved words".to_string()).unwrap();
+        assert!(open_workspace_impl(
+            &state,
+            &first.to_string_lossy(),
+            false,
+            Some(recents.clone())
+        )
+        .is_err());
+        let back = open_workspace_impl(
+            &state,
+            &first.to_string_lossy(),
+            true,
+            Some(recents.clone()),
+        )
+        .unwrap();
+        assert_eq!(back.dir, first.to_string_lossy().to_string());
+        assert_eq!(back.recent.len(), 2);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
