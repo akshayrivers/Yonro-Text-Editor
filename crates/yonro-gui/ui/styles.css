@@ -386,6 +386,46 @@ dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
 #outline-tabs .tab[aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
 #alt-toolbar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
 #alt-toolbar[hidden] { display: none; }
+
+/* Graph filter panel: collapsible rail on the left edge */
+#graph-main { display: flex; gap: 10px; flex: 1 1 auto; min-height: 0; }
+#graph-panel {
+  width: 208px;
+  flex: none;
+  align-self: flex-start;
+  max-height: 100%;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+#graph-panel-toggle { width: 100%; }
+#graph-panel-body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+#graph-panel-body[hidden] { display: none; }
+.gf-row { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 12px; }
+.gf-row input, .gf-row select {
+  background: var(--panel-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font: inherit;
+  min-width: 0;
+}
+.gf-row input:focus, .gf-row select:focus { border-color: var(--accent); outline: none; }
+.gf-check { display: flex; gap: 6px; align-items: center; font-size: 12px; }
+.gf-check input { accent-color: var(--accent); }
+#graph-f-kinds { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px 8px; margin: 0; min-width: 0; }
+#graph-f-kinds legend { font-size: 11px; color: var(--muted); padding: 0 4px; }
+.kind-check { display: flex; gap: 6px; align-items: center; font-size: 12px; }
+.kind-check input { accent-color: var(--accent); }
+.kind-check .count { margin-left: auto; color: var(--muted); }
+#graph-stage { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+@media (max-width: 799px) {
+  #graph-main { flex-direction: column; }
+  #graph-panel { width: 100%; }
+}
 #graph {
   width: 100%;
   flex: 1 1 auto;

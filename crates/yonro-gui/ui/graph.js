@@ -629,8 +629,226 @@ function removeCustomNodeFlow(id, nodeId, node) {  const g = customById(id);
   openModal(dlg, cancel);
 }
 
-function updateGraphRovingTabindex(activeId) {
-  const nodes = document.querySelectorAll('#graph g.gnode');
+/* Filter panel (inferred graph only) ---------------------------------------
+ * Controls rebuild a core GraphQuery; the panel is collapsible and its
+ * state persists as prefs. Re-querying is wired separately (debounced).
+ */
+const GRAPH_KINDS = ['character', 'place', 'faction', 'item', 'lore'];
+let graphFull = null; // unfiltered dto: kind counts + filter-off baseline
+let graphOutlineCache = null;
+let graphFiltersBound = false;
+
+function defaultGraphFilters() {
+  return {
+    open: true,
+    text: '',
+    kinds: GRAPH_KINDS.slice(),
+    scope: '',
+    pov: '',
+    weight: 1,
+    degree: 0,
+    orphans: false,
+    local: false,
+    depth: 2,
+  };
+}
+
+function loadGraphFilters() {
+  const fallback = defaultGraphFilters();
+  try {
+    const raw = localStorage.getItem('yonro.graphFilters');
+    if (!raw) return fallback;
+    const saved = JSON.parse(raw);
+    if (!saved || typeof saved !== 'object') return fallback;
+    const kinds = Array.isArray(saved.kinds)
+      ? saved.kinds.filter((k) => GRAPH_KINDS.includes(k))
+      : fallback.kinds;
+    return {
+      open: saved.open !== false,
+      text: typeof saved.text === 'string' ? saved.text : '',
+      kinds,
+      scope: typeof saved.scope === 'string' ? saved.scope : '',
+      pov: typeof saved.pov === 'string' ? saved.pov : '',
+      weight: Number.isFinite(Number(saved.weight)) ? Math.max(0, Math.min(99, Math.round(Number(saved.weight)))) : 1,
+      degree: Number.isFinite(Number(saved.degree)) ? Math.max(0, Math.min(99, Math.round(Number(saved.degree)))) : 0,
+      orphans: saved.orphans === true,
+      local: saved.local === true,
+      depth: saved.depth === 1 || saved.depth === 3 ? saved.depth : 2,
+    };
+  } catch (err) {
+    void err;
+    return fallback;
+  }
+}
+
+function saveGraphFilters(state) {
+  try {
+    localStorage.setItem('yonro.graphFilters', JSON.stringify(state));
+  } catch (err) {
+    void err;
+  }
+}
+
+function readGraphFilters() {
+  const text = document.getElementById('graph-f-text');
+  const scope = document.getElementById('graph-f-scope');
+  const pov = document.getElementById('graph-f-pov');
+  const weight = document.getElementById('graph-f-weight');
+  const degree = document.getElementById('graph-f-degree');
+  const orphans = document.getElementById('graph-f-orphans');
+  const local = document.getElementById('graph-f-local');
+  const depth = document.getElementById('graph-f-depth');
+  const kinds = GRAPH_KINDS.filter((kind) => {
+    const box = document.querySelector(`#graph-f-kinds input[data-kind="${kind}"]`);
+    return box && box.checked;
+  });
+  return {
+    open: document.getElementById('graph-panel-body')
+      && !document.getElementById('graph-panel-body').hidden,
+    text: text ? text.value : '',
+    kinds,
+    scope: scope ? scope.value : '',
+    pov: pov ? pov.value : '',
+    weight: weight ? Math.max(0, Math.min(99, Math.round(Number(weight.value) || 0))) : 1,
+    degree: degree ? Math.max(0, Math.min(99, Math.round(Number(degree.value) || 0))) : 0,
+    orphans: Boolean(orphans && orphans.checked),
+    local: Boolean(local && local.checked),
+    depth: depth && (depth.value === '1' || depth.value === '3') ? Number(depth.value) : 2,
+  };
+}
+
+/* Query object for core (snake_case). Null when every control sits at its
+ * default, so core returns today's full output untouched.
+ */
+function buildGraphQuery() {
+  const f = readGraphFilters();
+  saveGraphFilters(f);
+  const allKinds = f.kinds.length === GRAPH_KINDS.length;
+  const isDefault = f.text.trim() === '' && allKinds && f.scope === '' && f.pov === ''
+    && f.weight === 1 && f.degree === 0 && !f.orphans && !f.local;
+  if (isDefault) return null;
+  let focus = null;
+  if (f.local) {
+    focus = graphSpotlight !== null ? graphSpotlight : graphFocusedNodeId;
+  }
+  return {
+    kinds: allKinds ? [] : (f.kinds.length ? f.kinds : ['__none__']),
+    text: f.text.trim(),
+    scope: f.scope === '' ? null : Number(f.scope),
+    pov: f.pov === '' ? null : f.pov,
+    min_weight: f.weight,
+    min_degree: f.degree,
+    hide_orphans: f.orphans,
+    focus,
+    depth: f.depth,
+    max_nodes: 0,
+  };
+}
+
+function syncFilterControls(state) {
+  const set = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.value = value;
+  };
+  set('graph-f-text', state.text);
+  set('graph-f-scope', state.scope);
+  set('graph-f-pov', state.pov);
+  set('graph-f-weight', String(state.weight));
+  set('graph-f-degree', String(state.degree));
+  const orphans = document.getElementById('graph-f-orphans');
+  if (orphans) orphans.checked = state.orphans;
+  const local = document.getElementById('graph-f-local');
+  if (local) local.checked = state.local;
+  set('graph-f-depth', String(state.depth));
+  for (const kind of GRAPH_KINDS) {
+    const box = document.querySelector(`#graph-f-kinds input[data-kind="${kind}"]`);
+    if (box) box.checked = state.kinds.includes(kind);
+  }
+  const toggle = document.getElementById('graph-panel-toggle');
+  const body = document.getElementById('graph-panel-body');
+  if (toggle && body) {
+    toggle.setAttribute('aria-expanded', state.open ? 'true' : 'false');
+    body.hidden = !state.open;
+  }
+}
+
+function buildKindChecks(counts) {
+  const box = document.getElementById('graph-f-kinds');
+  if (!box) return;
+  box.querySelectorAll('.kind-check').forEach((row) => row.remove());
+  const saved = loadGraphFilters();
+  for (const kind of GRAPH_KINDS) {
+    const row = document.createElement('label');
+    row.className = 'kind-check';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.dataset.kind = kind;
+    input.checked = saved.kinds.includes(kind);
+    input.setAttribute('aria-label', `show ${kind}s`);
+    input.addEventListener('change', () => requeryGraphSoon());
+    row.appendChild(input);
+    const name = document.createElement('span');
+    name.textContent = kind;
+    row.appendChild(name);
+    const count = document.createElement('span');
+    count.className = 'count';
+    count.textContent = String(counts[kind] || 0);
+    row.appendChild(count);
+    box.appendChild(row);
+  }
+}
+
+function buildScopeOptions(outline) {
+  const sel = document.getElementById('graph-f-scope');
+  if (!sel) return;
+  sel.innerHTML = '';
+  const all = document.createElement('option');
+  all.value = '';
+  all.textContent = 'whole book';
+  sel.appendChild(all);
+  const walk = (node, trail) => {
+    if (node.kind === 'act' || node.kind === 'chapter') {
+      const opt = document.createElement('option');
+      opt.value = String(node.id);
+      opt.textContent = trail ? `${trail} / ${node.title}` : node.title;
+      sel.appendChild(opt);
+    }
+    const next = node.kind === 'project' ? '' : (trail ? `${trail} / ${node.title}` : node.title);
+    for (const child of node.children || []) walk(child, next);
+  };
+  if (outline) walk(outline, '');
+  const saved = loadGraphFilters();
+  sel.value = saved.scope;
+  if (sel.value !== saved.scope) sel.value = '';
+}
+
+function buildPovOptions(outline) {
+  const sel = document.getElementById('graph-f-pov');
+  if (!sel) return;
+  sel.innerHTML = '';
+  const all = document.createElement('option');
+  all.value = '';
+  all.textContent = 'any pov';
+  sel.appendChild(all);
+  const povs = [];
+  const walk = (node) => {
+    if (node.kind === 'scene' && node.pov && !povs.includes(node.pov)) povs.push(node.pov);
+    for (const child of node.children || []) walk(child);
+  };
+  if (outline) walk(outline);
+  povs.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+  for (const pov of povs) {
+    const opt = document.createElement('option');
+    opt.value = pov;
+    opt.textContent = pov;
+    sel.appendChild(opt);
+  }
+  const saved = loadGraphFilters();
+  sel.value = saved.pov;
+  if (sel.value !== saved.pov) sel.value = '';
+}
+
+function updateGraphRovingTabindex(activeId) {  const nodes = document.querySelectorAll('#graph g.gnode');
   nodes.forEach((el) => {
     const isTarget = Number(el.dataset.id) === activeId;
     el.setAttribute('tabindex', isTarget ? '0' : '-1');

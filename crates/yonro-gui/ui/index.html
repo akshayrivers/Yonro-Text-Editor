@@ -94,8 +94,27 @@
         </div>
         <div id="graph-tabs" role="tablist" aria-label="Graphs"></div>
         <p class="muted">Nodes are lore entities; edge width is combined weight (shared scenes + @mentions). Click a node to spotlight its neighborhood.</p>
-        <svg id="graph" role="img" aria-label="Relationship graph"></svg>
-        <div id="graph-legend" class="muted"></div>
+        <div id="graph-main">
+          <aside id="graph-panel" aria-label="Graph filters">
+            <button id="graph-panel-toggle" aria-expanded="true" title="collapse the filter panel">filters</button>
+            <div id="graph-panel-body">
+              <label class="gf-row">search <input id="graph-f-text" type="search" placeholder="name or alias" aria-label="filter by name or alias"></label>
+              <fieldset id="graph-f-kinds"><legend>kinds</legend></fieldset>
+              <label class="gf-row">scope <select id="graph-f-scope" aria-label="limit to part of the book"><option value="">whole book</option></select></label>
+              <label class="gf-row">pov <select id="graph-f-pov" aria-label="limit to a POV"><option value="">any pov</option></select></label>
+              <label class="gf-row">min weight <input id="graph-f-weight" type="number" min="0" max="99" value="1" aria-label="minimum link weight"></label>
+              <label class="gf-row">min links <input id="graph-f-degree" type="number" min="0" max="99" value="0" aria-label="minimum links per entity"></label>
+              <label class="gf-check"><input id="graph-f-orphans" type="checkbox"> hide orphans</label>
+              <label class="gf-check"><input id="graph-f-local" type="checkbox"> local graph</label>
+              <label class="gf-row">depth <select id="graph-f-depth" aria-label="local graph depth"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option></select></label>
+              <button id="graph-f-reset" class="btn" title="clear every filter">reset</button>
+            </div>
+          </aside>
+          <div id="graph-stage">
+            <svg id="graph" role="img" aria-label="Relationship graph"></svg>
+            <div id="graph-legend" class="muted"></div>
+          </div>
+        </div>
       </section>
 
       <section id="view-timeline" class="view hidden" role="tabpanel" aria-label="Timeline">
