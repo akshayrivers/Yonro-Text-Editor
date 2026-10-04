@@ -372,6 +372,9 @@ dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
 }
 #graph-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
 #graph-tabs .tab[aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
+#lens-strip { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+#lens-strip .tab[aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
+#lens-strip .lens-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
 #outline-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
 #outline-tabs .tab[aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
 #alt-toolbar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
@@ -466,6 +469,12 @@ dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
 #graph .gnode.k-faction circle { stroke: var(--k-faction); }
 #graph .gnode.k-item circle { stroke: var(--k-item); }
 #graph .gnode.k-lore circle { stroke: var(--k-lore); }
+#graph .gnode.act-1 circle { stroke: var(--act-1); }
+#graph .gnode.act-2 circle { stroke: var(--act-2); }
+#graph .gnode.act-3 circle { stroke: var(--act-3); }
+#graph .gnode.act-4 circle { stroke: var(--act-4); }
+#graph .gnode.act-5 circle { stroke: var(--act-5); }
+#graph .gnode.act-6 circle { stroke: var(--act-6); }
 #graph .gnode:focus circle,
 #graph .gnode.focused circle {
   stroke: var(--focus);
@@ -1095,3 +1104,27 @@ body.zen #zen-count {
   align-items: center;
   justify-content: space-between;
 }
+
+/* Presence matrix: sticky names, heat chips, wrapping table */
+#presence-wrap { flex: 1 1 auto; min-height: 0; overflow: auto; }
+#presence-wrap[hidden] { display: none; }
+#presence-table td:first-child, #presence-table th:first-child {
+  position: sticky;
+  left: 0;
+  background: var(--panel);
+  z-index: 1;
+}
+#presence-table tbody tr { cursor: pointer; }
+#presence-table .heat {
+  display: inline-block;
+  min-width: 3ch;
+  text-align: center;
+  border-radius: 4px;
+  background: var(--accent-dim);
+  color: var(--ink);
+  padding: 0 6px;
+}
+#presence-table .heat-0 { opacity: 0.35; }
+#presence-table .heat-1 { opacity: 0.55; }
+#presence-table .heat-2 { opacity: 0.8; }
+#presence-table .heat-3 { opacity: 1; }

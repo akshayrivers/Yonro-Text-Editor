@@ -16,6 +16,74 @@ function forceLayout(nodes, edges, opts = {}) {
   return { pos: sim.positions(), bbox: sim.bbox(), spacing: sim.spacing };
 }
 
+/* Two-column layout for pair lenses (positions only, no simulation).
+ * Left = side A, right = side B, anything undivided sits middle.
+ * Deterministic: id order within each column.
+ */
+function bipartiteLayout(nodes, leftIds, rightIds) {
+  const leftSet = new Set(leftIds);
+  const rightSet = new Set(rightIds);
+  const left = [], right = [], mid = [];
+  const sorted = nodes.slice().sort((a, b) => a.id - b.id);
+  for (const n of sorted) {
+    if (leftSet.has(n.id) && !rightSet.has(n.id)) left.push(n);
+    else if (rightSet.has(n.id) && !leftSet.has(n.id)) right.push(n);
+    else mid.push(n);
+  }
+  const rows = Math.max(left.length, right.length, mid.length, 1);
+  const gap = 90;
+  const width = 760;
+  const top = 110;
+  const place = (list, x) => {
+    const off = ((rows - list.length) * gap) / 2;
+    list.forEach((n, i) => {
+      pos[n.id] = { x, y: top + off + i * gap };
+    });
+  };
+  const pos = {};
+  place(left, 120);
+  place(mid, 120 + width / 2);
+  place(right, 120 + width);
+  return { pos, bbox: bboxOf(pos), spacing: 60 };
+}
+
+/* Row-per-group layout for the story map (positions only). `rows` is an
+ * array of id arrays in outline order (one per act); ids absent from every
+ * row continue after the last one.
+ */
+function orderedLayout(nodes, rows) {
+  const at = new Map();
+  rows.forEach((row, r) => row.forEach((id) => {
+    if (!at.has(id)) at.set(id, r);
+  }));
+  const byRow = rows.map(() => []);
+  const floating = [];
+  for (const n of nodes) {
+    if (at.has(n.id)) byRow[at.get(n.id)].push(n.id);
+    else floating.push(n.id);
+  }
+  if (floating.length) byRow.push(floating);
+  const pos = {};
+  byRow.forEach((row, r) => {
+    row.forEach((id, j) => {
+      pos[id] = { x: 140 + j * 170, y: 140 + r * 180 };
+    });
+  });
+  return { pos, bbox: bboxOf(pos), spacing: 80 };
+}
+
+function bboxOf(pos) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const id of Object.keys(pos)) {
+    const p = pos[id];
+    if (p.x < x0) x0 = p.x;
+    if (p.x > x1) x1 = p.x;
+    if (p.y < y0) y0 = p.y;
+    if (p.y > y1) y1 = p.y;
+  }
+  return { x0, y0, x1, y1 };
+}
+
 function createSim(nodes, edges, params = {}, initPos = null) {
   const n = nodes.length;
   const W = Math.max(900, Math.sqrt(n) * 110);      // world grows with n
