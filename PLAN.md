@@ -133,6 +133,20 @@ grapheme-correct. Verified end-to-end by driving the real binary in a pty.*
 - [x] **5.1 Setup `yonro-gui` (Tauri v2)**: `crates/yonro-gui` runs via plain `cargo run` (no npm: static vanilla-JS UI, `cargo-tauri` CLI only needed for OS bundlers later). Rust backend holds `yonro-core` in-process; commands (`get_outline`/`get_stats`/`get_lore`/`get_workspace_dir`) are the documented adapter seam a future pure-web build reimplements over WASM. Read-only dashboard ships: stat cards, outline tree with progress bars, lore entities with POV backlinks; `.yonro/` workspace load with safe fallbacks.
 - [x] **5.2 Interactive Character Relationship Graph**: computed in `yonro-core::graph` (scene co-occurrence + POV-`@mention` edges, combined weights, neighbor ranking), rendered as an SVG canvas in `yonro-gui` (circular layout, width-by-weight edges, gold = mention / bronze = shared scene, click-to-spotlight neighborhoods).
 - [x] **5.3 Narrative Timeline & Geography Travel-Time Checker**: computed in `yonro-core::timeline` over outline order (free-form dates preserved; soft continuity notes for POV setting-jumps between adjacent scenes and missing POV/setting metadata), rendered as an ordered timeline with warnings in `yonro-gui`.
+- [x] **5.4 Session + daily goals**: `yonro-core::session` log (net words/day, goals, streaks, date injection) + `.yonro/sessions.json` persistence; `get_session`/`set_goal` commands with save/exit/switch persist; statusline `session +N` bar, streak lines, goal dialog, palette `>set daily goal`, debounced refresh on sync.
+- [x] **5.5 Manuscript export**: core compile (open-buffer text wins) + atomic write with receipt (words, scenes, path); `export_manuscript` command; palette `>export manuscript as markdown/html`; success message names words/scenes/relative path.
+- [x] **5.6 Scene history snapshots**: throttled save snapshots (ten minutes apart) under `.yonro/history/`; `get_history`/`restore_snapshot` commands (restore snapshots the present first, syncs counts); inspector history list with restore adopting into open buffers (dirty until saved).
+
+---
+
+### 🟢 Phase 6: GUI Polish — shortcuts, a11y, perf, errors, docs — **DONE**
+*Goal: Fix, don't add. Shortcut sheet from one registry; a11y sweep; keystroke path stays local; errors name the entity; docs match the build.*
+
+- [x] **6.1 Shortcut sheet**: `?` (outside the editor) and palette `>keyboard shortcuts` open a native `<dialog>` rendered from the `COMMANDS` registry (single source of truth). Groups: file, navigation, view, editor, binder.
+- [x] **6.2 A11y sweep**: native `<dialog>.showModal()` everywhere with focus-first + Esc + focus-return; tablist/tree/listbox/menu `aria-*` corrected (view tablist + tabpanels, tree `aria-selected`, roving tabindex kept); `#st-msg` `aria-live` announces saves/errors; graph keeps `role="img"` + label with keyboard-walkable nodes; contrast re-measured (see REPORT, all text ≥4.5:1, graphics ≥3:1, no token change needed); transitions gated behind `prefers-reduced-motion: no-preference` (+ explicit `reduce` kill); forced-colors borders/focus extended; 800px/narrow drawers + wrapping heads avoid body horizontal scroll.
+- [x] **6.3 Perf pass**: per-keystroke path is local dirty flag + debounced backend (`set_text` 120ms, mentions 200ms, find 150ms, `@` popup 150ms, binder 800ms, session 400ms); views load lazily on first `show()` (no `get_graph` at boot); no view re-renders in the input handler. Profile: 150k-word seed stats take ~319ms in core (debounced, off the keystroke path).
+- [x] **6.4 Error-copy pass**: every error names the file/entity + reason via `errText()` (never `undefined`/`[object Object]`); Tauri `Err(String)` shown verbatim after a short prefix.
+- [x] **6.5 Docs**: this checklist, README GUI section (dev loop, keymap link), architecture adapter-seam + `ui/` layout.
 
 ---
 

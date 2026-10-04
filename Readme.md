@@ -54,6 +54,18 @@ When the File Explorer pane is active:
 *   Click and drag on horizontal or vertical dividers between tiled panes to resize them dynamically.
 
 
+## 🖥️ GUI (Tauri narrative studio)
+
+The `yonro-gui` crate is the visual half of the studio: Write/Outline/Graph/Timeline/Lore over the same `.yonro/` workspace the TUI reads.
+
+```bash
+cargo run -p yonro-gui -- <workspace_dir>
+```
+
+Keymap: press `?` outside the editor for the shortcut sheet, or run palette `>keyboard shortcuts` (`mod+Shift+P`). The full map lives in `AGENTS.md` under KEYMAP.
+
+Adapter seam: only `crates/yonro-gui/ui/core.js` touches `window.__TAURI__`. Every other UI file calls `core.<fn>()`. See `architecture.md` for the command list and `ui/` file layout.
+
 ## 🏛️ Architecture & Layered Design
 
 Yonro is built in robust layers, separating terminal rendering from state management and asynchronous operations.
