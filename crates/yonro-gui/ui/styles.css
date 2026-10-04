@@ -382,6 +382,10 @@ dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
 }
 #graph-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
 #graph-tabs .tab[aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
+#outline-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+#outline-tabs .tab[aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
+#alt-toolbar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+#alt-toolbar[hidden] { display: none; }
 #graph {
   width: 100%;
   flex: 1 1 auto;

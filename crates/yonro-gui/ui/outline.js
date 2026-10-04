@@ -21,11 +21,13 @@ function outlineStatus(node) {
 
 function outlineRow(entry) {
   const { node, depth } = entry;
+  const inAlt = altOutlineId !== null;
   const tr = document.createElement('tr');
   tr.dataset.id = String(node.id);
   tr.dataset.kind = node.kind;
   tr.tabIndex = 0;
-  if (node.id === binderSelectedId) tr.setAttribute('aria-selected', 'true');
+  const selected = inAlt ? node.id === altSelectedId : node.id === binderSelectedId;
+  if (selected) tr.setAttribute('aria-selected', 'true');
   const cells = [
     { text: node.title, pad: 8 + depth * 18 },
     { text: node.kind === 'scene' && node.pov ? node.pov : '' },
@@ -50,18 +52,43 @@ function outlineRow(entry) {
   dotCell.appendChild(dot);
   tr.appendChild(dotCell);
   tr.addEventListener('click', () => {
+    if (altOutlineId !== null) {
+      altSelectedId = node.id;
+      outlineMarkSelected(node.id);
+      return;
+    }
     binderSelect(node.id);
     outlineMarkSelected(node.id);
   });
   tr.addEventListener('dblclick', () => {
-    if (node.kind === 'scene') openSceneDoc(node.id);
+    if (node.kind !== 'scene') return;
+    if (altOutlineId !== null) openAltSceneDoc(altOutlineId, node.id);
+    else openSceneDoc(node.id);
   });
   tr.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      binderSelect(node.id);
-      outlineMarkSelected(node.id);
-      if (node.kind === 'scene') openSceneDoc(node.id);
+      if (altOutlineId !== null) {
+        altSelectedId = node.id;
+        outlineMarkSelected(node.id);
+        if (node.kind === 'scene') openAltSceneDoc(altOutlineId, node.id);
+      } else {
+        binderSelect(node.id);
+        outlineMarkSelected(node.id);
+        if (node.kind === 'scene') openSceneDoc(node.id);
+      }
+      return;
+    }
+    if (altOutlineId === null) return;
+    if (e.key === 'F2') {
+      e.preventDefault();
+      altRenameFlow(node.id);
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault();
+      altRemoveFlow(node.id);
+    } else if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'a' || e.key === 'c' || e.key === 's')) {
+      e.preventDefault();
+      altBeginAdd(e.key);
     }
   });
   return tr;
@@ -70,10 +97,23 @@ function outlineRow(entry) {
 async function loadOutline() {
   const element = document.getElementById('outline');
   try {
-    const [outline, stats] = await Promise.all([core.outline(), core.stats()]);
+    const [outline, stats, alts] = await Promise.all([
+      core.outline(),
+      core.stats(),
+      core.altOutlines().catch(() => []),
+    ]);
     binderTree = outline;
     renderBinderTree();
-    renderOutlineTable(element, outline, stats);
+    altOutlines = Array.isArray(alts) ? alts : [];
+    if (altOutlineId !== null && !altOutlines.some((o) => o.id === altOutlineId)) {
+      altOutlineId = null;
+    }
+    renderOutlineTabs();
+    if (altOutlineId === null) {
+      renderOutlineTable(element, outline, stats);
+    } else {
+      await loadAltOutlineTable(element);
+    }
   } catch (err) {
     element.innerHTML = '';
     const p = document.createElement('p');
@@ -81,6 +121,372 @@ async function loadOutline() {
     p.textContent = `could not load outline: ${errText(err)}`;
     element.appendChild(p);
   }
+}
+
+/* Alternate outlines: the manuscript tab plus one tab per extra tree.
+ * The binder and inspector stay manuscript-bound; alt rows select locally
+ * (altSelectedId) and scenes open straight into Write.
+ */
+let altOutlineId = null;
+let altOutlines = [];
+let altSelectedId = null;
+let altTree = null;
+
+async function loadAltOutlineTable(element) {
+  try {
+    const dto = await core.altOutline(altOutlineId);
+    altTree = dto;
+    renderAltOutlineTable(element, dto);
+  } catch (err) {
+    element.innerHTML = '';
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = `could not load outline: ${errText(err)}`;
+    element.appendChild(p);
+  }
+}
+
+function renderAltOutlineTable(element, dto) {
+  if (!(dto.children || []).length) {
+    element.innerHTML = '';
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = 'empty outline. add an act with the + act button below.';
+    element.appendChild(p);
+    return;
+  }
+  let scenes = 0;
+  const walk = (node) => {
+    if (node.kind === 'scene') scenes += 1;
+    for (const child of node.children || []) walk(child);
+  };
+  walk(dto);
+  renderOutlineTable(element, dto, {
+    scenes,
+    words: dto.words || 0,
+    target: dto.target || 0,
+  });
+}
+
+function renderOutlineTabs() {
+  const bar = document.getElementById('outline-tabs');
+  if (bar) {
+    bar.innerHTML = '';
+    const mk = (key, label, selected, hint) => {
+      const b = document.createElement('button');
+      b.className = 'tab';
+      b.textContent = label;
+      b.title = hint || label;
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', selected ? 'true' : 'false');
+      b.addEventListener('click', () => switchOutlineView(key));
+      bar.appendChild(b);
+      return b;
+    };
+    mk(null, 'manuscript', altOutlineId === null, 'the main manuscript tree');
+    for (const o of altOutlines) {
+      const tab = mk(o.id, o.title, o.id === altOutlineId, 'double-click renames, Del removes');
+      tab.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        renameAltOutlineFlow(o.id);
+      });
+      tab.addEventListener('keydown', (e) => {
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+          e.preventDefault();
+          deleteAltOutlineFlow(o.id);
+        }
+      });
+    }
+    const add = document.createElement('button');
+    add.className = 'tab';
+    add.textContent = '+ new';
+    add.title = 'new alternate outline';
+    add.addEventListener('click', () => createAltOutlineFlow());
+    bar.appendChild(add);
+  }
+  renderAltToolbar();
+}
+
+function renderAltToolbar() {
+  const bar = document.getElementById('alt-toolbar');
+  if (!bar) return;
+  bar.innerHTML = '';
+  if (altOutlineId === null) {
+    bar.hidden = true;
+    return;
+  }
+  bar.hidden = false;
+  for (const [key, label] of [['a', '+ act'], ['c', '+ chapter'], ['s', '+ scene']]) {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.title = `add ${label.slice(2)} to this outline`;
+    b.addEventListener('click', () => altBeginAdd(key));
+    bar.appendChild(b);
+  }
+}
+
+function switchOutlineView(key) {
+  altOutlineId = key;
+  altSelectedId = null;
+  altTree = null;
+  if (typeof show === 'function') show('outline');
+  else loadOutline();
+}
+
+async function openAltSceneDoc(outlineId, id) {
+  try {
+    if (typeof flushSync === 'function') await flushSync();
+    const opened = await core.altOpenScene(outlineId, id);
+    adoptOpened(opened);
+  } catch (err) {
+    setMessage(`could not open scene ${id}: ${errText(err)}`, { error: true });
+  }
+}
+
+function altFindWithParent(id, node, parent) {
+  if (!node) return null;
+  if (node.id === id) return { node, parent };
+  for (const child of node.children || []) {
+    const hit = altFindWithParent(id, child, node);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function altNearestAncestor(id, kind) {
+  let cursor = altFindWithParent(id, altTree);
+  while (cursor && cursor.parent) {
+    if (cursor.parent.kind === kind) return cursor.parent.id;
+    cursor = altFindWithParent(cursor.parent.id, altTree);
+  }
+  return null;
+}
+
+function altTitleDialog(heading, initial, confirmLabel) {
+  const dlg = ensureDialog('alt-outline-dialog', heading);
+  dlg.innerHTML = '';
+  const h = document.createElement('h2');
+  h.textContent = heading;
+  dlg.appendChild(h);
+  const label = document.createElement('label');
+  label.textContent = 'title';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = initial || '';
+  input.setAttribute('aria-label', 'title');
+  label.appendChild(input);
+  dlg.appendChild(label);
+  const err = document.createElement('p');
+  err.className = 'field-error';
+  err.setAttribute('aria-live', 'polite');
+  err.hidden = true;
+  dlg.appendChild(err);
+  const row = document.createElement('div');
+  const goBtn = document.createElement('button');
+  goBtn.textContent = confirmLabel;
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'cancel';
+  row.appendChild(goBtn);
+  row.appendChild(cancelBtn);
+  dlg.appendChild(row);
+  return { dlg, input, err, goBtn, cancelBtn };
+}
+
+function altBeginAdd(which) {
+  if (altOutlineId === null || !altTree) return;
+  const kind = which === 'a' ? 'act' : which === 'c' ? 'chapter' : 'scene';
+  let parent = null;
+  if (kind === 'chapter') {
+    parent = altSelectedId === null ? null : altNearestAncestor(altSelectedId, 'act');
+    if (parent === null) {
+      setMessage('chapters live in acts. add an act first.', { error: true });
+      return;
+    }
+  } else if (kind === 'scene') {
+    parent = altSelectedId === null ? null : altNearestAncestor(altSelectedId, 'chapter');
+    if (parent === null) {
+      setMessage('scenes live in chapters.', { error: true });
+      return;
+    }
+  }
+  const { dlg, input, err, goBtn, cancelBtn } = altTitleDialog(`new ${kind}`, '', 'add');
+  goBtn.addEventListener('click', async () => {
+    const title = input.value.trim();
+    if (!title) {
+      err.textContent = 'title cannot be empty';
+      err.hidden = false;
+      return;
+    }
+    try {
+      const res = await core.altAddNode(altOutlineId, parent, kind, title);
+      altTree = res.outline;
+      altSelectedId = res.new_id;
+      dlg.close();
+      setMessage(`added ${kind} ${title}`);
+      loadOutline();
+    } catch (e) {
+      err.textContent = `cannot add ${kind} ${title}: ${errText(e)}`;
+      err.hidden = false;
+    }
+  });
+  cancelBtn.addEventListener('click', () => dlg.close(), { once: true });
+  openModal(dlg, input);
+}
+
+function altRenameFlow(id) {
+  const hit = altFindWithParent(id, altTree);
+  if (!hit) return;
+  const { dlg, input, err, goBtn, cancelBtn } = altTitleDialog('rename', hit.node.title, 'rename');
+  goBtn.addEventListener('click', async () => {
+    const title = input.value.trim();
+    if (!title) {
+      err.textContent = 'title cannot be empty';
+      err.hidden = false;
+      return;
+    }
+    try {
+      altTree = await core.altRenameNode(altOutlineId, id, title);
+      dlg.close();
+      setMessage(`renamed to ${title}`);
+      loadOutline();
+    } catch (e) {
+      err.textContent = `cannot rename ${hit.node.title}: ${errText(e)}`;
+      err.hidden = false;
+    }
+  });
+  cancelBtn.addEventListener('click', () => dlg.close(), { once: true });
+  openModal(dlg, input);
+}
+
+function altRemoveFlow(id) {
+  const hit = altFindWithParent(id, altTree);
+  if (!hit) return;
+  const kids = (hit.node.children || []).length;
+  const run = async () => {
+    try {
+      altTree = await core.altRemoveNode(altOutlineId, id);
+      if (altSelectedId === id) altSelectedId = null;
+      loadOutline();
+    } catch (err) {
+      setMessage(`could not delete ${hit.node.title}: ${errText(err)}`, { error: true });
+    }
+  };
+  if (kids === 0 && !(hit.node.kind === 'scene' && hit.node.words > 0)) {
+    run();
+    return;
+  }
+  const dlg = ensureDialog('alt-outline-confirm', 'delete');
+  dlg.innerHTML = '';
+  const h = document.createElement('h2');
+  h.textContent = 'delete';
+  dlg.appendChild(h);
+  const p = document.createElement('p');
+  p.textContent = kids > 0
+    ? `"${hit.node.title}" holds ${kids} item${kids === 1 ? '' : 's'}. drafts stay on disk.`
+    : `"${hit.node.title}" has ${hit.node.words} words. the draft stays on disk.`;
+  dlg.appendChild(p);
+  const row = document.createElement('div');
+  const del = document.createElement('button');
+  del.textContent = 'delete';
+  const cancel = document.createElement('button');
+  cancel.textContent = 'cancel';
+  row.appendChild(del);
+  row.appendChild(cancel);
+  dlg.appendChild(row);
+  del.addEventListener('click', async () => {
+    dlg.close();
+    run();
+  }, { once: true });
+  cancel.addEventListener('click', () => dlg.close(), { once: true });
+  openModal(dlg, cancel);
+}
+
+function createAltOutlineFlow() {
+  const { dlg, input, err, goBtn, cancelBtn } = altTitleDialog('new outline', '', 'create');
+  goBtn.addEventListener('click', async () => {
+    const name = input.value.trim();
+    if (!name) {
+      err.textContent = 'name cannot be empty';
+      err.hidden = false;
+      return;
+    }
+    try {
+      const id = await core.createAltOutline(name);
+      dlg.close();
+      setMessage(`created outline ${name}`);
+      altOutlineId = id;
+      altSelectedId = null;
+      loadOutline();
+    } catch (e) {
+      err.textContent = `cannot create outline ${name}: ${errText(e)}`;
+      err.hidden = false;
+    }
+  });
+  cancelBtn.addEventListener('click', () => dlg.close(), { once: true });
+  openModal(dlg, input);
+}
+
+function renameAltOutlineFlow(id) {
+  const o = altOutlines.find((entry) => entry.id === id);
+  if (!o) return;
+  const { dlg, input, err, goBtn, cancelBtn } = altTitleDialog('rename outline', o.title, 'rename');
+  goBtn.addEventListener('click', async () => {
+    const name = input.value.trim();
+    if (!name) {
+      err.textContent = 'name cannot be empty';
+      err.hidden = false;
+      return;
+    }
+    try {
+      await core.renameAltOutline(id, name);
+      dlg.close();
+      loadOutline();
+    } catch (e) {
+      err.textContent = `cannot rename outline ${o.title}: ${errText(e)}`;
+      err.hidden = false;
+    }
+  });
+  cancelBtn.addEventListener('click', () => dlg.close(), { once: true });
+  openModal(dlg, input);
+}
+
+function deleteAltOutlineFlow(id) {
+  const o = altOutlines.find((entry) => entry.id === id);
+  if (!o) return;
+  const dlg = ensureDialog('alt-outline-confirm', 'delete outline');
+  dlg.innerHTML = '';
+  const h = document.createElement('h2');
+  h.textContent = 'delete outline';
+  dlg.appendChild(h);
+  const p = document.createElement('p');
+  p.textContent = `remove "${o.title}" and its whole tree? drafts stay on disk.`;
+  dlg.appendChild(p);
+  const row = document.createElement('div');
+  const del = document.createElement('button');
+  del.textContent = 'delete';
+  const cancel = document.createElement('button');
+  cancel.textContent = 'cancel';
+  row.appendChild(del);
+  row.appendChild(cancel);
+  dlg.appendChild(row);
+  del.addEventListener('click', async () => {
+    dlg.close();
+    try {
+      await core.deleteAltOutline(id);
+      setMessage(`deleted outline ${o.title}`);
+    } catch (err) {
+      setMessage(`could not delete outline ${o.title}: ${errText(err)}`, { error: true });
+      return;
+    }
+    if (altOutlineId === id) {
+      altOutlineId = null;
+      altSelectedId = null;
+      altTree = null;
+    }
+    loadOutline();
+  }, { once: true });
+  cancel.addEventListener('click', () => dlg.close(), { once: true });
+  openModal(dlg, cancel);
 }
 
 function renderOutlineTable(element, outline, stats) {
