@@ -216,6 +216,24 @@ fn absolute_workspace_path(raw: &str) -> Result<PathBuf, String> {
     }
 }
 
+/// Ensure `dir` exists and accepts writes (`mkdir -p`, then a probe file
+/// that is removed again). Opening or creating a project must fail here —
+/// naming the path and the reason — instead of half-working later when
+/// `.yonro/` or scene files cannot be written.
+///
+/// # Errors
+/// When the directory cannot be created or the probe file cannot be
+/// written and removed.
+fn ensure_writable_dir(dir: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|err| format!("cannot use {}: {err}", dir.display()))?;
+    let probe = dir.join(".yonro-write-probe.tmp");
+    std::fs::write(&probe, b"yonro")
+        .map_err(|err| format!("cannot write in {}: no write access ({err})", dir.display()))?;
+    std::fs::remove_file(&probe)
+        .map_err(|err| format!("cannot write in {}: no write access ({err})", dir.display()))?;
+    Ok(())
+}
+
 fn any_dirty(state: &AppState) -> bool {
     state
         .buffers
@@ -273,6 +291,7 @@ fn open_workspace_impl(
         return Err("unsaved changes: save or discard first, or retry with force".to_string());
     }
     let absolute = absolute_workspace_path(path)?;
+    ensure_writable_dir(&absolute)?;
     persist_sessions(state);
     let loaded = Project::load(&absolute);
     let title = loaded.manuscript.title().to_string();
@@ -296,6 +315,7 @@ fn create_workspace_impl(
         return Err("unsaved changes: save or discard first, then create".to_string());
     }
     let absolute = absolute_workspace_path(path)?;
+    ensure_writable_dir(&absolute)?;
     persist_sessions(state);
     let created = Project::create(&absolute, title).map_err(|err| err.to_string())?;
     let saved_title = created.manuscript.title().to_string();
@@ -1718,6 +1738,42 @@ mod tests {
         assert_eq!(back.dir, first.to_string_lossy().to_string());
         assert_eq!(back.recent.len(), 2);
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn writable_preflight_names_bad_paths() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(60_000);
+        let n = NEXT.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("yonro-gui-ro-{n}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A fresh path is created and passes.
+        let good = dir.join("good");
+        assert!(ensure_writable_dir(&good).is_ok());
+        assert!(good.is_dir());
+        // A path blocked by an existing file names the path.
+        let file = dir.join("afile");
+        std::fs::write(&file, b"x").unwrap();
+        let err = ensure_writable_dir(&file).unwrap_err();
+        assert!(err.contains("afile"), "unexpected: {err}");
+        // A read-only dir names the path and the reason (root can still
+        // write, so only assert when the probe actually fails).
+        let ro = dir.join("ro");
+        std::fs::create_dir_all(&ro).unwrap();
+        let mut perms = std::fs::metadata(&ro).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&ro, perms).unwrap();
+        if let Err(err) = ensure_writable_dir(&ro) {
+            assert!(err.contains("no write access"), "unexpected: {err}");
+            assert!(
+                err.contains(&ro.to_string_lossy().to_string()),
+                "unexpected: {err}"
+            );
+        }
+        // No permission restore: the read-only dir stays empty (the probe
+        // never lands), so removing the writable parent clears it.
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
