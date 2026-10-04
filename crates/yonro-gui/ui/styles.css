@@ -286,20 +286,76 @@ dialog > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
 .sheet { white-space: pre-wrap; margin: 6px 0 0; }
 
 /* Graph: line style carries meaning, color only reinforces */
+.graph-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.graph-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.graph-slider-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.82em;
+}
+.graph-slider-label input[type="range"] {
+  width: 90px;
+}
 #graph {
   width: 100%;
   height: 480px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  cursor: grab;
+  user-select: none;
 }
-#graph text { fill: var(--ink); font-size: 12px; font-family: var(--font-ui); }
-#graph .dim { opacity: 0.18; }
-#graph .edge { fill: none; }
+#graph.panning {
+  cursor: grabbing;
+}
+#graph text {
+  fill: var(--ink);
+  font-size: 11px;
+  font-family: var(--font-ui);
+  pointer-events: none;
+  /* Visible labels are pre-truncated in JS to ~14ch (SVG text honors no
+   * box ellipsis); the full name stays in <title>/aria-label. This cap
+   * keeps any HTML-rendered fallback to the same width. */
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#graph .dim { opacity: 0.15; }
+#graph .edge { fill: none; transition: opacity 0.15s ease; }
 #graph .edge.mention { stroke: var(--mention); }
 #graph .edge.shared { stroke: var(--shared); stroke-dasharray: 6 4; }
-#graph .gnode { cursor: pointer; }
-#graph .gnode circle { fill: var(--panel-2); stroke: var(--mention); stroke-width: 2; }
+#graph .gnode { cursor: pointer; outline: none; }
+#graph .gnode circle {
+  fill: var(--panel-2);
+  stroke: var(--muted);
+  stroke-width: 2;
+  transition: stroke 0.15s ease, stroke-width 0.15s ease;
+}
+#graph .gnode.k-character circle { stroke: var(--k-character); }
+#graph .gnode.k-place circle { stroke: var(--k-place); }
+#graph .gnode.k-faction circle { stroke: var(--k-faction); }
+#graph .gnode.k-item circle { stroke: var(--k-item); }
+#graph .gnode.k-lore circle { stroke: var(--k-lore); }
+#graph .gnode:focus circle,
+#graph .gnode.focused circle {
+  stroke: var(--focus);
+  stroke-width: 3.5;
+}
+#graph .gnode.spotlight circle {
+  stroke-width: 3.5;
+}
 
 /* Timeline */
 #timeline { padding-left: 22px; font-family: var(--font-prose); }

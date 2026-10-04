@@ -67,7 +67,15 @@
       </section>
 
       <section id="view-graph" class="view hidden">
-        <h2>Character graph</h2>
+        <div class="graph-head">
+          <h2>Character graph</h2>
+          <div class="graph-toolbar">
+            <label class="graph-slider-label">min weight <input type="range" id="graph-min-weight" min="1" max="10" value="1" step="1"></label>
+            <button id="graph-zoom-in" class="btn" title="Zoom in">+</button>
+            <button id="graph-zoom-out" class="btn" title="Zoom out">−</button>
+            <button id="graph-zoom-fit" class="btn" title="Fit to view">fit</button>
+          </div>
+        </div>
         <p class="muted">Nodes are lore entities; edge width is combined weight (shared scenes + @mentions). Click a node to spotlight its neighborhood.</p>
         <svg id="graph" role="img" aria-label="Relationship graph"></svg>
         <div id="graph-legend" class="muted"></div>
