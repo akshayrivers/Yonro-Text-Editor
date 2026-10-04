@@ -37,6 +37,7 @@ const core = {
   altMoveNode: (outline, id, newParent, index) => core.invoke('alt_move_node', { outline, id, newParent, index: index ?? null }),
   altRemoveNode: (outline, id) => core.invoke('alt_remove_node', { outline, id }),
   altOpenScene: (outline, id) => core.invoke('alt_open_scene', { outline, id }),
+  altOutline: (outline) => core.invoke('alt_get_outline', { outline }),
   openFile: (path) => core.invoke('open_file', { path: path ?? null }),
   setText: (bufferId, text) => core.invoke('set_text', { bufferId, text }),
   saveFile: (bufferId, path, overwrite) => core.invoke('save_file', { bufferId, path: path ?? null, overwrite: overwrite ?? false }),

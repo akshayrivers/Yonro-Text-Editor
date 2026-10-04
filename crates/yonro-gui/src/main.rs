@@ -1355,6 +1355,25 @@ fn alt_open_scene(
     alt_open_scene_impl(&state, outline, id)
 }
 
+fn alt_get_outline_impl(state: &AppState, outline: usize) -> Result<api::OutlineNodeDto, String> {
+    let outlines = state.outlines.lock().unwrap_or_else(|e| e.into_inner());
+    let found = outlines
+        .list()
+        .iter()
+        .find(|entry| entry.id == outline)
+        .ok_or_else(|| format!("unknown outline {outline}"))?;
+    Ok(api::outline_dto(&found.manuscript))
+}
+
+/// One alternate outline as a rolled-up tree for the outline table.
+#[tauri::command]
+fn alt_get_outline(
+    state: tauri::State<'_, AppState>,
+    outline: usize,
+) -> Result<api::OutlineNodeDto, String> {
+    alt_get_outline_impl(&state, outline)
+}
+
 // ---------------------------------------------------------------------------
 // Structure editing (thin over `Project`; every mutation persists and
 // returns the fresh outline so the UI re-renders from truth)
@@ -1799,6 +1818,7 @@ fn main() {
             alt_move_node,
             alt_remove_node,
             alt_open_scene,
+            alt_get_outline,
             add_node,
             rename_node,
             move_node,
