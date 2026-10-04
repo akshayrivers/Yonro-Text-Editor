@@ -150,6 +150,17 @@ grapheme-correct. Verified end-to-end by driving the real binary in a pty.*
 
 ---
 
+### 🟡 Phase 7: Workspace repair, canvas graphs, second trees — **DONE**
+*Goal: new projects open ready-to-write; hand-made graphs and outlines live beside the single inferred graph and manuscript.*
+
+- [x] **7.1 Workspace repair**: write-access preflight (`mkdir` + probe file) on open/create naming the path; relative paths resolve under `$HOME` (`Desktop` works, `/Desktop` correctly fails); create dialog prefills `$HOME/novels/` with a hint; frontend docs/inspector/binder reset on switch (was: stale buffers → unknown-buffer errors); deleted scene drafts recreate empty on open; creates seed Act I / Chapter 1 / Scene 1 with materialized draft.
+- [x] **7.2 Editor space**: write view fills the center column (flex), wrap resizes both axes and persists size in prefs; editor, find bar, and status run full-bleed (measure cap kept for zen only).
+- [x] **7.3 Graph at scale (G0)**: hand-rolled Fruchterman-Reingold in new `ui/graph-layout.js` (world grows with n, ~85ms for 256 nodes/1814 edges); fit from bbox + 6% padding at the real aspect, svg flex-fills; node radius from spacing + degree; label LOD top-N by degree with N scaling on zoom² (+hover/focus/spotlight, halo stroke); edge LOD strongest-first capped at 2n with spotlight edges always drawn; slider spans real max weight; zoom clamps 0.3x..8x of fit; re-fit on resize.
+- [x] **7.4 Custom graphs**: `yonro-core::custom_graphs` store (`.yonro/graphs.json`, additive file, TUI untouched) + full command set (graph/node/edge CRUD, persisted per mutation, store follows workspace switches); graph view tabs keep exactly one `inferred` tab plus customs with new/rename/delete, double-click add/rename, drag move, shift-click link, Del remove.
+- [x] **7.5 Alternate outlines**: `yonro-core::alt_outlines` store (`.yonro/alt_outlines.json`, reuses `Manuscript`, separate `scene-alt<o>-<n>.md` drafts so counts never mix) + full command set; outline view tabs (manuscript + alts) reusing the same table, alt toolbar with a/c/s adds, F2/Del editing, scenes open into Write. Binder and inspector stay manuscript-bound.
+
+---
+
 ## 🐛 Known Issues from `concern.txt` (Archived — Fixed in Phases 1–3)
 1. **Missing `PaneOpened` Notification** — Fixed: `apply_plugin_response` now sends `PaneOpened`.
 2. **Plugin Keystroke Focus Leakage** — Fixed: `PluginMessage::Event` includes `active_pane_id`; plugins filter by it.
