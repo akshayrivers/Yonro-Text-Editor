@@ -318,6 +318,7 @@ const COMMANDS = [
   { id: 'zen', title: 'zen', keys: 'F11 / mod+.', run: () => toggleZen() },
   { id: 'shortcuts', title: 'shortcut sheet', keys: '?', run: () => toggleShortcuts() },
   { id: 'switch-project', title: 'switch project', keys: '', run: () => showStartScreen(true) },
+  { id: 'set-goal', title: 'set daily goal', keys: '', run: () => promptGoalDialog() },
   { id: 'binder-add-act', title: 'binder: add act', keys: 'a', run: () => focusBinderRow() },
   { id: 'binder-add-chapter', title: 'binder: add chapter', keys: 'c', run: () => focusBinderRow() },
   { id: 'binder-add-scene', title: 'binder: add scene', keys: 's', run: () => focusBinderRow() },

@@ -923,6 +923,26 @@ body.zen #zen-count {
   font: inherit;
 }
 
+/* Session (P5.4) */
+#start-streak { margin-bottom: 16px; }
+#goal-dialog label {
+  display: block;
+  margin: 8px 0 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+#goal-dialog input[type="text"] {
+  display: block;
+  width: 100%;
+  margin-top: 2px;
+  background: var(--panel-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  font: inherit;
+}
+
 /* Command palette (P5.2) */
 #palette {
   width: min(560px, 92vw);

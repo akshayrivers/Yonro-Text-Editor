@@ -119,6 +119,7 @@ function afterWorkspaceSwitch(note) {
   showStartScreen(false);
   setMessage(note);
   if (typeof refreshBinder === 'function') refreshBinder();
+  if (typeof refreshSession === 'function') refreshSession();
   if (typeof show === 'function') show('write');
 }
 
