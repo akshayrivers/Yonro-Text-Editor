@@ -4,9 +4,10 @@
 //! computation. Frontends render; they never compute narrative facts. Field
 //! names and JSON shapes are unchanged from the GUI originals.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
+use super::graph::lens::{Engine, Lens};
 use super::graph::query::GraphQuery;
 use super::lore::LoreBook;
 use super::manuscript::{Manuscript, NodeId};
@@ -139,6 +140,35 @@ pub struct GraphDto {
     pub total_nodes: usize,
     /// Pre-filter edge count (equals `edges.len()` without a query).
     pub total_edges: usize,
+    /// Layout hint for the renderer: `"force"`, `"bipartite"`, `"ordered"`,
+    /// or `"table"` (presence lenses carry no graph; use `presence_dto`).
+    #[serde(default)]
+    pub layout: String,
+}
+
+/// One presence-matrix column (an act or a chapter).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PresenceColumnDto {
+    pub id: usize,
+    pub title: String,
+    /// `"act"` or `"chapter"`.
+    pub kind: String,
+}
+
+/// One presence-matrix row: scene counts per column, parallel to `columns`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PresenceRowDto {
+    pub id: usize,
+    pub name: String,
+    pub kind: String,
+    pub counts: Vec<usize>,
+}
+
+/// Entity × act/chapter presence matrix.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PresenceDto {
+    pub rows: Vec<PresenceRowDto>,
+    pub columns: Vec<PresenceColumnDto>,
 }
 
 /// One scene placed on the timeline.
@@ -668,21 +698,56 @@ pub fn get_mentions_dto(lore: &LoreBook, text: &str) -> Vec<MentionSpanDto> {
 
 /// Relationship graph DTO from pre-gathered scene texts.
 ///
-/// `query` filters the view (`None` = today's full output); totals always
-/// describe the unfiltered graph so the UI can say "showing X of Y".
+/// `query` filters the view (`None` = today's full output); `lens`
+/// reframes it (pair rule, story map, or the `"table"` stub for presence
+/// lenses — render those with [`presence_dto`]). Totals always describe
+/// the unfiltered entity graph so the UI can say "showing X of Y".
 #[must_use]
 pub fn graph_dto(
     manuscript: &Manuscript,
     lore: &LoreBook,
     scene_texts: &BTreeMap<usize, String>,
     query: Option<&GraphQuery>,
+    lens: Option<&Lens>,
 ) -> GraphDto {
     let full = super::graph::Graph::build(manuscript, lore, scene_texts);
     let total_nodes = full.nodes.len();
     let total_edges = full.edges.len();
-    let graph = match query {
+    let base = match query {
         None => full,
         Some(q) => super::graph::query::apply(&full, manuscript, lore, scene_texts, q),
+    };
+    let (graph, layout) = match lens {
+        None => (base, "force".to_string()),
+        Some(lens) => match lens.engine {
+            Engine::Entity => {
+                let layout = if lens.is_split() {
+                    "bipartite".to_string()
+                } else {
+                    "force".to_string()
+                };
+                (lens.pair_filter(&base, lore), layout)
+            }
+            Engine::Scene => {
+                let (nodes, edges) = scene_graph_parts(manuscript, lore, scene_texts, query);
+                return GraphDto {
+                    nodes,
+                    edges,
+                    total_nodes,
+                    total_edges,
+                    layout: "ordered".to_string(),
+                };
+            }
+            Engine::Presence => {
+                return GraphDto {
+                    nodes: Vec::new(),
+                    edges: Vec::new(),
+                    total_nodes,
+                    total_edges,
+                    layout: "table".to_string(),
+                };
+            }
+        },
     };
     let nodes = graph
         .nodes
@@ -737,6 +802,145 @@ pub fn graph_dto(
         edges,
         total_nodes,
         total_edges,
+        layout,
+    }
+}
+
+/// Story-map DTO parts: scene nodes in outline order plus shared-entity
+/// edges. Honors the query's scope, POV, title text, weights, orphans,
+/// and cap; kinds and entity focus do not apply to scenes.
+fn scene_graph_parts(
+    manuscript: &Manuscript,
+    lore: &LoreBook,
+    scene_texts: &BTreeMap<usize, String>,
+    query: Option<&GraphQuery>,
+) -> (Vec<GraphNodeDto>, Vec<GraphEdgeDto>) {
+    use super::graph::lens;
+    let scenes = lens::scene_set(
+        manuscript,
+        query.and_then(|q| q.scope),
+        query.and_then(|q| q.pov.as_deref()),
+        query.map_or("", |q| q.text.as_str()),
+    );
+    let (nodes, mut edges) = lens::scene_view(manuscript, lore, scene_texts, &scenes);
+    let min_weight = query.map_or(0, |q| q.min_weight);
+    edges.retain(|edge| edge.shared >= min_weight);
+    let mut degree: BTreeMap<usize, usize> = BTreeMap::new();
+    for edge in &edges {
+        for scene in [edge.a, edge.b] {
+            degree
+                .entry(scene)
+                .and_modify(|count| *count = count.saturating_add(1))
+                .or_insert(1);
+        }
+    }
+    let min_degree = query.map_or(0, |q| q.min_degree);
+    let hide = query.is_some_and(|q| q.hide_orphans);
+    let mut kept: BTreeSet<usize> = nodes
+        .iter()
+        .map(|node| node.scene)
+        .filter(|scene| {
+            let links = degree.get(scene).copied().unwrap_or(0);
+            links >= min_degree && (!hide || links > 0)
+        })
+        .collect();
+    if let Some(cap) = query.map(|q| q.max_nodes).filter(|cap| *cap > 0) {
+        if kept.len() > cap {
+            let mut ranked: Vec<usize> = kept.into_iter().collect();
+            ranked.sort_by(|x, y| {
+                degree
+                    .get(y)
+                    .copied()
+                    .unwrap_or(0)
+                    .cmp(&degree.get(x).copied().unwrap_or(0))
+                    .then_with(|| x.cmp(y))
+            });
+            kept = ranked.into_iter().take(cap).collect();
+        }
+    }
+    edges.retain(|edge| kept.contains(&edge.a) && kept.contains(&edge.b));
+    let titles: BTreeMap<usize, String> = nodes
+        .iter()
+        .map(|node| (node.scene, node.title.clone()))
+        .collect();
+    let title_of = |scene: usize| {
+        titles
+            .get(&scene)
+            .cloned()
+            .unwrap_or_else(|| format!("scene-{scene}"))
+    };
+    let dtos = nodes
+        .into_iter()
+        .filter(|node| kept.contains(&node.scene))
+        .map(|node| {
+            let neighbors = edges
+                .iter()
+                .filter_map(|edge| {
+                    if edge.a == node.scene {
+                        Some((edge.b, edge.shared))
+                    } else if edge.b == node.scene {
+                        Some((edge.a, edge.shared))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<BTreeMap<_, _>>()
+                .into_iter()
+                .map(|(id, weight)| GraphNeighborDto {
+                    id,
+                    name: title_of(id),
+                    weight,
+                })
+                .collect::<Vec<_>>();
+            GraphNodeDto {
+                id: node.scene,
+                label: node.title,
+                kind: "scene".to_string(),
+                degree: neighbors.len(),
+                neighbors,
+            }
+        })
+        .collect();
+    let edge_dtos = edges
+        .into_iter()
+        .map(|edge| GraphEdgeDto {
+            a: edge.a,
+            b: edge.b,
+            shared: edge.shared,
+            mentions: 0,
+            weight: edge.shared,
+            kinds: vec!["shared scene".to_string()],
+        })
+        .collect();
+    (dtos, edge_dtos)
+}
+
+/// Presence matrix DTO: entities × act/chapter columns.
+#[must_use]
+pub fn presence_dto(
+    manuscript: &Manuscript,
+    lore: &LoreBook,
+    scene_texts: &BTreeMap<usize, String>,
+) -> PresenceDto {
+    let (rows, columns) = super::graph::lens::presence_matrix(manuscript, lore, scene_texts);
+    PresenceDto {
+        rows: rows
+            .into_iter()
+            .map(|row| PresenceRowDto {
+                id: row.id,
+                name: row.name,
+                kind: row.kind,
+                counts: row.counts,
+            })
+            .collect(),
+        columns: columns
+            .into_iter()
+            .map(|column| PresenceColumnDto {
+                id: column.id,
+                title: column.title,
+                kind: column.kind,
+            })
+            .collect(),
     }
 }
 
@@ -1001,12 +1205,13 @@ mod tests {
         let scene = ms.children(scene)[0].id;
         let mut texts = BTreeMap::new();
         texts.insert(scene, "Mara waved at @Joren.".to_string());
-        let dto = graph_dto(&ms, &lore, &texts, None);
+        let dto = graph_dto(&ms, &lore, &texts, None, None);
         assert_eq!(dto.nodes.len(), 2);
         assert_eq!(dto.edges.len(), 1);
         assert_eq!(dto.edges[0].mentions, 1);
         assert!(dto.edges[0].kinds.iter().any(|k| k == "mention"));
         assert_eq!((dto.total_nodes, dto.total_edges), (2, 1));
+        assert_eq!(dto.layout.as_str(), "force");
     }
 
     #[test]
@@ -1222,7 +1427,7 @@ mod tests {
         let scene = ms.children(scene)[0].id;
         let mut texts = BTreeMap::new();
         texts.insert(scene, "Mara waved at @Joren.".to_string());
-        let dto = graph_dto(&ms, &lore, &texts, None);
+        let dto = graph_dto(&ms, &lore, &texts, None, None);
 
         let mara_node = dto.nodes.iter().find(|n| n.id == mara).unwrap();
         assert_eq!(mara_node.degree, 1);
@@ -1243,9 +1448,56 @@ mod tests {
             kinds: vec!["place".to_string()],
             ..GraphQuery::default()
         };
-        let dto = graph_dto(&ms, &lore, &texts, Some(&query));
+        let dto = graph_dto(&ms, &lore, &texts, Some(&query), None);
         assert!(dto.nodes.is_empty());
         assert_eq!((dto.total_nodes, dto.total_edges), (2, 1));
+    }
+
+    #[test]
+    fn graph_dto_lens_pair_layout_and_scene_map() {
+        let (ms, mut lore) = seed_story();
+        lore.add(EntityKind::Character, "Joren").unwrap();
+        let scene = ms.children(ms.children(ms.root())[0].id)[0].id;
+        let scene = ms.children(scene)[0].id;
+        let mut texts = BTreeMap::new();
+        texts.insert(scene, "Mara waved at @Joren.".to_string());
+        let pair = Lens {
+            name: "Cast x Places".to_string(),
+            engine: Engine::Entity,
+            kinds_a: vec!["character".to_string()],
+            kinds_b: vec!["place".to_string()],
+        };
+        // No places linked: pair view is empty but totals survive.
+        let dto = graph_dto(&ms, &lore, &texts, None, Some(&pair));
+        assert!(dto.nodes.is_empty());
+        assert_eq!((dto.total_nodes, dto.total_edges), (2, 1));
+        assert_eq!(dto.layout.as_str(), "bipartite");
+        let map = Lens {
+            name: "Story map".to_string(),
+            engine: Engine::Scene,
+            kinds_a: vec![],
+            kinds_b: vec![],
+        };
+        let dto = graph_dto(&ms, &lore, &texts, None, Some(&map));
+        assert_eq!(dto.layout.as_str(), "ordered");
+        assert_eq!(dto.nodes.len(), 1);
+        assert_eq!(dto.nodes[0].kind.as_str(), "scene");
+        let present = Lens {
+            name: "Act presence".to_string(),
+            engine: Engine::Presence,
+            kinds_a: vec![],
+            kinds_b: vec![],
+        };
+        let dto = graph_dto(&ms, &lore, &texts, None, Some(&present));
+        assert_eq!(dto.layout.as_str(), "table");
+        assert!(dto.nodes.is_empty());
+        // Presence matrix names the same entities.
+        let matrix = presence_dto(&ms, &lore, &texts);
+        assert_eq!(matrix.columns.len(), 2);
+        assert_eq!(matrix.columns[0].kind.as_str(), "act");
+        let names: Vec<&str> = matrix.rows.iter().map(|row| row.name.as_str()).collect();
+        assert!(names.contains(&"Mara"));
+        assert!(names.contains(&"Joren"));
     }
 
     #[test]

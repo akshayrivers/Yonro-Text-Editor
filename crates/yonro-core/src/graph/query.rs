@@ -75,7 +75,7 @@ impl GraphQuery {
 
 /// Scenes under `id`: the scene itself, a chapter's scenes, an act's
 /// scenes, or the whole book for the project root / unknown ids.
-fn expand_scope(manuscript: &Manuscript, id: NodeId) -> BTreeSet<NodeId> {
+pub(crate) fn expand_scope(manuscript: &Manuscript, id: NodeId) -> BTreeSet<NodeId> {
     fn scenes_under(manuscript: &Manuscript, id: NodeId, out: &mut BTreeSet<NodeId>) {
         let Some(node) = manuscript.get(id) else {
             return;

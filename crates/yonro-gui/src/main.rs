@@ -868,6 +868,7 @@ fn get_graph(
         &project.lore,
         &scene_texts,
         query.as_ref(),
+        None,
     )
 }
 

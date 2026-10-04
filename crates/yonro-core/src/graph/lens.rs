@@ -230,6 +230,40 @@ pub fn builtin_lenses() -> Vec<Lens> {
     ]
 }
 
+/// Scenes for the story map: scope expansion plus POV and title-text
+/// filters. Kinds and entity focus do not apply to scenes.
+#[must_use]
+pub fn scene_set(
+    manuscript: &Manuscript,
+    scope: Option<NodeId>,
+    pov: Option<&str>,
+    title_text: &str,
+) -> BTreeSet<NodeId> {
+    let mut scenes: BTreeSet<NodeId> = match scope {
+        None => Graph::scene_order(manuscript).into_iter().collect(),
+        Some(id) => super::query::expand_scope(manuscript, id),
+    };
+    let pov = pov.unwrap_or("").trim();
+    if !pov.is_empty() {
+        scenes.retain(|scene| {
+            manuscript.get(*scene).is_some_and(|node| {
+                node.meta
+                    .as_ref()
+                    .is_some_and(|meta| meta.pov.trim().eq_ignore_ascii_case(pov))
+            })
+        });
+    }
+    let needle = title_text.trim().to_lowercase();
+    if !needle.is_empty() {
+        scenes.retain(|scene| {
+            manuscript
+                .get(*scene)
+                .is_some_and(|node| node.title.to_lowercase().contains(&needle))
+        });
+    }
+    scenes
+}
+
 /// Story map over `scenes`: nodes in outline order, edges linking scenes
 /// that share entities (weight = shared-entity count).
 #[must_use]
