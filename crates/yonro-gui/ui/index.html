@@ -86,8 +86,11 @@
             <button id="graph-zoom-in" class="btn" title="Zoom in">+</button>
             <button id="graph-zoom-out" class="btn" title="Zoom out">−</button>
             <button id="graph-zoom-fit" class="btn" title="Fit to view">fit</button>
+            <button id="graph-rename" class="btn" title="Rename this graph" hidden>rename</button>
+            <button id="graph-delete" class="btn" title="Delete this graph" hidden>delete</button>
           </div>
         </div>
+        <div id="graph-tabs" role="tablist" aria-label="Graphs"></div>
         <p class="muted">Nodes are lore entities; edge width is combined weight (shared scenes + @mentions). Click a node to spotlight its neighborhood.</p>
         <svg id="graph" role="img" aria-label="Relationship graph"></svg>
         <div id="graph-legend" class="muted"></div>
