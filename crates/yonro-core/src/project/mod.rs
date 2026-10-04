@@ -96,6 +96,58 @@ impl fmt::Display for ProjectError {
 impl std::error::Error for ProjectError {}
 
 impl Project {
+    /// Whether `root` already holds a project (`manuscript.json` exists).
+    ///
+    /// Corrupt JSON still counts as a project (load warns but opens it);
+    /// only a missing file means "no project yet" for the start screen.
+    #[must_use]
+    pub fn has_project(root: &Path) -> bool {
+        root.join(".yonro/manuscript.json").is_file()
+    }
+
+    /// Resolve a UI-typed workspace path (`~` expanded, trimmed).
+    ///
+    /// # Errors
+    /// `Structure` when the trimmed input is empty.
+    pub fn resolve_workspace_path(raw: &str) -> Result<PathBuf, ProjectError> {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Err(ProjectError::Structure("path cannot be empty".to_string()));
+        }
+        if trimmed == "~" || trimmed.starts_with("~/") {
+            if let Ok(home) = std::env::var("HOME") {
+                let rest = trimmed.strip_prefix('~').unwrap_or(trimmed);
+                return Ok(PathBuf::from(home + rest));
+            }
+        }
+        Ok(PathBuf::from(trimmed))
+    }
+
+    /// Create a fresh workspace at `root` titled `title`.
+    ///
+    /// Runs `mkdir -p` for `root`, writes empty `.yonro/` documents, and
+    /// returns the loaded-feeling project (no warnings on a fresh create).
+    ///
+    /// # Errors
+    /// `EmptyTitle` for a blank title, or `Io` when the directory or the
+    /// initial documents cannot be written.
+    pub fn create(root: &Path, title: &str) -> Result<Self, ProjectError> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(ProjectError::EmptyTitle);
+        }
+        std::fs::create_dir_all(root)
+            .map_err(|err| ProjectError::Io(format!("{}: {err}", root.display())))?;
+        let project = Self {
+            root: root.to_path_buf(),
+            manuscript: Manuscript::new(title),
+            lore: LoreBook::default(),
+            warnings: Vec::new(),
+        };
+        project.save()?;
+        Ok(project)
+    }
+
     /// Load `<root>/.yonro/{manuscript.json,lore.json}`.
     ///
     /// Never fails: missing/corrupt files fall back to
@@ -811,8 +863,8 @@ mod tests {
         let err = project.add_node(None, "chapter", "C").unwrap_err();
         assert!(err.to_string().contains("select an act"));
         assert_eq!(
-            project.add_node(None, "act", "   "),
-            Err(ProjectError::EmptyTitle)
+            Project::create(&dir, "   ").unwrap_err(),
+            ProjectError::EmptyTitle
         );
         assert_eq!(
             project.add_node(Some(99), "act", "A"),
@@ -1065,5 +1117,29 @@ mod tests {
         assert!(reloaded2.lore.get(id).is_none());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn create_has_project_and_resolve_path() {
+        let base = unique_dir("create-ws");
+        let dir = base.join("novel");
+        assert!(!Project::has_project(&dir));
+        let project = Project::create(&dir, "  Sample Novel ").unwrap();
+        assert_eq!(project.manuscript.title(), "Sample Novel");
+        assert!(project.warnings.is_empty());
+        assert!(Project::has_project(&dir));
+        let loaded = Project::load(&dir);
+        assert!(loaded.warnings.is_empty());
+        assert_eq!(loaded.manuscript.title(), "Sample Novel");
+        assert_eq!(
+            Project::create(&dir, "   ").unwrap_err(),
+            ProjectError::EmptyTitle
+        );
+        assert!(Project::resolve_workspace_path("   ").is_err());
+        assert_eq!(
+            Project::resolve_workspace_path("  /tmp/x  ").unwrap(),
+            PathBuf::from("/tmp/x")
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

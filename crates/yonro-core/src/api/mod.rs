@@ -204,6 +204,24 @@ pub struct RemoveNodeDto {
     pub message: String,
 }
 
+/// One remembered workspace for the start screen.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RecentDto {
+    pub path: String,
+    pub title: String,
+    pub last_opened: String,
+}
+
+/// Start-screen + header payload: where we are, what is recent, what warned.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WorkspaceDto {
+    pub dir: String,
+    pub title: String,
+    pub has_project: bool,
+    pub recent: Vec<RecentDto>,
+    pub warnings: Vec<String>,
+}
+
 fn kind_label(kind: super::manuscript::NodeKind) -> &'static str {
     match kind {
         super::manuscript::NodeKind::Project => "project",
@@ -695,6 +713,30 @@ pub fn timeline_dto(manuscript: &Manuscript, lore: &LoreBook) -> TimelineDto {
     }
 }
 
+/// Start-screen payload: current dir/title, project presence, recents, warnings.
+///
+/// Titles come from the loaded manuscript (fallback `Untitled` included);
+/// `has_project` is false only when `manuscript.json` is missing, so a
+/// corrupt project still opens (with warnings) instead of start-screening.
+#[must_use]
+pub fn workspace_dto(project: &Project, recents: &super::recents::Recents) -> WorkspaceDto {
+    WorkspaceDto {
+        dir: project.root.to_string_lossy().to_string(),
+        title: project.manuscript.title().to_string(),
+        has_project: Project::has_project(&project.root),
+        recent: recents
+            .list()
+            .iter()
+            .map(|entry| RecentDto {
+                path: entry.path.clone(),
+                title: entry.title.clone(),
+                last_opened: entry.last_opened.clone(),
+            })
+            .collect(),
+        warnings: project.warnings.clone(),
+    }
+}
+
 /// Scene detail for the inspector: breadcrumb, meta, file, live counts.
 ///
 /// # Errors
@@ -1070,5 +1112,27 @@ mod tests {
         let u16_vec4: Vec<u16> = text4.encode_utf16().collect();
         let slice4 = String::from_utf16(&u16_vec4[spans4[0].start..spans4[0].end]).unwrap();
         assert_eq!(slice4, "@Mara");
+    }
+
+    #[test]
+    fn workspace_dto_carries_dir_title_recents_and_warnings() {
+        use crate::Recents;
+        let dir = std::env::temp_dir().join(format!("yonro-api-ws-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // No manuscript.json yet → no project.
+        let project = Project::load(&dir);
+        let mut recents = Recents::new();
+        let other = std::env::temp_dir().join("yonro-api-ws-other");
+        let _ = std::fs::create_dir_all(&other);
+        recents.touch(&other.to_string_lossy(), "Other", "2026-10-04");
+        let dto = workspace_dto(&project, &recents);
+        assert_eq!(dto.dir, dir.to_string_lossy().to_string());
+        assert!(!dto.has_project);
+        assert_eq!(dto.recent.len(), 1);
+        assert_eq!(dto.recent[0].title, "Other");
+        assert_eq!(dto.warnings.len(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&other);
     }
 }
