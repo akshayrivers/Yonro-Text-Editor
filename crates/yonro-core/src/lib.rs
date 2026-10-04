@@ -12,6 +12,7 @@
 //! Zero UI dependencies: no `crossterm`, no terminal, no rendering.
 //! Frontends (`yonro-tui`, future `yonro-gui`) are thin clients over this API.
 
+pub mod alt_outlines;
 pub mod annotatedstring;
 pub mod annotation;
 pub mod annotationtype;
@@ -37,6 +38,7 @@ pub mod search;
 pub mod session;
 pub mod timeline;
 
+pub use alt_outlines::{AltOutline, AltOutlineError, AltOutlineId, AltOutlineStore};
 pub use annotatedstring::AnnotatedString;
 pub use annotation::Annotation;
 pub use annotationtype::AnnotationType;
