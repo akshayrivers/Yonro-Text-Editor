@@ -223,6 +223,14 @@ pub struct SessionDto {
     pub progress: f64,
 }
 
+/// Written export receipt for the UI message.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ExportDto {
+    pub path: String,
+    pub words: usize,
+    pub scenes: usize,
+}
+
 /// One project-wide text hit, anchored to a line.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ProjectHitDto {
@@ -823,6 +831,34 @@ pub fn session_dto(log: &super::session::SessionLog, today: &str) -> SessionDto 
     }
 }
 
+/// Compile + write the manuscript; open buffers win over disk.
+///
+/// Default path is `<root>/export/<title-slug>.<ext>` (dir created).
+///
+/// # Errors
+/// `BadFormat` for an unknown format, `Io` naming the path plus the reason.
+pub fn export_dto(
+    project: &Project,
+    open_texts: &BTreeMap<PathBuf, String>,
+    format: &str,
+    path: Option<&str>,
+) -> Result<ExportDto, super::export::ExportError> {
+    let parsed = super::export::ExportFormat::parse(format)?;
+    let scene_texts = gather_scene_texts(project, open_texts);
+    super::export::export_manuscript(
+        &project.manuscript,
+        &scene_texts,
+        &project.root,
+        parsed,
+        path,
+    )
+    .map(|summary| ExportDto {
+        path: summary.path,
+        words: summary.words,
+        scenes: summary.scenes,
+    })
+}
+
 /// Scene detail for the inspector: breadcrumb, meta, file, live counts.
 ///
 /// # Errors
@@ -1287,5 +1323,44 @@ mod tests {
         assert_eq!(dto.goal, 200);
         assert_eq!(dto.streak_days, 2);
         assert!((dto.progress - 0.75).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn export_dto_uses_open_buffers_and_default_path() {
+        let dir = std::env::temp_dir().join(format!("yonro-api-export-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut project = Project {
+            root: dir.clone(),
+            manuscript: Manuscript::new("Sample Novel"),
+            lore: LoreBook::new(),
+            warnings: Vec::new(),
+        };
+        let act = project.manuscript.add_act("A").unwrap();
+        let ch = project.manuscript.add_chapter(act, "C").unwrap();
+        let scene = project.manuscript.add_scene(ch, "Gate").unwrap();
+        let path = dir.join("scene-gate.md");
+        std::fs::write(&path, "disk words here").unwrap();
+        project
+            .manuscript
+            .set_meta(
+                scene,
+                SceneMeta {
+                    file: Some(path.clone()),
+                    ..SceneMeta::default()
+                },
+            )
+            .unwrap();
+        // Unsaved buffer text exports over disk.
+        let mut open = BTreeMap::new();
+        open.insert(path, "fresh unsaved prose".to_string());
+        let receipt = export_dto(&project, &open, "md", None).unwrap();
+        assert!(receipt.path.ends_with("export/sample-novel.md"));
+        assert_eq!((receipt.words, receipt.scenes), (3, 1));
+        assert!(std::fs::read_to_string(&receipt.path)
+            .unwrap()
+            .contains("fresh unsaved prose"));
+        assert!(export_dto(&project, &open, "pdf", None).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
