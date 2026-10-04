@@ -932,6 +932,152 @@ fn delete_custom_graph(state: tauri::State<'_, AppState>, id: usize) -> Result<(
     delete_custom_graph_impl(&state, id)
 }
 
+fn mutate_graphs<T>(
+    state: &AppState,
+    f: impl FnOnce(&mut CustomGraphStore) -> Result<T, String>,
+) -> Result<T, String> {
+    let out = {
+        let mut graphs = state.graphs.lock().unwrap_or_else(|e| e.into_inner());
+        f(&mut graphs)?
+    };
+    save_graphs(state)?;
+    Ok(out)
+}
+
+fn add_graph_node_impl(
+    state: &AppState,
+    id: usize,
+    label: &str,
+    x: f64,
+    y: f64,
+) -> Result<usize, String> {
+    mutate_graphs(state, |graphs| {
+        graphs
+            .add_node(id, label, x, y)
+            .map_err(|err| err.to_string())
+    })
+}
+
+/// Place a labelled node on a hand-made graph.
+#[tauri::command]
+fn add_graph_node(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+    label: String,
+    x: f64,
+    y: f64,
+) -> Result<usize, String> {
+    add_graph_node_impl(&state, id, &label, x, y)
+}
+
+fn move_graph_node_impl(
+    state: &AppState,
+    id: usize,
+    node: usize,
+    x: f64,
+    y: f64,
+) -> Result<(), String> {
+    mutate_graphs(state, |graphs| {
+        graphs
+            .move_node(id, node, x, y)
+            .map_err(|err| err.to_string())
+    })
+}
+
+/// Move a node already on the canvas.
+#[tauri::command]
+fn move_graph_node(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+    node: usize,
+    x: f64,
+    y: f64,
+) -> Result<(), String> {
+    move_graph_node_impl(&state, id, node, x, y)
+}
+
+fn rename_graph_node_impl(
+    state: &AppState,
+    id: usize,
+    node: usize,
+    label: &str,
+) -> Result<(), String> {
+    mutate_graphs(state, |graphs| {
+        graphs
+            .rename_node(id, node, label)
+            .map_err(|err| err.to_string())
+    })
+}
+
+/// Rename a canvas node (edges follow it by id).
+#[tauri::command]
+fn rename_graph_node(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+    node: usize,
+    label: String,
+) -> Result<(), String> {
+    rename_graph_node_impl(&state, id, node, &label)
+}
+
+fn remove_graph_node_impl(state: &AppState, id: usize, node: usize) -> Result<(), String> {
+    mutate_graphs(state, |graphs| {
+        graphs.remove_node(id, node).map_err(|err| err.to_string())
+    })
+}
+
+/// Remove a node and every edge touching it.
+#[tauri::command]
+fn remove_graph_node(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+    node: usize,
+) -> Result<(), String> {
+    remove_graph_node_impl(&state, id, node)
+}
+
+fn add_graph_edge_impl(
+    state: &AppState,
+    id: usize,
+    a: usize,
+    b: usize,
+    label: &str,
+) -> Result<usize, String> {
+    mutate_graphs(state, |graphs| {
+        graphs
+            .add_edge(id, a, b, label)
+            .map_err(|err| err.to_string())
+    })
+}
+
+/// Draw an edge between two distinct nodes of the same graph.
+#[tauri::command]
+fn add_graph_edge(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+    a: usize,
+    b: usize,
+    label: String,
+) -> Result<usize, String> {
+    add_graph_edge_impl(&state, id, a, b, &label)
+}
+
+fn remove_graph_edge_impl(state: &AppState, id: usize, edge: usize) -> Result<(), String> {
+    mutate_graphs(state, |graphs| {
+        graphs.remove_edge(id, edge).map_err(|err| err.to_string())
+    })
+}
+
+/// Erase an edge (nodes stay).
+#[tauri::command]
+fn remove_graph_edge(
+    state: tauri::State<'_, AppState>,
+    id: usize,
+    edge: usize,
+) -> Result<(), String> {
+    remove_graph_edge_impl(&state, id, edge)
+}
+
 // ---------------------------------------------------------------------------
 // Structure editing (thin over `Project`; every mutation persists and
 // returns the fresh outline so the UI re-renders from truth)
@@ -1361,6 +1507,12 @@ fn main() {
             create_custom_graph,
             rename_custom_graph,
             delete_custom_graph,
+            add_graph_node,
+            move_graph_node,
+            rename_graph_node,
+            remove_graph_node,
+            add_graph_edge,
+            remove_graph_edge,
             add_node,
             rename_node,
             move_node,
@@ -1983,6 +2135,39 @@ mod tests {
         delete_custom_graph_impl(&state, id).unwrap();
         assert!(list_custom_graphs_impl(&state).is_empty());
         assert!(delete_custom_graph_impl(&state, id).is_err());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn graph_node_edge_impls_validate_and_persist() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(90_000);
+        let n = NEXT.fetch_add(1, Ordering::SeqCst);
+        let base = std::env::temp_dir().join(format!("yonro-gui-cgn-{n}"));
+        let _ = std::fs::remove_dir_all(&base);
+        let state = AppState::load(base.join("home"));
+        create_workspace_impl(&state, base.join("a").to_string_lossy().as_ref(), "A", None)
+            .unwrap();
+        let id = create_custom_graph_impl(&state, "Web").unwrap();
+        assert!(add_graph_node_impl(&state, 999, "Ghost", 0.0, 0.0).is_err());
+        let a = add_graph_node_impl(&state, id, "A", 10.0, 20.0).unwrap();
+        let b = add_graph_node_impl(&state, id, "B", 30.0, 40.0).unwrap();
+        assert!(add_graph_edge_impl(&state, id, a, a, "").is_err());
+        let edge = add_graph_edge_impl(&state, id, a, b, "kin").unwrap();
+        move_graph_node_impl(&state, id, a, 11.0, 21.0).unwrap();
+        rename_graph_node_impl(&state, id, b, "Bee").unwrap();
+        let listed = list_custom_graphs_impl(&state);
+        assert_eq!(listed[0].nodes.len(), 2);
+        assert_eq!(listed[0].edges.len(), 1);
+        // Reload from disk: everything persisted.
+        let root = state.workspace_root();
+        let back = CustomGraphStore::load(&CustomGraphStore::file_in(&root.join(".yonro")));
+        assert_eq!(back.list().len(), 1);
+        assert_eq!(back.list()[0].nodes[1].label.as_str(), "Bee");
+        remove_graph_edge_impl(&state, id, edge).unwrap();
+        remove_graph_node_impl(&state, id, a).unwrap();
+        assert!(remove_graph_node_impl(&state, id, a).is_err());
+        assert!(list_custom_graphs_impl(&state)[0].nodes.len() == 1);
         let _ = std::fs::remove_dir_all(&base);
     }
 
