@@ -8,11 +8,13 @@
 //! * JSON shapes are unchanged from what `yonro-tui/src/workspace.rs` writes
 //!   today (`serde_json::to_string_pretty`), so TUI and GUI stay compatible.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
 use super::lore::LoreBook;
 use super::manuscript::{Manuscript, NodeId, NodeKind};
+use super::session::{DayRecord, SessionLog};
 
 /// Scene metadata fields the GUI inspector edits.
 ///
@@ -39,6 +41,14 @@ pub struct SceneMetaFields {
     /// Draft word-count goal (`0` = no target).
     #[serde(default)]
     pub target_words: usize,
+}
+
+/// `project.json` shape: workspace-level settings (additive over time).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct ProjectFile {
+    /// Daily word goal (`0` = none).
+    #[serde(default)]
+    daily_goal: usize,
 }
 
 /// One workspace: root directory plus in-memory documents.
@@ -580,6 +590,79 @@ impl Project {
         files
     }
 
+    /// Load session days plus the daily goal for this workspace.
+    ///
+    /// Reads `<root>/.yonro/sessions.json` (`{ "YYYY-MM-DD": ... }`) and
+    /// `<root>/.yonro/project.json` (`{ "daily_goal": n }`). Missing files
+    /// are a fresh workspace (silent); corrupt ones fall back to empty/zero
+    /// with one warning each naming the file and the reason.
+    #[must_use]
+    pub fn load_sessions(&self) -> (SessionLog, Vec<String>) {
+        let mut warnings = Vec::new();
+        let sessions_path = self.root.join(".yonro/sessions.json");
+        let days: BTreeMap<String, DayRecord> = match std::fs::read_to_string(&sessions_path) {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => BTreeMap::new(),
+            Err(err) => {
+                warnings.push(format!("sessions.json: {err}"));
+                BTreeMap::new()
+            }
+            Ok(text) => match serde_json::from_str(&text) {
+                Ok(days) => days,
+                Err(err) => {
+                    warnings.push(format!("sessions.json: {err}"));
+                    BTreeMap::new()
+                }
+            },
+        };
+        let project_path = self.root.join(".yonro/project.json");
+        let goal: usize = match std::fs::read_to_string(&project_path) {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(err) => {
+                warnings.push(format!("project.json: {err}"));
+                0
+            }
+            Ok(text) => match serde_json::from_str::<ProjectFile>(&text) {
+                Ok(file) => file.daily_goal,
+                Err(err) => {
+                    warnings.push(format!("project.json: {err}"));
+                    0
+                }
+            },
+        };
+        (SessionLog::from_parts(days, goal), warnings)
+    }
+
+    /// Persist session days plus the daily goal (atomic per file).
+    ///
+    /// Call after `save()` on save/exit; `set_text` paths only observe
+    /// in-memory via [`Project::observe_session_words`].
+    ///
+    /// # Errors
+    /// `Io` when the directory cannot be created or any write/sync/rename
+    /// step fails.
+    pub fn save_sessions(&self, log: &SessionLog) -> Result<(), ProjectError> {
+        let dir = self.root.join(".yonro");
+        std::fs::create_dir_all(&dir).map_err(|err| ProjectError::Io(format!(".yonro: {err}")))?;
+        let sessions_json = serde_json::to_string_pretty(log.days())
+            .map_err(|err| ProjectError::Io(format!("sessions.json: {err}")))?;
+        write_atomic(&dir.join("sessions.json"), sessions_json.as_bytes())?;
+        let file = ProjectFile {
+            daily_goal: log.goal(),
+        };
+        let project_json = serde_json::to_string_pretty(&file)
+            .map_err(|err| ProjectError::Io(format!("project.json: {err}")))?;
+        write_atomic(&dir.join("project.json"), project_json.as_bytes())?;
+        Ok(())
+    }
+
+    /// Record the current manuscript total into `log` for `today`.
+    ///
+    /// Cheap and in-memory: callers persist later via
+    /// [`Project::save_sessions`].
+    pub fn observe_session_words(&self, log: &mut SessionLog, today: &str) {
+        log.record(self.manuscript.subtree_words(self.manuscript.root()), today);
+    }
+
     /// Sync a buffer's word count into the scene backed by `file`.
     ///
     /// Finds the scene whose `meta.file` equals `file` and records `words`
@@ -1116,6 +1199,37 @@ mod tests {
         let reloaded2 = Project::load(&dir);
         assert!(reloaded2.lore.get(id).is_none());
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sessions_roundtrip_goal_and_corrupt_fallback() {
+        let dir = unique_dir("sessions");
+        let project = Project {
+            root: dir.clone(),
+            manuscript: Manuscript::new("Probe"),
+            lore: LoreBook::new(),
+            warnings: Vec::new(),
+        };
+        // Missing files are a fresh workspace: silent, empty, goalless.
+        let (mut log, warnings) = project.load_sessions();
+        assert!(warnings.is_empty());
+        assert_eq!(log.goal(), 0);
+        log.set_goal(500);
+        project.observe_session_words(&mut log, "2026-10-04");
+        assert_eq!(log.words_today("2026-10-04"), 0);
+        project.save_sessions(&log).unwrap();
+        let (loaded, warnings) = project.load_sessions();
+        assert!(warnings.is_empty());
+        assert_eq!(loaded.goal(), 500);
+        // Corrupt sessions.json falls back with a warning naming the file.
+        std::fs::write(dir.join(".yonro/sessions.json"), "broken{{").unwrap();
+        let (fallback, warnings) = project.load_sessions();
+        assert_eq!(fallback.words_today("2026-10-04"), 0);
+        assert!(warnings
+            .iter()
+            .any(|warning| warning.contains("sessions.json")));
+        assert_eq!(fallback.goal(), 500);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

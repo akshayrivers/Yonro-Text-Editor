@@ -211,6 +211,18 @@ pub struct BufferHitDto {
     pub end: usize,
 }
 
+/// Daily session for the statusline: net words, goal, streak, progress.
+///
+/// `progress` is `0.0..=1.0` (`0.0` when goalless); the UI builds its bar
+/// from this number, never from the word counts.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SessionDto {
+    pub words_today: usize,
+    pub goal: usize,
+    pub streak_days: usize,
+    pub progress: f64,
+}
+
 /// One project-wide text hit, anchored to a line.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ProjectHitDto {
@@ -800,6 +812,17 @@ pub fn search_project_dto(
         .collect()
 }
 
+/// Daily session summary for `today` (injected `YYYY-MM-DD`).
+#[must_use]
+pub fn session_dto(log: &super::session::SessionLog, today: &str) -> SessionDto {
+    SessionDto {
+        words_today: log.words_today(today),
+        goal: log.goal(),
+        streak_days: log.streak_days(today),
+        progress: log.progress(today),
+    }
+}
+
 /// Scene detail for the inspector: breadcrumb, meta, file, live counts.
 ///
 /// # Errors
@@ -1248,5 +1271,21 @@ mod tests {
             .as_ref()
             .is_some_and(|file| file.ends_with("scene-gate.md")));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn session_dto_reports_words_goal_streak_and_progress() {
+        use crate::SessionLog;
+        let mut log = SessionLog::new();
+        log.set_goal(200);
+        log.record(1000, "2026-10-03");
+        log.record(1100, "2026-10-03");
+        log.record(1100, "2026-10-04");
+        log.record(1250, "2026-10-04");
+        let dto = session_dto(&log, "2026-10-04");
+        assert_eq!(dto.words_today, 150);
+        assert_eq!(dto.goal, 200);
+        assert_eq!(dto.streak_days, 2);
+        assert!((dto.progress - 0.75).abs() < f64::EPSILON);
     }
 }
