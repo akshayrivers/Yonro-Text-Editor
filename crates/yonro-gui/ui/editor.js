@@ -208,7 +208,8 @@ function updateEmptyState() {
   if (!empty || !editor) return;
   const hasDoc = activeDoc !== null && docs.has(activeDoc);
   empty.hidden = hasDoc;
-  editor.style.display = hasDoc ? '' : 'none';
+  const wrap = document.getElementById('editor-wrap');
+  if (wrap) wrap.style.display = hasDoc ? '' : 'none';
   const bar = document.getElementById('editor-bar');
   if (bar) bar.style.display = hasDoc ? '' : 'none';
   const tabs = document.getElementById('doc-tabs');
@@ -240,7 +241,8 @@ function ensureEmptyState() {
   row.appendChild(openBtn);
   row.appendChild(newBtn);
   card.appendChild(row);
-  view.insertBefore(card, editor);
+  const wrap = document.getElementById('editor-wrap');
+  view.insertBefore(card, wrap || editor);
 }
 
 /* Typewriter: keep the caret line near 45% of the textarea height. */
@@ -282,7 +284,8 @@ function centerCaretSoon() {
 function centerCaretNow() {
   try {
     if (!getTypewriter()) return;
-    if (activeDoc === null || editor.style.display === 'none') return;
+    const wrap = document.getElementById('editor-wrap');
+    if (activeDoc === null || (wrap && wrap.style.display === 'none')) return;
     if (document.activeElement !== editor) return;
     const mirror = ensureMirror();
     syncMirrorStyle(mirror);
@@ -327,6 +330,95 @@ function markDirtyLocal(id) {
   renderTabs();
   renderStatus(null);
   return true;
+}
+
+/* @mention highlight (P4.5): spans are core-computed with UTF-16 offsets
+ * (JS string indices); JS only slices and wraps them in <mark>. Refresh is
+ * debounced 200ms after typing stops; marks hide via .stale while typing.
+ */
+let mentionSpans = [];
+let mentionSeq = 0;
+let mentionRefreshFn = null;
+
+function editorBackdrop() {
+  return document.getElementById('editor-backdrop');
+}
+
+function syncBackdropScroll() {
+  const bd = editorBackdrop();
+  if (bd && editor) {
+    bd.scrollTop = editor.scrollTop;
+    bd.scrollLeft = editor.scrollLeft;
+  }
+}
+
+function markMentionsStale() {
+  const bd = editorBackdrop();
+  if (bd) bd.classList.add('stale');
+  if (!mentionRefreshFn) mentionRefreshFn = debounce(refreshMentionsNow, 200);
+  mentionRefreshFn();
+}
+
+async function refreshMentionsNow() {
+  if (activeDoc === null || !editor) {
+    renderMentions([]);
+    return;
+  }
+  const id = activeDoc;
+  const seq = ++mentionSeq;
+  let spans = [];
+  try {
+    spans = await core.getMentions(id);
+  } catch (err) {
+    void err;
+    spans = [];
+  }
+  if (seq !== mentionSeq || id !== activeDoc) return;
+  renderMentions(spans);
+}
+
+function renderMentions(spans) {
+  mentionSpans = Array.isArray(spans) ? spans : [];
+  const bd = editorBackdrop();
+  if (!bd || !editor) return;
+  bd.classList.remove('stale');
+  const text = editor.value;
+  const sorted = mentionSpans.slice().sort((a, b) => a.start - b.start);
+  let html = '';
+  let at = 0;
+  for (const m of sorted) {
+    const start = Math.max(0, Math.min(m.start, text.length));
+    const end = Math.max(start, Math.min(m.end, text.length));
+    if (start < at) continue;
+    html += esc(text.slice(at, start));
+    const kind = String(m.kind || 'lore').toLowerCase();
+    const ent = (m.entity_id === null || m.entity_id === undefined)
+      ? ''
+      : ` data-entity="${m.entity_id}"`;
+    html += `<mark class="mention k-${esc(kind)}"${ent}>${esc(text.slice(start, end))}</mark>`;
+    at = end;
+  }
+  html += esc(text.slice(at));
+  if (text.endsWith('\n')) html += ' ';
+  bd.innerHTML = html;
+  syncBackdropScroll();
+}
+
+function mentionAtCaret() {
+  if (!editor || activeDoc === null) return null;
+  const caret = editor.selectionStart;
+  if (caret === null || caret === undefined || editor.selectionEnd !== caret) return null;
+  for (const m of mentionSpans) {
+    if (m.entity_id !== null && m.entity_id !== undefined && caret >= m.start && caret < m.end) {
+      return m;
+    }
+  }
+  return null;
+}
+
+function showMentionAtCaret() {
+  const m = mentionAtCaret();
+  if (m && typeof showEntityInspector === 'function') showEntityInspector(m.entity_id);
 }
 
 function scheduleSync() {
@@ -420,6 +512,7 @@ function adoptOpened(opened) {
   renderTabs();
   renderStatus(opened.stats);
   show('write');
+  refreshMentionsNow();
   if (typeof refreshBinder === 'function') refreshBinder();
   if (opened.path) maybeOfferRecovery(opened.buffer_id, opened.path);
 }
@@ -458,6 +551,7 @@ async function activateDoc(id) {
   }
   syncPending = false;
   renderStatus(docStats.get(id) || lastStats);
+  refreshMentionsNow();
   const doc = docs.get(id);
   if (doc) {
     const stFile = document.getElementById('st-file');
@@ -481,10 +575,20 @@ editor.addEventListener('input', () => {
   markDirtyLocal(activeDoc);
   updateCaret();
   scheduleSync();
+  markMentionsStale();
 });
 
-editor.addEventListener('click', updateCaret);
-editor.addEventListener('keyup', updateCaret);
+editor.addEventListener('click', () => {
+  updateCaret();
+  showMentionAtCaret();
+});
+editor.addEventListener('keyup', (e) => {
+  updateCaret();
+  if (e && e.key && (e.key.indexOf('Arrow') === 0 || e.key === 'Home' || e.key === 'End')) {
+    showMentionAtCaret();
+  }
+});
+editor.addEventListener('scroll', syncBackdropScroll, { passive: true });
 editor.addEventListener('select', updateCaret);
 document.addEventListener('selectionchange', () => {
   if (document.activeElement === editor) centerCaretSoon();
@@ -526,6 +630,7 @@ async function historyStep(which) {
     if (doc) doc.dirty = res.stats.dirty;
     renderTabs();
     renderStatus(res.stats);
+    refreshMentionsNow();
     scheduleBinderRefresh();
   } catch (err) {
     setMessage(`history failed: ${err}`, { error: true });
@@ -724,6 +829,7 @@ async function closeDoc(id) {
     } else {
       editor.value = '';
       lastStats = null;
+      renderMentions([]);
     }
     syncPending = false;
   }

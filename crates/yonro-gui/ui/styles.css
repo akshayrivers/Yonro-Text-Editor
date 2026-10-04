@@ -128,20 +128,55 @@ body.hide-inspector #inspector, body.hide-inspector #split-inspector { display: 
 #doc-tabs .tab[aria-selected="true"] { border-color: var(--accent); color: var(--accent); }
 #doc-tabs .tab .dirty { color: var(--accent); }
 #editor-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
-#editor {
-  display: block;
+/* @mention backdrop: same box metrics as the textarea so marks align. */
+#editor-wrap {
+  position: relative;
   width: 100%;
   max-width: var(--measure);
   margin: 0 auto;
-  height: 55vh;
-  background: var(--panel);
-  color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 14px 16px;
+}
+#editor-backdrop,
+#editor {
   font-family: var(--font-prose);
   font-size: var(--prose-size);
   line-height: var(--leading);
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  scrollbar-gutter: stable;
+}
+#editor-backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--panel);
+  color: transparent;
+  pointer-events: none;
+  border-color: var(--line);
+}
+#editor-backdrop.stale mark { opacity: 0; }
+#editor-backdrop mark.mention {
+  color: transparent;
+  background: var(--selection);
+  border-bottom: 1px solid var(--mention);
+  border-radius: 2px;
+}
+#editor-backdrop mark.mention.k-character { border-bottom-color: var(--k-character); }
+#editor-backdrop mark.mention.k-place { border-bottom-color: var(--k-place); }
+#editor-backdrop mark.mention.k-faction { border-bottom-color: var(--k-faction); }
+#editor-backdrop mark.mention.k-item { border-bottom-color: var(--k-item); }
+#editor-backdrop mark.mention.k-lore { border-bottom-color: var(--k-lore); }
+#editor {
+  position: relative;
+  display: block;
+  margin: 0 auto;
+  height: 55vh;
+  background: transparent;
+  color: var(--ink);
+  border-color: transparent;
   resize: vertical;
 }
 #doc-status { margin-top: 6px; font-size: 12px; max-width: var(--measure); margin-left: auto; margin-right: auto; }
@@ -479,6 +514,10 @@ body.zen #editor {
   height: 80vh;
   border-color: transparent;
   background: transparent;
+}
+body.zen #editor-backdrop {
+  background: transparent;
+  border-color: transparent;
 }
 body.zen #zen-count {
   display: block;
