@@ -261,6 +261,14 @@ impl Project {
             }
         };
         if let Some(path) = stored {
+            if path.exists() {
+                return Ok(path);
+            }
+            // Draft deleted behind our back (sync, cleanup, new checkout):
+            // recreate it empty instead of failing the open. The link in
+            // meta is still right, so no save is needed.
+            std::fs::write(&path, "")
+                .map_err(|err| ProjectError::Io(format!("{}: {err}", path.display())))?;
             return Ok(path);
         }
         let path = self.root.join(format!("scene-{scene}.md"));
@@ -1072,6 +1080,11 @@ mod tests {
         let second = project.scene_file(scene).unwrap();
         assert_eq!(first, second);
         assert_eq!(std::fs::read_to_string(&second).unwrap(), "hello world");
+        // A draft deleted behind our back is recreated empty on next open.
+        std::fs::remove_file(&first).unwrap();
+        let revived = project.scene_file(scene).unwrap();
+        assert_eq!(revived, first);
+        assert_eq!(std::fs::read_to_string(&revived).unwrap(), "");
         // Reload keeps the link.
         let reloaded = Project::load(&dir);
         let file = reloaded
