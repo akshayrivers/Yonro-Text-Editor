@@ -12,6 +12,7 @@
   <nav id="topnav" aria-label="Views">
     <span class="brand">yonro</span>
     <span id="project-title" class="muted">untitled</span>
+    <button id="workspace-switch" title="Switch project (start screen)">switch</button>
     <button data-view="write" class="active" role="tab" aria-selected="true" tabindex="0">Write</button>
     <button data-view="outline" role="tab" aria-selected="false" tabindex="-1">Outline</button>
     <button data-view="graph" role="tab" aria-selected="false" tabindex="-1">Graph</button>
@@ -36,6 +37,8 @@
       <button data-leading="1.9">airy</button>
     </div>
   </div>
+
+  <div id="workspace-warnings" hidden></div>
 
   <div id="shell">
     <aside id="binder" aria-label="Binder" tabindex="-1">
@@ -107,6 +110,19 @@
 
   <div id="scrim" hidden></div>
 
+  <div id="start-screen" hidden>
+    <div class="start-card">
+      <div class="start-brand">yonro</div>
+      <div class="start-actions">
+        <button id="start-create">create project</button>
+        <button id="start-open">open project</button>
+      </div>
+      <div id="start-recent"></div>
+      <div class="start-back-row"><button id="start-back" hidden>back</button></div>
+    </div>
+  </div>
+  <dialog id="workspace-dialog"></dialog>
+
   <div id="shortcuts" hidden>
     <h2>shortcuts</h2>
     <ul>
@@ -141,6 +157,7 @@
   <script src="timeline.js" defer></script>
   <script src="lore.js" defer></script>
   <script src="inspector.js" defer></script>
+  <script src="workspace.js" defer></script>
   <script src="app.js" defer></script>
 </body>
 </html>

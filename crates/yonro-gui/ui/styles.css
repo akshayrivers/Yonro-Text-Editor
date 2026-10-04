@@ -847,3 +847,78 @@ body.zen #zen-count {
     max-height: 40vh;
   }
 }
+
+/* Start screen + workspace warnings (P5.1) */
+#workspace-warnings {
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  padding: 6px 12px;
+}
+#workspace-warnings[hidden] { display: none; }
+.workspace-warning {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 0;
+}
+#start-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+#start-screen[hidden] { display: none; }
+.start-card {
+  text-align: center;
+  max-width: 52ch;
+  padding: 24px;
+}
+.start-brand {
+  font-family: var(--font-ui);
+  font-size: 3rem;
+  color: var(--accent);
+  margin-bottom: 20px;
+}
+.start-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+.start-actions button {
+  font-size: 1rem;
+  padding: 10px 22px;
+}
+#start-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+#start-recent .muted { margin: 0 0 4px; }
+.start-recent-row {
+  background: transparent;
+  border-color: transparent;
+  text-align: left;
+}
+.start-back-row { margin-top: 18px; }
+#workspace-dialog label {
+  display: block;
+  margin: 8px 0 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+#workspace-dialog input[type="text"] {
+  display: block;
+  width: 100%;
+  margin-top: 2px;
+  background: var(--panel-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  font: inherit;
+}
