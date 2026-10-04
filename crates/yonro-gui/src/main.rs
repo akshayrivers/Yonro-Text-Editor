@@ -853,13 +853,22 @@ struct EditDto {
 // ---------------------------------------------------------------------------
 
 /// Relationship graph: scene texts come from open buffers (path-matched to
-/// scene files) so mentions in *unsaved* drafts still link.
+/// scene files) so mentions in *unsaved* drafts still link. A query filters
+/// the view in core (`None` = today's full output).
 #[tauri::command]
-fn get_graph(state: tauri::State<'_, AppState>) -> api::GraphDto {
+fn get_graph(
+    state: tauri::State<'_, AppState>,
+    query: Option<yonro_core::GraphQuery>,
+) -> api::GraphDto {
     let project = state.project.lock().unwrap_or_else(|e| e.into_inner());
     let open_texts = state.open_texts();
     let scene_texts = api::gather_scene_texts(&project, &open_texts);
-    api::graph_dto(&project.manuscript, &project.lore, &scene_texts)
+    api::graph_dto(
+        &project.manuscript,
+        &project.lore,
+        &scene_texts,
+        query.as_ref(),
+    )
 }
 
 /// Outline-ordered timeline plus continuity notes.

@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use super::graph::query::GraphQuery;
 use super::lore::LoreBook;
 use super::manuscript::{Manuscript, NodeId};
 use super::project::Project;
@@ -134,6 +135,10 @@ pub struct GraphEdgeDto {
 pub struct GraphDto {
     pub nodes: Vec<GraphNodeDto>,
     pub edges: Vec<GraphEdgeDto>,
+    /// Pre-filter node count (equals `nodes.len()` without a query).
+    pub total_nodes: usize,
+    /// Pre-filter edge count (equals `edges.len()` without a query).
+    pub total_edges: usize,
 }
 
 /// One scene placed on the timeline.
@@ -662,13 +667,23 @@ pub fn get_mentions_dto(lore: &LoreBook, text: &str) -> Vec<MentionSpanDto> {
 }
 
 /// Relationship graph DTO from pre-gathered scene texts.
+///
+/// `query` filters the view (`None` = today's full output); totals always
+/// describe the unfiltered graph so the UI can say "showing X of Y".
 #[must_use]
 pub fn graph_dto(
     manuscript: &Manuscript,
     lore: &LoreBook,
     scene_texts: &BTreeMap<usize, String>,
+    query: Option<&GraphQuery>,
 ) -> GraphDto {
-    let graph = super::graph::Graph::build(manuscript, lore, scene_texts);
+    let full = super::graph::Graph::build(manuscript, lore, scene_texts);
+    let total_nodes = full.nodes.len();
+    let total_edges = full.edges.len();
+    let graph = match query {
+        None => full,
+        Some(q) => super::graph::query::apply(&full, manuscript, lore, scene_texts, q),
+    };
     let nodes = graph
         .nodes
         .iter()
@@ -717,7 +732,12 @@ pub fn graph_dto(
                 .collect(),
         })
         .collect();
-    GraphDto { nodes, edges }
+    GraphDto {
+        nodes,
+        edges,
+        total_nodes,
+        total_edges,
+    }
 }
 
 /// Outline-ordered timeline plus continuity notes.
@@ -981,11 +1001,12 @@ mod tests {
         let scene = ms.children(scene)[0].id;
         let mut texts = BTreeMap::new();
         texts.insert(scene, "Mara waved at @Joren.".to_string());
-        let dto = graph_dto(&ms, &lore, &texts);
+        let dto = graph_dto(&ms, &lore, &texts, None);
         assert_eq!(dto.nodes.len(), 2);
         assert_eq!(dto.edges.len(), 1);
         assert_eq!(dto.edges[0].mentions, 1);
         assert!(dto.edges[0].kinds.iter().any(|k| k == "mention"));
+        assert_eq!((dto.total_nodes, dto.total_edges), (2, 1));
     }
 
     #[test]
@@ -1201,13 +1222,30 @@ mod tests {
         let scene = ms.children(scene)[0].id;
         let mut texts = BTreeMap::new();
         texts.insert(scene, "Mara waved at @Joren.".to_string());
-        let dto = graph_dto(&ms, &lore, &texts);
+        let dto = graph_dto(&ms, &lore, &texts, None);
 
         let mara_node = dto.nodes.iter().find(|n| n.id == mara).unwrap();
         assert_eq!(mara_node.degree, 1);
         assert_eq!(mara_node.neighbors.len(), 1);
         assert_eq!(mara_node.neighbors[0].id, joren);
         assert_eq!(mara_node.neighbors[0].name, "Joren");
+    }
+
+    #[test]
+    fn graph_dto_filtered_reports_prefilter_totals() {
+        let (ms, mut lore) = seed_story();
+        lore.add(EntityKind::Character, "Joren").unwrap();
+        let scene = ms.children(ms.children(ms.root())[0].id)[0].id;
+        let scene = ms.children(scene)[0].id;
+        let mut texts = BTreeMap::new();
+        texts.insert(scene, "Mara waved at @Joren.".to_string());
+        let query = GraphQuery {
+            kinds: vec!["place".to_string()],
+            ..GraphQuery::default()
+        };
+        let dto = graph_dto(&ms, &lore, &texts, Some(&query));
+        assert!(dto.nodes.is_empty());
+        assert_eq!((dto.total_nodes, dto.total_edges), (2, 1));
     }
 
     #[test]
