@@ -204,6 +204,29 @@ pub struct RemoveNodeDto {
     pub message: String,
 }
 
+/// One buffer match as UTF-16 code-unit offsets (find-bar highlights).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct BufferHitDto {
+    pub start: usize,
+    pub end: usize,
+}
+
+/// One project-wide text hit, anchored to a line.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProjectHitDto {
+    pub scene_id: usize,
+    pub title: String,
+    pub file: Option<String>,
+    /// 1-based line number.
+    pub line: usize,
+    /// 1-based UTF-16 column where the match starts.
+    pub col_start: usize,
+    /// 1-based UTF-16 column where the match ends (exclusive).
+    pub col_end: usize,
+    /// Source line trimmed to ~80 characters server-side.
+    pub excerpt: String,
+}
+
 /// One remembered workspace for the start screen.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RecentDto {
@@ -737,6 +760,46 @@ pub fn workspace_dto(project: &Project, recents: &super::recents::Recents) -> Wo
     }
 }
 
+/// All literal occurrences of `query` in `text` (UTF-16 offsets).
+///
+/// Thin over `search::find_in_text`: empty queries yield no hits.
+#[must_use]
+pub fn search_buffer_dto(text: &str, query: &str, case_sensitive: bool) -> Vec<BufferHitDto> {
+    super::search::find_in_text(text, query, case_sensitive)
+        .iter()
+        .map(|span| BufferHitDto {
+            start: span.start,
+            end: span.end,
+        })
+        .collect()
+}
+
+/// Project-wide literal search with server-side excerpts.
+///
+/// Open buffers win over disk (via [`gather_scene_texts`]); output caps at
+/// 500 hits with earlier outline order winning.
+#[must_use]
+pub fn search_project_dto(
+    project: &Project,
+    open_texts: &BTreeMap<PathBuf, String>,
+    query: &str,
+    case_sensitive: bool,
+) -> Vec<ProjectHitDto> {
+    let scene_texts = gather_scene_texts(project, open_texts);
+    super::search::search_project(&project.manuscript, &scene_texts, query, case_sensitive)
+        .iter()
+        .map(|hit| ProjectHitDto {
+            scene_id: hit.scene_id,
+            title: hit.title.clone(),
+            file: hit.file.clone(),
+            line: hit.line,
+            col_start: hit.col_start,
+            col_end: hit.col_end,
+            excerpt: hit.excerpt.clone(),
+        })
+        .collect()
+}
+
 /// Scene detail for the inspector: breadcrumb, meta, file, live counts.
 ///
 /// # Errors
@@ -1134,5 +1197,56 @@ mod tests {
         assert_eq!(dto.warnings.len(), 2);
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&other);
+    }
+
+    #[test]
+    fn search_dtos_map_offsets_and_prefer_open_buffers() {
+        let hits = search_buffer_dto("👋 Mara Mara", "Mara", true);
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0], BufferHitDto { start: 3, end: 7 });
+        assert!(search_buffer_dto("text", "", true).is_empty());
+
+        let dir = std::env::temp_dir().join(format!("yonro-api-search-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut project = Project {
+            root: dir.clone(),
+            manuscript: Manuscript::new("Probe"),
+            lore: LoreBook::new(),
+            warnings: Vec::new(),
+        };
+        let act = project.manuscript.add_act("A").unwrap();
+        let ch = project.manuscript.add_chapter(act, "C").unwrap();
+        let scene = project.manuscript.add_scene(ch, "Gate").unwrap();
+        let path = dir.join("scene-gate.md");
+        std::fs::write(&path, "disk says nothing").unwrap();
+        project
+            .manuscript
+            .set_meta(
+                scene,
+                SceneMeta {
+                    file: Some(path.clone()),
+                    ..SceneMeta::default()
+                },
+            )
+            .unwrap();
+        // Disk alone: no hit for "Mara".
+        let empty: BTreeMap<PathBuf, String> = BTreeMap::new();
+        assert!(search_project_dto(&project, &empty, "Mara", true).is_empty());
+        // Open buffer wins: one hit with line/col/excerpt/file.
+        let mut open = BTreeMap::new();
+        open.insert(path, "hello Mara".to_string());
+        let found = search_project_dto(&project, &open, "Mara", true);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].scene_id, scene);
+        assert_eq!(found[0].title, "Gate");
+        assert_eq!(found[0].line, 1);
+        assert_eq!((found[0].col_start, found[0].col_end), (7, 11));
+        assert_eq!(found[0].excerpt, "hello Mara");
+        assert!(found[0]
+            .file
+            .as_ref()
+            .is_some_and(|file| file.ends_with("scene-gate.md")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
