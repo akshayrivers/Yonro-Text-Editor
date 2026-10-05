@@ -337,6 +337,7 @@ function bindGraphControlsOnce() {
 async function loadGraph() {
   bindGraphControlsOnce();
   await loadGraphTabs();
+  await loadLensList();
   await initGraphFilters();
   if (graphCustomId !== null && customGraphs.some((g) => g.id === graphCustomId)) {
     renderCustomGraph();
@@ -346,6 +347,11 @@ async function loadGraph() {
   graphSpotlight = null;
   pendingEdgeFrom = null;
   renderGraphTabs();
+  if (isLensTable()) {
+    await loadPresence();
+    return;
+  }
+  showGraphCanvas();
   await reloadInferred();
 }
 
@@ -361,7 +367,7 @@ async function reloadInferred() {
   }
   try {
     const query = graphCustomId === null ? buildGraphQuery() : null;
-    graphData = await core.graph(query);
+    graphData = await core.graph(query, graphCustomId === null ? graphLens : null);
     if (query === null) graphFull = graphData;
     const nodes = graphData.nodes || [];
     const edges = graphData.edges || [];
@@ -372,7 +378,7 @@ async function reloadInferred() {
 }
 
 const requeryGraphSoon = debounce(() => {
-  if (graphCustomId !== null) return;
+  if (graphCustomId !== null || isLensTable()) return;
   reloadInferred();
 }, 150);
 
@@ -397,6 +403,18 @@ async function initGraphFilters() {
     void err;
   }
   graphOutlineCache = outline;
+  sceneActMap = {};
+  if (outline) {
+    let actIdx = 0;
+    const walk = (node, act) => {
+      const current = node.kind === 'act' ? actIdx++ : act;
+      if (node.kind === 'scene' && current !== null && current !== undefined) {
+        sceneActMap[node.id] = current;
+      }
+      for (const child of node.children || []) walk(child, current);
+    };
+    walk(outline, null);
+  }
   if (!graphFull) {
     try {
       graphFull = await core.graph(null);
@@ -498,6 +516,10 @@ function renderGraphTabs() {
     const btn = document.getElementById(id);
     if (btn) btn.hidden = graphCustomId === null;
   }
+  const strip = document.getElementById('lens-strip');
+  if (strip) strip.hidden = graphCustomId !== null;
+  const panel = document.getElementById('graph-panel');
+  if (panel) panel.hidden = graphCustomId !== null;
 }
 
 function switchGraphView(key) {
@@ -1189,6 +1211,265 @@ function buildDisplayControls() {
   mkRange('graph-d-link', 'linkDist', 'link distance', 0.5, 2, 0.25, state.linkDist, oneDecimal, simAfter('linkDist'));
   body.appendChild(box);
   applyEdgeOpacityToken(state.opacity);
+}
+
+/* Lenses: exactly one inferred view at a time ------------------------------
+ * Null = the full book graph (today's output). Builtins + customs come
+ * from core; the strip also drives the story-map and presence views.
+ */
+let lensList = [];
+let graphLens = null;
+let presenceCache = null;
+let sceneActMap = {};
+
+function lensEngine() {
+  return graphLens ? graphLens.engine : 'entity';
+}
+
+function isLensTable() {
+  return lensEngine() === 'presence';
+}
+
+function loadLensPref() {
+  try {
+    const name = localStorage.getItem('yonro.graphLens');
+    return name || null;
+  } catch (err) {
+    void err;
+    return null;
+  }
+}
+
+function saveLensPref() {
+  try {
+    if (graphLens) localStorage.setItem('yonro.graphLens', graphLens.name);
+    else localStorage.removeItem('yonro.graphLens');
+  } catch (err) {
+    void err;
+  }
+}
+
+async function loadLensList() {
+  try {
+    lensList = await core.lenses();
+  } catch (err) {
+    void err;
+    lensList = [];
+  }
+  if (!Array.isArray(lensList)) lensList = [];
+  const saved = loadLensPref();
+  graphLens = saved ? lensList.find((lens) => lens.name === saved) || null : null;
+  renderLensStrip();
+}
+
+function renderLensStrip() {
+  const bar = document.getElementById('lens-strip');
+  if (!bar) return;
+  bar.hidden = graphCustomId !== null;
+  bar.innerHTML = '';
+  const label = document.createElement('span');
+  label.className = 'lens-label';
+  label.textContent = 'lenses';
+  bar.appendChild(label);
+  const mk = (name, lens, hint) => {
+    const selected = (lens === null && graphLens === null)
+      || (lens !== null && graphLens !== null && lens.name === graphLens.name);
+    const b = document.createElement('button');
+    b.className = 'tab';
+    b.textContent = name;
+    b.title = hint || name;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', selected ? 'true' : 'false');
+    b.addEventListener('click', () => selectLens(lens ? lens.name : null));
+    if (lens !== null) {
+      b.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        deleteLensFlow(lens.name);
+      });
+    }
+    bar.appendChild(b);
+  };
+  mk('all', null, 'the full book graph');
+  for (const lens of lensList) {
+    mk(lens.name, lens, lens.engine === 'entity' ? 'entity view' : lens.engine === 'scene' ? 'story map' : 'presence table');
+  }
+  const add = document.createElement('button');
+  add.className = 'tab';
+  add.textContent = '+ lens';
+  add.title = 'save a new lens';
+  add.addEventListener('click', () => createLensFlow());
+  bar.appendChild(add);
+}
+
+async function selectLens(name) {
+  graphLens = name === null ? null : lensList.find((lens) => lens.name === name) || null;
+  saveLensPref();
+  renderLensStrip();
+  graphSpotlight = null;
+  pendingEdgeFrom = null;
+  if (isLensTable()) {
+    await loadPresence();
+    return;
+  }
+  showGraphCanvas();
+  if (graphCustomId !== null) renderCustomGraph();
+  else await reloadInferred();
+}
+
+function showGraphCanvas() {
+  const svg = document.getElementById('graph');
+  const legend = document.getElementById('graph-legend');
+  const wrap = document.getElementById('presence-wrap');
+  if (svg) svg.hidden = false;
+  if (legend) legend.hidden = false;
+  if (wrap) wrap.hidden = true;
+}
+
+function showPresenceTable() {
+  const svg = document.getElementById('graph');
+  const legend = document.getElementById('graph-legend');
+  const wrap = document.getElementById('presence-wrap');
+  if (svg) svg.hidden = true;
+  if (legend) legend.hidden = true;
+  if (wrap) wrap.hidden = false;
+}
+
+async function loadPresence() {
+  showPresenceTable();
+  try {
+    presenceCache = await core.presence(graphLens);
+    renderPresenceTable(presenceCache);
+  } catch (err) {
+    presenceCache = null;
+    const table = document.getElementById('presence-table');
+    table.innerHTML = '';
+    const caption = document.createElement('caption');
+    caption.textContent = `could not load presence: ${errText(err)}`;
+    table.appendChild(caption);
+  }
+}
+
+function createLensFlow() {
+  const dlg = ensureDialog('lens-dialog', 'new lens');
+  dlg.innerHTML = '';
+  const h = document.createElement('h2');
+  h.textContent = 'new lens';
+  dlg.appendChild(h);
+  const nameLabel = document.createElement('label');
+  nameLabel.textContent = 'name';
+  const nameInput = document.createElement('input');
+  nameInput.type = 'text';
+  nameInput.placeholder = 'Rivals';
+  nameInput.setAttribute('aria-label', 'lens name');
+  nameLabel.appendChild(nameInput);
+  dlg.appendChild(nameLabel);
+  const engineLabel = document.createElement('label');
+  engineLabel.textContent = 'view';
+  const engineSel = document.createElement('select');
+  for (const [value, text] of [['entity', 'entities'], ['scene', 'story map'], ['presence', 'presence table']]) {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = text;
+    engineSel.appendChild(opt);
+  }
+  engineSel.setAttribute('aria-label', 'lens view');
+  engineLabel.appendChild(engineSel);
+  dlg.appendChild(engineLabel);
+  const aLabel = document.createElement('label');
+  aLabel.textContent = 'kinds a (comma separated)';
+  const aInput = document.createElement('input');
+  aInput.type = 'text';
+  aInput.placeholder = 'character';
+  aInput.setAttribute('aria-label', 'side a kinds');
+  aLabel.appendChild(aInput);
+  dlg.appendChild(aLabel);
+  const bLabel = document.createElement('label');
+  bLabel.textContent = 'kinds b (blank mirrors a)';
+  const bInput = document.createElement('input');
+  bInput.type = 'text';
+  bInput.placeholder = 'place';
+  bInput.setAttribute('aria-label', 'side b kinds');
+  bLabel.appendChild(bInput);
+  dlg.appendChild(bLabel);
+  const err = document.createElement('p');
+  err.className = 'field-error';
+  err.setAttribute('aria-live', 'polite');
+  err.hidden = true;
+  dlg.appendChild(err);
+  const row = document.createElement('div');
+  const goBtn = document.createElement('button');
+  goBtn.textContent = 'save';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'cancel';
+  row.appendChild(goBtn);
+  row.appendChild(cancelBtn);
+  dlg.appendChild(row);
+  const kindsOf = (input) => input.value.split(',').map((s) => s.trim().toLowerCase()).filter((s) => s !== '');
+  goBtn.addEventListener('click', async () => {
+    const name = nameInput.value.trim();
+    if (!name) {
+      err.textContent = 'name cannot be empty';
+      err.hidden = false;
+      return;
+    }
+    const lens = {
+      name,
+      engine: engineSel.value,
+      kinds_a: kindsOf(aInput),
+      kinds_b: kindsOf(bInput),
+    };
+    try {
+      await core.saveLens(name, lens);
+      dlg.close();
+      setMessage(`saved lens ${name}`);
+      await loadLensList();
+      selectLens(name);
+    } catch (e) {
+      err.textContent = `cannot save lens ${name}: ${errText(e)}`;
+      err.hidden = false;
+    }
+  });
+  cancelBtn.addEventListener('click', () => dlg.close(), { once: true });
+  openModal(dlg, nameInput);
+}
+
+function deleteLensFlow(name) {
+  const builtin = ['Cast', 'Cast x Places', 'Cast x Items', 'Factions', 'Story map', 'Act presence'];
+  if (builtin.some((b) => b.toLowerCase() === name.toLowerCase())) {
+    setMessage('builtin lenses cannot be deleted.');
+    return;
+  }
+  const dlg = ensureDialog('lens-confirm', 'delete lens');
+  dlg.innerHTML = '';
+  const h = document.createElement('h2');
+  h.textContent = 'delete lens';
+  dlg.appendChild(h);
+  const p = document.createElement('p');
+  p.textContent = `remove the "${name}" lens?`;
+  dlg.appendChild(p);
+  const row = document.createElement('div');
+  const del = document.createElement('button');
+  del.textContent = 'delete';
+  const cancel = document.createElement('button');
+  cancel.textContent = 'cancel';
+  row.appendChild(del);
+  row.appendChild(cancel);
+  dlg.appendChild(row);
+  del.addEventListener('click', async () => {
+    dlg.close();
+    try {
+      await core.deleteLens(name);
+      setMessage(`deleted lens ${name}`);
+    } catch (err) {
+      setMessage(`could not delete lens ${name}: ${errText(err)}`, { error: true });
+      return;
+    }
+    if (graphLens && graphLens.name === name) graphLens = null;
+    await loadLensList();
+    selectLens(graphLens ? graphLens.name : null);
+  }, { once: true });
+  cancel.addEventListener('click', () => dlg.close(), { once: true });
+  openModal(dlg, cancel);
 }
 
 function updateGraphRovingTabindex(activeId) {  const nodes = document.querySelectorAll('#graph g.gnode');

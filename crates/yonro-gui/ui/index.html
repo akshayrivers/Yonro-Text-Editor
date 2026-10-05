@@ -92,6 +92,7 @@
           </div>
         </div>
         <div id="graph-tabs" role="tablist" aria-label="Graphs"></div>
+        <div id="lens-strip" role="tablist" aria-label="Lenses"></div>
         <p class="muted">Nodes are lore entities; edge width is combined weight (shared scenes + @mentions). Click a node to spotlight its neighborhood.</p>
         <div id="graph-main">
           <aside id="graph-panel" aria-label="Graph filters">
@@ -112,6 +113,9 @@
           <div id="graph-stage">
             <svg id="graph" role="img" aria-label="Relationship graph"></svg>
             <div id="graph-legend" class="muted"></div>
+            <div id="presence-wrap" hidden>
+              <table id="presence-table" class="outline-table" aria-label="Entity presence by act and chapter"></table>
+            </div>
           </div>
         </div>
       </section>
