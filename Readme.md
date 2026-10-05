@@ -27,8 +27,11 @@ Yonro is a highly enhanced, layered, and extensible terminal-based text editor w
 git clone https://github.com/akshayrivers/Text_Editor.git
 cd Text_Editor
 
-# Run the editor
-cargo run
+# Terminal editor
+cargo run -p yonro-tui
+
+# Desktop narrative studio (Tauri)
+cargo run -p yonro-gui -- <workspace_dir>
 ```
 
 
@@ -56,15 +59,21 @@ When the File Explorer pane is active:
 
 ## 🖥️ GUI (Tauri narrative studio)
 
-The `yonro-gui` crate is the visual half of the studio: Write/Outline/Graph/Timeline/Lore over the same `.yonro/` workspace the TUI reads.
+The `yonro-gui` crate is the visual half of the studio over the same `.yonro/` workspace the TUI reads: **Write** (distraction-free drafting with `@mention` autocomplete), **Outline** (manuscript table plus alternate outline trees), **Graph** (inferred relationship map, hand-drawn canvases, and saved lenses: Cast, Story map, Act presence), **Timeline** (outline-ordered scenes plus continuity notes), and **Lore** (entity sheets, aliases, POV backlinks).
 
 ```bash
 cargo run -p yonro-gui -- <workspace_dir>
 ```
 
+New projects open on a ready-to-write skeleton (Act I / Chapter 1 / Scene 1). Paths resolve under your home folder (`Desktop/novel` works; `/Desktop` is the disk root and is refused). A sample novel for trying the graph views:
+
+```bash
+cargo run -p yonro-core --example seed -- /tmp/y --entities 250
+```
+
 Keymap: press `?` outside the editor for the shortcut sheet, or run palette `>keyboard shortcuts` (`mod+Shift+P`). The full map lives in `AGENTS.md` under KEYMAP.
 
-Adapter seam: only `crates/yonro-gui/ui/core.js` touches `window.__TAURI__`. Every other UI file calls `core.<fn>()`. See `architecture.md` for the command list and `ui/` file layout.
+Adapter seam: only `crates/yonro-gui/ui/core.js` touches `window.__TAURI__`. Every other UI file calls `core.<fn>()`. All narrative facts (word counts, mentions, graph, timeline, filters, lenses) are computed in `yonro-core`; the UI only renders. See `architecture.md` for the command list and `ui/` file layout.
 
 ## 🏛️ Architecture & Layered Design
 

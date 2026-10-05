@@ -123,7 +123,7 @@ graph LR
 
 All narrative facts are computed in `yonro-core`; the Tauri frontend only renders. The seam is the `#[tauri::command]` set in `crates/yonro-gui/src/main.rs` — the single list a future pure-web build reimplements over WASM:
 
-`get_outline` / `get_stats` / `get_lore` / `get_workspace` / `open_workspace` / `create_workspace` / `open_file` / `set_text` / `save_file` / `close_buffer` / `undo_buffer` / `redo_buffer` / `get_graph` / `get_timeline` / `add_node` / `rename_node` / `move_node` / `remove_node` / `set_scene_meta` / `get_scene` / `open_scene` / `list_files` / `add_entity` / `update_entity` / `remove_entity` / `lore_search` / `get_entity` / `get_mentions` / `search_buffer` / `search_project` / `get_session` / `set_goal` / `export_manuscript` / `get_history` / `restore_snapshot` / `sweep_recovery` / `check_recovery` / `discard_recovery` (plus `get_workspace_dir`).
+`get_outline` / `get_stats` / `get_lore` / `get_workspace` / `get_home` / `open_workspace` / `create_workspace` / `open_file` / `set_text` / `save_file` / `close_buffer` / `undo_buffer` / `redo_buffer` / `get_graph` / `get_timeline` / `list_custom_graphs` / `create_custom_graph` / `rename_custom_graph` / `delete_custom_graph` / `add_graph_node` / `move_graph_node` / `rename_graph_node` / `remove_graph_node` / `add_graph_edge` / `remove_graph_edge` / `list_alt_outlines` / `create_alt_outline` / `rename_alt_outline` / `delete_alt_outline` / `alt_add_node` / `alt_rename_node` / `alt_move_node` / `alt_remove_node` / `alt_open_scene` / `alt_get_outline` / `list_lenses` / `get_presence` / `save_lens` / `delete_lens` / `add_node` / `rename_node` / `move_node` / `remove_node` / `set_scene_meta` / `get_scene` / `open_scene` / `list_files` / `add_entity` / `update_entity` / `remove_entity` / `lore_search` / `get_entity` / `get_mentions` / `search_buffer` / `search_project` / `get_session` / `set_goal` / `export_manuscript` / `get_history` / `restore_snapshot` / `sweep_recovery` / `check_recovery` / `discard_recovery` (plus `get_workspace_dir`).
 
 Only `crates/yonro-gui/ui/core.js` touches `window.__TAURI__`. Every other file calls `core.<fn>()`.
 
@@ -136,8 +136,9 @@ Only `crates/yonro-gui/ui/core.js` touches `window.__TAURI__`. Every other file 
 - `util.js` — `esc`, `isMod`, `el`, `debounce`, `setMessage`, `errText`, `openModal`.
 - `app.js` — shell boot, `COMMANDS` registry (palette `>` mode + shortcut-sheet source), view switching (lazy per-view loads), global keymap, drawers, zen.
 - `editor.js` — write view: local dirty flag + debounced `set_text` sync, tabs, find/highlight backdrop, `@` autocomplete, save flows, recovery.
-- `outline.js` — outline table + binder tree (roving tabindex, inline add/rename/remove, context menu, files section).
-- `graph.js` — SVG relationship graph (layout in JS, facts from core), spotlight + keyboard walk.
+- `outline.js` — outline table + alt-outline tabs, binder tree (roving tabindex, inline add/rename/remove, context menu, files section).
+- `graph-layout.js` — pure layout maths (force sim, bipartite columns, ordered rows); no DOM, no backend.
+- `graph.js` — SVG relationship graph: inferred tab (filter panel + lens strip + presence table), custom canvases, sim loop with drag pinning, spotlight + keyboard walk.
 - `timeline.js` — chapter-grouped entries + continuity cards, POV filter (UI-only).
 - `lore.js` — entity list + detail (aliases, sheet, scene links), add/delete dialogs.
 - `inspector.js` — selection inspector (scene meta form, entity sheet, history + restore).

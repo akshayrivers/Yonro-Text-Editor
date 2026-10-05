@@ -28,6 +28,10 @@ Initially it had been a faithful implementation of the text editor built in the 
 8. [Future Plans](#future-plans)
 9. [Bugs/Backlog](#bugs--backlog)
 
+### Narrative Studio (GUI)
+
+10. [GUI Narrative Studio](#gui-narrative-studio-tauri)
+
 ---
 
 ## Phase I: Raw I/O Mode & Keypressing
@@ -1232,3 +1236,29 @@ Need UI for plugin management and register and unresgister at runtime, also supp
 ---
 
 ## Bugs / Backlog
+
+---
+
+## GUI Narrative Studio (Tauri)
+
+The terminal editor grew a desktop half: `yonro-gui` (Tauri v2) over the same `.yonro/` workspace the TUI reads (`manuscript.json`, `lore.json`, `scene-<id>.md`; new additive files like `graphs.json`, `lenses.json` are fine, existing shapes never change).
+
+### Adapter seam
+
+Only `crates/yonro-gui/ui/core.js` touches `window.__TAURI__`. Every other UI file calls `core.<fn>()`, so a future pure-web build reimplements one file over WASM. The command list lives in `architecture.md` section 5. No npm, no bundler, no framework: classic `<script>` files in load order, verified by `node --check`.
+
+### Core computes, UI renders
+
+Word counts, `@mention` parsing, graph builds, filters, lenses, timeline, continuity, progress, search, export, and session stats all live in `yonro-core`. JS is allowed UI-only math (scroll positions, caret, layout coordinates, label fuzzy-matching). Consequences:
+- Graph filtering (`graph/query.rs`: scope → pov → kinds/text → weight → focus BFS → degree/orphans → cap) and lens engines (`graph/lens.rs`: pair rule, story map, presence matrix) run in Rust with unit tests; the panel only rebuilds the query object.
+- Layout (`graph-layout.js`: force sim, bipartite columns, ordered rows) is positions-only and never invents nodes or edges.
+
+### Workspace honesty
+
+Opening or creating a project probes write access first (`mkdir` + throwaway file) and names the path on failure. Relative paths resolve under `$HOME`, not the app's working directory. Switching projects drops every frontend buffer because the backend drops its own — stale ids were once the cause of every "unknown buffer" error. Deleted scene drafts recreate empty on next open instead of failing.
+
+### What I learned
+
+- A single present-but-unlinked entity forms no edges, so the entity graph can be legitimately empty while the presence matrix still sees it. Empty states must name the next action, not just report zero.
+- Seeded test data lies unless the generator is checked: a lockstep POV/mention cycle once built a weight-10 hero pair that no real novel would have. Now the seed deals entities into ~8-clusters and walks heroes on a different cycle.
+- Debounce the backend, never the truth: per-keystroke work stays local (dirty flag), while stats, mentions, find, and graph re-queries trail on 120–800ms timers.
