@@ -13,7 +13,7 @@ features are what it is now. The author is writing a novel inside it.
 ## demos
 
 ### terminal — outline sidebar, explorer, find, zen mode
-![tui demo](assets/tui.gif)
+![tui demo](assets/pane.gif)
 
 Scripted pty session on a seeded sample novel: toggles the outline sidebar
 (`Ctrl-O`), opens a scene into a new tab, browses the file explorer (`Ctrl-E`),
