@@ -368,13 +368,78 @@ async function reloadInferred() {
   try {
     const query = graphCustomId === null ? buildGraphQuery() : null;
     graphData = await core.graph(query, graphCustomId === null ? graphLens : null);
-    if (query === null) graphFull = graphData;
+    if (query === null && graphLens === null) graphFull = graphData;
     const nodes = graphData.nodes || [];
     const edges = graphData.edges || [];
-    buildSimAndRun(nodes, edges, null);
+    layoutCurrentGraph(nodes, edges);
   } catch (err) {
     document.getElementById('graph-legend').textContent = `could not load graph: ${errText(err)}`;
   }
+}
+
+/* Layout dispatch: the DTO hint picks force (simulated), bipartite
+ * (two static columns), or ordered (one static row per act).
+ */
+function layoutCurrentGraph(nodes, edges) {
+  const layout = (graphData && graphData.layout) || 'force';
+  stopSimLoop();
+  simDirty = false;
+  if (!nodes.length) {
+    graphSim = null;
+    graphPos = {};
+    graphLayout = null;
+    renderGraph(graphData);
+    return;
+  }
+  if (layout === 'bipartite' && graphLens) {
+    const A = (graphLens.kinds_a || []).map((k) => String(k).toLowerCase());
+    const rawB = (graphLens.kinds_b || []).map((k) => String(k).toLowerCase());
+    const B = rawB.length ? rawB : A;
+    const left = [], right = [];
+    for (const n of nodes) {
+      const k = String(n.kind || '').toLowerCase();
+      if (A.includes(k) && !B.includes(k)) left.push(n.id);
+      else if (B.includes(k) && !A.includes(k)) right.push(n.id);
+    }
+    const placed = bipartiteLayout(nodes, left, right);
+    graphSim = null;
+    graphPos = placed.pos;
+    graphLayout = { pos: graphPos, bbox: placed.bbox, spacing: placed.spacing };
+    fitGraph();
+  } else if (layout === 'ordered') {
+    const placed = orderedLayout(nodes, sceneRowsByAct(nodes));
+    graphSim = null;
+    graphPos = placed.pos;
+    graphLayout = { pos: graphPos, bbox: placed.bbox, spacing: placed.spacing };
+    fitGraph();
+  } else {
+    buildSimAndRun(nodes, edges, null);
+  }
+}
+
+/* Scene ids grouped per top-level act, outline order, visible set only. */
+function sceneRowsByAct(nodes) {
+  const ids = new Set(nodes.map((n) => n.id));
+  const outline = graphOutlineCache;
+  const kids = outline ? outline.children || [] : [];
+  if (!kids.length) return [nodes.map((n) => n.id)];
+  const rows = [];
+  const collect = (node, out) => {
+    if (node.kind === 'scene') {
+      if (ids.has(node.id)) out.push(node.id);
+      return;
+    }
+    for (const child of node.children || []) collect(child, out);
+  };
+  for (const act of kids) {
+    const row = [];
+    collect(act, row);
+    if (row.length) rows.push(row);
+  }
+  const seen = new Set(rows.flat());
+  const rest = nodes.map((n) => n.id).filter((id) => !seen.has(id));
+  if (rest.length) rows.push(rest);
+  return rows.length ? rows : [[]];
 }
 
 const requeryGraphSoon = debounce(() => {
@@ -847,6 +912,89 @@ function removeCustomNodeFlow(id, nodeId, node) {  const g = customById(id);
   }, { once: true });
   cancel.addEventListener('click', () => dlg.close(), { once: true });
   openModal(dlg, cancel);
+}
+
+/* Presence table ----------------------------------------------------------
+ * Rows focus the entity in the Cast lens; column headers scope the Cast
+ * lens to that act or chapter.
+ */
+function renderPresenceTable(dto) {
+  const table = document.getElementById('presence-table');
+  table.innerHTML = '';
+  const columns = (dto && dto.columns) || [];
+  const rows = (dto && dto.rows) || [];
+  const caption = document.createElement('caption');
+  caption.textContent = rows.length
+    ? `${rows.length} entities across ${columns.length} columns.`
+    : 'no entities yet. set a scene POV or type @Name.';
+  table.appendChild(caption);
+  if (!rows.length) return;
+  const head = document.createElement('thead');
+  const header = document.createElement('tr');
+  const corner = document.createElement('th');
+  corner.scope = 'col';
+  corner.textContent = 'entity';
+  header.appendChild(corner);
+  columns.forEach((col) => {
+    const th = document.createElement('th');
+    th.scope = 'col';
+    const btn = document.createElement('button');
+    btn.textContent = col.title;
+    btn.title = `scope the Cast lens to ${col.title}`;
+    btn.setAttribute('aria-label', `scope Cast lens to ${col.title} (${col.kind})`);
+    btn.addEventListener('click', () => scopeCastTo(col.id));
+    th.appendChild(btn);
+    header.appendChild(th);
+  });
+  head.appendChild(header);
+  table.appendChild(head);
+  const body = document.createElement('tbody');
+  rows.forEach((row) => {
+    const tr = document.createElement('tr');
+    tr.tabIndex = 0;
+    const name = document.createElement('td');
+    name.textContent = row.name;
+    tr.appendChild(name);
+    row.counts.forEach((count) => {
+      const td = document.createElement('td');
+      const chip = document.createElement('span');
+      const level = count === 0 ? 'heat-0' : count === 1 ? 'heat-1' : count <= 3 ? 'heat-2' : 'heat-3';
+      chip.className = `heat ${level}`;
+      chip.textContent = String(count);
+      td.appendChild(chip);
+      tr.appendChild(td);
+    });
+    const open = () => focusCastOn(row.name);
+    tr.addEventListener('click', open);
+    tr.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        open();
+      }
+    });
+    body.appendChild(tr);
+  });
+  table.appendChild(body);
+}
+
+function focusCastOn(name) {
+  const cast = lensList.find((lens) => lens.name === 'Cast');
+  const text = document.getElementById('graph-f-text');
+  if (text) text.value = name;
+  selectLens(cast ? cast.name : null);
+}
+
+function scopeCastTo(columnId) {
+  const cast = lensList.find((lens) => lens.name === 'Cast');
+  const sel = document.getElementById('graph-f-scope');
+  if (sel) {
+    sel.value = String(columnId);
+    if (sel.value !== String(columnId)) {
+      setMessage('could not scope: the outline changed under us.', { error: true });
+      return;
+    }
+  }
+  selectLens(cast ? cast.name : null);
 }
 
 /* Filter panel (inferred graph only) ---------------------------------------
@@ -1326,6 +1474,7 @@ function showGraphCanvas() {
 }
 
 function showPresenceTable() {
+  stopSimLoop();
   const svg = document.getElementById('graph');
   const legend = document.getElementById('graph-legend');
   const wrap = document.getElementById('presence-wrap');
@@ -1491,7 +1640,7 @@ function focusGraphNode(id, resetWalk) {
   const target = document.querySelector(`#graph g[data-id="${id}"]`);
   if (target) target.focus();
   const node = (graphData && graphData.nodes ? graphData.nodes : []).find((x) => x.id === id);
-  if (graphCustomId === null && node && typeof showEntityInspector === 'function') {
+  if (graphCustomId === null && lensEngine() !== 'scene' && node && typeof showEntityInspector === 'function') {
     showEntityInspector(id, node);
   }
 }
@@ -1620,6 +1769,8 @@ function renderGraph(graph) {
     const isFocused = n.id === graphFocusedNodeId ? ' focused' : '';
     const tabIndex = n.id === graphFocusedNodeId ? '0' : '-1';
     const kindCls = ` k-${esc(n.kind || 'lore')}`;
+    const actIdx = n.kind === 'scene' ? sceneActMap[n.id] : undefined;
+    const actCls = actIdx === undefined ? '' : ` act-${(actIdx % 6) + 1}`;
     const ariaLabel = `${esc(n.label)}, ${esc(n.kind)}, ${n.degree || 0} links`;
 
     const showLabel =
@@ -1636,7 +1787,7 @@ function renderGraph(graph) {
       : '';
     const titleTag = `<title>${esc(n.label)} (${esc(n.kind)})</title>`;
 
-    html += `<g role="button" data-id="${n.id}" tabindex="${tabIndex}" aria-label="${ariaLabel}" class="gnode${kindCls}${dimNode(n.id)}${isSpotlight}${isFocused}"><circle cx="${p.x}" cy="${p.y}" r="${nodeR(n).toFixed(1)}"/>${textTag}${titleTag}</g>`;
+    html += `<g role="button" data-id="${n.id}" tabindex="${tabIndex}" aria-label="${ariaLabel}" class="gnode${kindCls}${actCls}${dimNode(n.id)}${isSpotlight}${isFocused}"><circle cx="${p.x}" cy="${p.y}" r="${nodeR(n).toFixed(1)}"/>${textTag}${titleTag}</g>`;
   }
 
   svg.innerHTML = html;
@@ -1665,6 +1816,11 @@ function renderGraph(graph) {
       }
       graphFocusedNodeId = id;
       graphWalkNeighborIdx = 0;
+      if (lensEngine() === 'scene' && graphCustomId === null) {
+        updateGraphRovingTabindex(id);
+        if (typeof openSceneDoc === 'function') openSceneDoc(id);
+        return;
+      }
       graphSpotlight = graphSpotlight === id ? null : id;
       updateGraphRovingTabindex(id);
       if (node && typeof showEntityInspector === 'function') {
@@ -1679,7 +1835,7 @@ function renderGraph(graph) {
       if (graphFocusedNodeId !== id) {
         graphFocusedNodeId = id;
         updateGraphRovingTabindex(id);
-        if (graphCustomId === null && node && typeof showEntityInspector === 'function') {
+        if (graphCustomId === null && lensEngine() !== 'scene' && node && typeof showEntityInspector === 'function') {
           showEntityInspector(id, node);
         }
       }
@@ -1761,6 +1917,10 @@ function renderGraph(graph) {
         }
       } else if (e.key === 'Enter') {
         e.preventDefault();
+        if (lensEngine() === 'scene' && graphCustomId === null) {
+          if (typeof openSceneDoc === 'function') openSceneDoc(id);
+          return;
+        }
         graphSpotlight = graphSpotlight === id ? null : id;
         renderGraph(graph);
         refocusGraphNode(id);
@@ -1777,6 +1937,11 @@ function renderGraph(graph) {
   legend.innerHTML = '';
   if (graphCustomId !== null) return;
   if (!nodes.length) {
+    const lensEmpty = emptyLensText();
+    if (lensEmpty) {
+      legend.textContent = lensEmpty;
+      return;
+    }
     const span = document.createElement('span');
     span.textContent = 'nothing matches. loosen a filter or ';
     legend.appendChild(span);
@@ -1795,6 +1960,32 @@ function renderGraph(graph) {
   let line = `showing ${nodes.length} of ${totalNodes} entities · ${shownEdges} of ${totalEdges} links.`;
   if (edges.length > 0 && shownEdges === 0) {
     line += ' no links at this weight. lower min weight.';
+  } else if (graphLens && lensEngine() === 'entity') {
+    line += ' click a node to see who each appears with.';
+  } else if (graphLens && lensEngine() === 'scene') {
+    line += ' click a scene to open it in Write.';
   }
   legend.textContent = line;
+}
+
+/* Lens-aware empty states name the next action and never use ownership
+ * words ("owns", "allies"). Null when no lens (or no known kind) so the
+ * generic filter empty state applies.
+ */
+function emptyLensText() {
+  if (!graphLens || lensEngine() !== 'entity') return null;
+  const kinds = (graphLens.kinds_b && graphLens.kinds_b.length ? graphLens.kinds_b : graphLens.kinds_a) || [];
+  const first = String(kinds[0] || '').toLowerCase();
+  const plural = {
+    place: 'places', item: 'items', character: 'characters', faction: 'factions', lore: 'lore notes',
+  }[first];
+  const action = {
+    place: 'set scene settings or @mention a place.',
+    item: '@mention an item in a scene.',
+    character: 'set a scene POV or @mention someone.',
+    faction: '@mention a faction in a scene.',
+    lore: 'type @Name in a scene to seed it.',
+  }[first];
+  if (!plural || !action) return null;
+  return `no ${plural} linked yet. ${action}`;
 }

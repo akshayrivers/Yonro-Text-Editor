@@ -1128,3 +1128,13 @@ body.zen #zen-count {
 #presence-table .heat-1 { opacity: 0.55; }
 #presence-table .heat-2 { opacity: 0.8; }
 #presence-table .heat-3 { opacity: 1; }
+#presence-table th button {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+}
+#presence-table th button:hover { color: var(--accent); }
