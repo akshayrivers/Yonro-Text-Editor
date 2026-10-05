@@ -161,6 +161,14 @@ grapheme-correct. Verified end-to-end by driving the real binary in a pty.*
 
 ---
 
+### 🔵 Phase 8: Graph lenses — **DONE**
+*Goal: Obsidian-style views over the one inferred graph; every filter computed in core.*
+
+- [x] **8.1 Lens engines**: `yonro-core::graph::lens` (Lens/Engine, builtins Cast, Cast x Places, Cast x Items, Factions, Story map, Act presence; pair rule keeps one-endpoint-per-side edges then drops degree-0 nodes; scene view over outline order with shared-entity weights; presence matrix entities × interleaved act/chapter columns; `.yonro/lenses.json` store, max 24, dup/builtin guards). `GraphDto.layout` hint (`force`/`bipartite`/`ordered`/`table`) + pre-filter totals; `get_graph(query, lens)`, `list_lenses`, `get_presence`, `save_lens`, `delete_lens`.
+- [x] **8.2 Lens UI**: lens strip (all + builtins + customs + builder with engine/kinds, dblclick deletes customs); bipartite/ordered pure layouts in `graph-layout.js`; story-map nodes colored by act (`--act-1..6` tokens), click/Enter opens the scene in Write; presence `<table>` with heat chips, row click focuses Cast, column click scopes Cast; per-lens legends ("appears with", never "owns"/"allies") and empty states naming the next action.
+
+---
+
 ## 🐛 Known Issues from `concern.txt` (Archived — Fixed in Phases 1–3)
 1. **Missing `PaneOpened` Notification** — Fixed: `apply_plugin_response` now sends `PaneOpened`.
 2. **Plugin Keystroke Focus Leakage** — Fixed: `PluginMessage::Event` includes `active_pane_id`; plugins filter by it.
