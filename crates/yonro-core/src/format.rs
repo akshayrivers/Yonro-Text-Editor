@@ -24,6 +24,9 @@ pub struct Format {
     face: String,
     #[serde(default)]
     spacing: Spacing,
+    /// One anchored note. Empty means the page has none.
+    #[serde(default)]
+    notes: Vec<Note>,
 }
 
 /// A half-open grapheme span and what it looks like.
@@ -70,6 +73,16 @@ pub enum MarkKind {
     },
 }
 
+/// One comment anchored to a grapheme span.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Note {
+    /// First grapheme, flat across the scene.
+    pub start: usize,
+    /// One past the last grapheme.
+    pub end: usize,
+    /// The note itself.
+    pub text: String,
+}
 /// How one source line is set.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Paragraph {
@@ -179,6 +192,21 @@ impl Format {
         self.spacing = spacing;
     }
 
+    /// The anchored notes.
+    #[must_use]
+    pub fn notes(&self) -> &[Note] {
+        &self.notes
+    }
+
+    /// Keep a single note on `[start, end)`. An empty span clears it.
+    pub fn set_note(&mut self, start: usize, end: usize, text: impl Into<String>) {
+        self.notes.clear();
+        let text = text.into();
+        if end > start && !text.is_empty() {
+            self.notes.push(Note { start, end, text });
+        }
+    }
+
     /// Record a mark. An empty span is ignored.
     pub fn add_mark(&mut self, start: usize, end: usize, kind: MarkKind) {
         if end <= start {
@@ -268,6 +296,14 @@ impl Format {
                 mark.end = mark.end.saturating_add(len);
             }
         }
+        for note in &mut self.notes {
+            if note.start > at {
+                note.start = note.start.saturating_add(len);
+            }
+            if note.end > at {
+                note.end = note.end.saturating_add(len);
+            }
+        }
     }
 
     /// Shrink marks that overlap `[start, end)`, and slide the ones after it.
@@ -286,6 +322,17 @@ impl Format {
             }
         }
         self.marks = next;
+        let mut kept = Vec::new();
+        for note in self.notes.drain(..) {
+            if let Some((note_start, note_end)) = subtract_span(note.start, note.end, start, end) {
+                kept.push(Note {
+                    start: note_start,
+                    end: note_end,
+                    text: note.text,
+                });
+            }
+        }
+        self.notes = kept;
     }
 
     /// A newline at `line` copies that line's props onto the new line.
@@ -508,5 +555,24 @@ mod tests {
             .marks()
             .is_empty());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_note_grows_when_typed_inside_and_undoes() {
+        let mut buffer = Buffer::default();
+        let mut log = EditLog::new();
+        log.insert_text(&mut buffer, loc(0), "word", Instant::now());
+        log.format_mut().set_note(0, 4, "keep");
+        log.insert_char(
+            &mut buffer,
+            loc(2),
+            'x',
+            Instant::now() + Duration::from_secs(2),
+        );
+        assert_eq!(log.format().notes()[0].end, 5);
+        log.undo(&mut buffer);
+        let note = &log.format().notes()[0];
+        assert_eq!((note.start, note.end), (0, 4));
+        assert_eq!(note.text, "keep");
     }
 }

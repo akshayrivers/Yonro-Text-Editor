@@ -40,6 +40,7 @@ pub mod prose;
 pub mod recents;
 pub mod search;
 pub mod session;
+pub mod spell;
 pub mod timeline;
 
 pub use alt_outlines::{AltOutline, AltOutlineError, AltOutlineId, AltOutlineStore};
@@ -60,8 +61,8 @@ pub use export::{CompiledExport, ExportError, ExportFormat, ExportSummary, SCENE
 pub use fileinfo::FileInfo;
 pub use filetype::FileType;
 pub use format::{
-    flat_index, flat_len, Align, Format, FormatFile, InlineMark, ListKind, MarkKind, ParaStyle,
-    Paragraph, Spacing,
+    flat_index, flat_len, Align, Format, FormatFile, InlineMark, ListKind, MarkKind, Note,
+    ParaStyle, Paragraph, Spacing,
 };
 pub use graph::lens::{
     builtin_lenses, Engine, Lens, LensError, LensStore, PresenceColumn, PresenceRow, SceneEdge,
@@ -85,4 +86,5 @@ pub use prose::{
 pub use recents::{RecentEntry, Recents, RecentsError, MAX_RECENTS};
 pub use search::{ProjectHit, Utf16Span, EXCERPT_CHARS, MAX_PROJECT_HITS};
 pub use session::{DayRecord, SessionLog};
+pub use spell::misspelled_bytes;
 pub use timeline::{ContinuityNote, Timeline, TimelineEntry};
