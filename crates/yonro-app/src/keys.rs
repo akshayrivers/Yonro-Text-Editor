@@ -26,6 +26,10 @@ impl Page {
         cx: &mut Context<Self>,
     ) {
         let mods = &event.keystroke.modifiers;
+        if self.command(event, cx) {
+            cx.notify();
+            return;
+        }
         let shift = mods.shift;
         let word = mods.platform || mods.control;
         match event.keystroke.key.as_str() {
@@ -52,6 +56,97 @@ impl Page {
             }
         }
         cx.notify();
+    }
+
+    fn command(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
+        let mods = &event.keystroke.modifiers;
+        if !mods.platform && !mods.control {
+            return false;
+        }
+        match event.keystroke.key.as_str() {
+            "z" if mods.shift => self.redo(),
+            "z" => self.undo(),
+            "y" => self.redo(),
+            "a" => self.select_all(),
+            "c" => self.copy(cx),
+            "x" => self.cut(cx),
+            "v" => self.paste(cx),
+            "s" => self.save(),
+            _ => return false,
+        }
+        true
+    }
+
+    fn undo(&mut self) {
+        if let Some(caret) = self.log.undo(&mut self.buffer) {
+            self.caret = caret;
+            self.anchor = None;
+        }
+    }
+
+    fn redo(&mut self) {
+        if let Some(caret) = self.log.redo(&mut self.buffer) {
+            self.caret = caret;
+            self.anchor = None;
+        }
+    }
+
+    fn select_all(&mut self) {
+        let line_idx = self.buffer.height().saturating_sub(1);
+        self.anchor = Some(Location::default());
+        self.caret = Location {
+            grapheme_idx: self.buffer.grapheme_count(line_idx),
+            line_idx,
+        };
+    }
+
+    fn copy(&self, cx: &mut Context<Self>) {
+        let text = self.selected_text();
+        if text.is_empty() {
+            return;
+        }
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+    }
+
+    fn cut(&mut self, cx: &mut Context<Self>) {
+        self.copy(cx);
+        self.take_selection();
+    }
+
+    fn paste(&mut self, cx: &mut Context<Self>) {
+        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+            return;
+        };
+        if text.is_empty() {
+            return;
+        }
+        self.type_text(&text);
+        self.echo = None;
+    }
+
+    fn save(&mut self) {
+        let result = if self.buffer.is_file_loaded() {
+            self.buffer.save()
+        } else if let Some(path) = self.path.clone() {
+            self.buffer.save_as(&path.to_string_lossy())
+        } else {
+            eprintln!("yonro: no file to save");
+            return;
+        };
+        if let Err(err) = result {
+            eprintln!("yonro: could not save ({err})");
+        }
+    }
+
+    fn selected_text(&self) -> String {
+        let (start, end, _) = self.selection_utf16();
+        if start == end {
+            return String::new();
+        }
+        let units: Vec<u16> = self.buffer.text().encode_utf16().collect();
+        let end = end.min(units.len());
+        let start = start.min(end);
+        String::from_utf16(&units[start..end]).unwrap_or_default()
     }
 
     fn place(&mut self, next: Location, shift: bool) {

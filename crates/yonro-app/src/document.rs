@@ -70,8 +70,9 @@ impl Render for Page {
         let focus = self.focus.clone();
         let entity = cx.entity();
         let (_row, col) = location_to_point(&self.buffer, COLUMNS, caret);
+        let mark = if self.buffer.is_dirty() { "●  " } else { "" };
         let status = format!(
-            "Ln {}  Col {}",
+            "{mark}Ln {}  Col {}",
             caret.line_idx.saturating_add(1),
             col.saturating_add(1)
         );
