@@ -156,6 +156,63 @@ fn grapheme_at_column(buffer: &Buffer, row: &VisualRow, column: ColIdx) -> usize
     grapheme_idx
 }
 
+/// UTF-16 code-unit offset of a caret. The platform speaks UTF-16; the rope does not.
+#[must_use]
+pub fn location_to_utf16(buffer: &Buffer, at: Location) -> usize {
+    let mut units = 0usize;
+    let height = buffer.height();
+    let line_idx = at.line_idx.min(height.saturating_sub(1));
+    for index in 0..line_idx {
+        if let Some(line) = buffer.get_line(index) {
+            units = units.saturating_add(line.encode_utf16().count());
+        }
+        units = units.saturating_add(1);
+    }
+    if let Some(line) = buffer.get_line(line_idx) {
+        let prefix: String = line.graphemes(true).take(at.grapheme_idx).collect();
+        units = units.saturating_add(prefix.encode_utf16().count());
+    }
+    units
+}
+
+/// Caret for a UTF-16 offset. A multi-unit grapheme is not split.
+#[must_use]
+pub fn utf16_to_location(buffer: &Buffer, mut index: usize) -> Location {
+    let height = buffer.height().max(1);
+    for line_idx in 0..height {
+        let Some(line) = buffer.get_line(line_idx) else {
+            return Location::default();
+        };
+        let mut grapheme_idx = 0usize;
+        for grapheme in line.graphemes(true) {
+            let units = grapheme.encode_utf16().count();
+            if index < units {
+                return Location {
+                    grapheme_idx,
+                    line_idx,
+                };
+            }
+            index = index.saturating_sub(units);
+            grapheme_idx = grapheme_idx.saturating_add(1);
+        }
+        if line_idx.saturating_add(1) < height {
+            if index == 0 {
+                return Location {
+                    grapheme_idx,
+                    line_idx,
+                };
+            }
+            index = index.saturating_sub(1);
+        } else {
+            return Location {
+                grapheme_idx,
+                line_idx,
+            };
+        }
+    }
+    Location::default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,5 +259,14 @@ mod tests {
         let (start, end) = word_bounds_at(&buffer, loc(0, 1));
         assert_eq!(start.grapheme_idx, 0);
         assert_eq!(end.grapheme_idx, 5);
+    }
+
+    #[test]
+    fn emoji_is_one_grapheme_and_two_utf16_units() {
+        let mut buffer = Buffer::default();
+        buffer.insert_str(loc(0, 0), "a😀b");
+        assert_eq!(location_to_utf16(&buffer, loc(0, 1)), 1);
+        assert_eq!(location_to_utf16(&buffer, loc(0, 2)), 3);
+        assert_eq!(utf16_to_location(&buffer, 2).grapheme_idx, 1);
     }
 }

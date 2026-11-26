@@ -8,3 +8,5 @@ pub const PAPER: u32 = 0x2c26_1fff;
 pub const INK: u32 = 0xf3e6_d0ff;
 /// Quiet hint.
 pub const QUIET: u32 = 0xa898_80ff;
+/// Selection wash.
+pub const WASH: u32 = 0x5c4a_32ff;

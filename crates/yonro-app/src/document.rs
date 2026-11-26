@@ -4,14 +4,16 @@ use std::path::{Path, PathBuf};
 
 use gpui::prelude::*;
 use gpui::{
-    canvas, div, fill, font, point, px, rgb, size, App, Bounds, Context, IntoElement, Pixels,
-    Point, Render, SharedString, TextRun, Window,
+    canvas, div, fill, font, point, px, rgb, size, App, Bounds, Context, ElementInputHandler,
+    FocusHandle, IntoElement, Pixels, Point, Render, SharedString, TextRun, Window,
 };
-use yonro_core::{grapheme_byte, prelude::Location, row_text, visual_rows, Buffer};
+use yonro_core::{
+    grapheme_byte, location_to_point, prelude::Location, row_text, visual_rows, Buffer, EditLog,
+};
 
-use crate::theme::{DESK, INK, PAPER, QUIET};
+use crate::theme::{DESK, INK, PAPER, QUIET, WASH};
 
-const COLUMNS: usize = 70;
+pub(crate) const COLUMNS: usize = 70;
 const FONT_PX: f32 = 20.0;
 const LINE_PX: f32 = 34.0;
 
@@ -19,33 +21,57 @@ struct PaintedRow {
     text: String,
     line_idx: usize,
     start: usize,
+    end: usize,
 }
 
 pub struct Page {
-    buffer: Buffer,
+    pub(crate) buffer: Buffer,
     /// Scene path, used when the page learns to save.
     #[allow(dead_code)]
-    path: Option<PathBuf>,
-    caret: Location,
+    pub(crate) path: Option<PathBuf>,
+    pub(crate) caret: Location,
+    pub(crate) anchor: Option<Location>,
+    pub(crate) log: EditLog,
+    pub(crate) focus: FocusHandle,
+    /// Text just inserted, so a key and the input handler do not type it twice.
+    pub(crate) echo: Option<String>,
+    pub(crate) marked: Option<(Location, Location)>,
+    pub(crate) origin: Point<Pixels>,
 }
 
 impl Page {
     /// Open a scene file, or an empty page when `path` is missing.
-    pub fn open(path: Option<PathBuf>) -> Self {
+    pub fn open(path: Option<PathBuf>, cx: &mut Context<Self>) -> Self {
         let (buffer, path) = load(path);
         Self {
             buffer,
             path,
             caret: Location::default(),
+            anchor: None,
+            log: EditLog::new(),
+            focus: cx.focus_handle(),
+            echo: None,
+            marked: None,
+            origin: point(px(0.0), px(0.0)),
         }
     }
 }
 
 impl Render for Page {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.echo = None;
         let rows = painted_rows(&self.buffer);
         let empty = self.buffer.is_empty();
         let caret = self.caret;
+        let anchor = self.anchor;
+        let focus = self.focus.clone();
+        let entity = cx.entity();
+        let (_row, col) = location_to_point(&self.buffer, COLUMNS, caret);
+        let status = format!(
+            "Ln {}  Col {}",
+            caret.line_idx.saturating_add(1),
+            col.saturating_add(1)
+        );
         let mut height = px(0.0);
         for _ in 0..rows.len().max(1) {
             height += px(LINE_PX);
@@ -54,25 +80,54 @@ impl Render for Page {
             .size_full()
             .bg(rgb(DESK))
             .flex()
-            .justify_center()
+            .flex_col()
+            .child(
+                div().flex_1().flex().justify_center().child(
+                    div()
+                        .id("sheet")
+                        .track_focus(&self.focus)
+                        .on_key_down(cx.listener(Page::on_key))
+                        .w(px(760.0))
+                        .h_full()
+                        .bg(rgb(PAPER))
+                        .overflow_y_scroll()
+                        .p_8()
+                        .child(
+                            canvas(
+                                move |_bounds, _window, _cx| (rows, empty, caret, anchor),
+                                move |bounds, (rows, empty, caret, anchor), window, cx| {
+                                    entity.update(cx, |page, _cx| page.origin = bounds.origin);
+                                    window.handle_input(
+                                        &focus,
+                                        ElementInputHandler::new(bounds, entity.clone()),
+                                        cx,
+                                    );
+                                    paint_page(
+                                        bounds.origin,
+                                        &rows,
+                                        empty,
+                                        caret,
+                                        anchor,
+                                        window,
+                                        cx,
+                                    );
+                                },
+                            )
+                            .w_full()
+                            .h(height),
+                        ),
+                ),
+            )
             .child(
                 div()
-                    .id("sheet")
-                    .w(px(760.0))
-                    .h_full()
-                    .bg(rgb(PAPER))
-                    .overflow_y_scroll()
-                    .p_8()
-                    .child(
-                        canvas(
-                            move |_bounds, _window, _cx| (rows, empty, caret),
-                            move |bounds, (rows, empty, caret), window, cx| {
-                                paint_page(bounds.origin, &rows, empty, caret, window, cx);
-                            },
-                        )
-                        .w_full()
-                        .h(height),
-                    ),
+                    .h(px(28.0))
+                    .px(px(16.0))
+                    .flex()
+                    .items_center()
+                    .text_sm()
+                    .font(font("Menlo"))
+                    .text_color(rgb(QUIET))
+                    .child(SharedString::from(status)),
             )
     }
 }
@@ -82,18 +137,25 @@ fn paint_page(
     rows: &[PaintedRow],
     empty: bool,
     caret: Location,
+    anchor: Option<Location>,
     window: &mut Window,
     cx: &mut App,
 ) {
     let face = font("Georgia");
     let font_size = px(FONT_PX);
     let line_height = px(LINE_PX);
+    let style = PaintStyle {
+        face: face.clone(),
+        color: rgb(INK).into(),
+        font_size,
+        line_height,
+    };
     if empty {
-        paint_line(
+        let _hint = shape_line(
             origin,
             "start the draft here.",
             &PaintStyle {
-                face: face.clone(),
+                face,
                 color: rgb(QUIET).into(),
                 font_size,
                 line_height,
@@ -101,30 +163,35 @@ fn paint_page(
             window,
             cx,
         );
+        window.paint_quad(fill(
+            Bounds {
+                origin,
+                size: size(px(1.0), px(LINE_PX - 6.0)),
+            },
+            rgb(INK),
+        ));
+        return;
     }
+    let selection = anchor.and_then(|mark| ordered_span(mark, caret));
     let mut y = px(0.0);
-    for row in rows {
-        if empty {
-            break;
-        }
+    for (index, row) in rows.iter().enumerate() {
         let mut at = origin;
         at.y += y;
-        let shaped = paint_line(
-            at,
-            &row.text,
-            &PaintStyle {
-                face: face.clone(),
-                color: rgb(INK).into(),
-                font_size,
-                line_height,
-            },
-            window,
-            cx,
-        );
-        if row.line_idx == caret.line_idx && caret.grapheme_idx >= row.start {
+        let shaped = shape_line(at, &row.text, &style, window, cx);
+        if let Some((start, end)) = selection {
+            paint_wash(origin.x, at.y, row, start, end, &shaped, window);
+        }
+        let last_of_line = rows
+            .get(index.saturating_add(1))
+            .is_none_or(|next| next.line_idx != row.line_idx);
+        if caret_on_row(row, caret, last_of_line) {
             let local = caret.grapheme_idx.saturating_sub(row.start);
             let byte = grapheme_byte_in_row(&row.text, local);
-            let x = shaped.x_for_index(byte);
+            let x = if row.text.is_empty() {
+                px(0.0)
+            } else {
+                shaped.x_for_index(byte)
+            };
             window.paint_quad(fill(
                 Bounds {
                     origin: point(origin.x + x, at.y),
@@ -135,15 +202,76 @@ fn paint_page(
         }
         y += line_height;
     }
-    if empty {
-        window.paint_quad(fill(
-            Bounds {
-                origin,
-                size: size(px(1.0), px(LINE_PX - 6.0)),
-            },
-            rgb(INK),
-        ));
+}
+
+fn caret_on_row(row: &PaintedRow, caret: Location, last_of_line: bool) -> bool {
+    if row.line_idx != caret.line_idx || caret.grapheme_idx < row.start {
+        return false;
     }
+    caret.grapheme_idx < row.end || (caret.grapheme_idx == row.end && last_of_line)
+}
+
+fn ordered_span(a: Location, b: Location) -> Option<(Location, Location)> {
+    if a.line_idx == b.line_idx && a.grapheme_idx == b.grapheme_idx {
+        return None;
+    }
+    if a.line_idx < b.line_idx || (a.line_idx == b.line_idx && a.grapheme_idx < b.grapheme_idx) {
+        Some((a, b))
+    } else {
+        Some((b, a))
+    }
+}
+
+fn paint_wash(
+    x0: Pixels,
+    y: Pixels,
+    row: &PaintedRow,
+    start: Location,
+    end: Location,
+    shaped: &gpui::ShapedLine,
+    window: &mut Window,
+) {
+    let Some((from, to)) = row_overlap(row, start, end) else {
+        return;
+    };
+    let left = if row.text.is_empty() {
+        px(0.0)
+    } else {
+        shaped.x_for_index(grapheme_byte_in_row(&row.text, from))
+    };
+    let right = if row.text.is_empty() {
+        px(8.0)
+    } else {
+        shaped.x_for_index(grapheme_byte_in_row(&row.text, to))
+    };
+    let width = if right > left { right - left } else { px(8.0) };
+    window.paint_quad(fill(
+        Bounds {
+            origin: point(x0 + left, y),
+            size: size(width, px(LINE_PX - 6.0)),
+        },
+        rgb(WASH),
+    ));
+}
+
+fn row_overlap(row: &PaintedRow, start: Location, end: Location) -> Option<(usize, usize)> {
+    if row.line_idx < start.line_idx || row.line_idx > end.line_idx {
+        return None;
+    }
+    let from = if row.line_idx == start.line_idx {
+        start.grapheme_idx.max(row.start)
+    } else {
+        row.start
+    };
+    let to = if row.line_idx == end.line_idx {
+        end.grapheme_idx.min(row.end)
+    } else {
+        row.end
+    };
+    if from >= to && row.start != row.end {
+        return None;
+    }
+    Some((from.saturating_sub(row.start), to.saturating_sub(row.start)))
 }
 
 struct PaintStyle {
@@ -153,7 +281,7 @@ struct PaintStyle {
     line_height: Pixels,
 }
 
-fn paint_line(
+fn shape_line(
     origin: Point<Pixels>,
     text: &str,
     style: &PaintStyle,
@@ -192,6 +320,7 @@ fn painted_rows(buffer: &Buffer) -> Vec<PaintedRow> {
                 text,
                 line_idx: row.line_idx,
                 start: row.start,
+                end: row.end,
             }
         })
         .collect()

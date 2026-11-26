@@ -3,6 +3,7 @@
 //! GPUI is the window and the shaper. `yonro-core` owns the rope.
 
 mod document;
+mod keys;
 mod theme;
 
 use std::path::PathBuf;
@@ -20,7 +21,11 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_window, cx| cx.new(|_cx| Page::open(path)),
+            |window, cx| {
+                let page = cx.new(|cx| Page::open(path, cx));
+                page.update(cx, |page, _cx| page.focus.focus(window));
+                page
+            },
         );
         if opened.is_err() {
             eprintln!("yonro: could not open the window");
