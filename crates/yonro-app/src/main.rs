@@ -4,6 +4,7 @@
 
 mod document;
 mod keys;
+mod mouse;
 mod theme;
 
 use std::path::PathBuf;

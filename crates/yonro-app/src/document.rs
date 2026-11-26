@@ -17,11 +17,12 @@ pub(crate) const COLUMNS: usize = 70;
 const FONT_PX: f32 = 20.0;
 const LINE_PX: f32 = 34.0;
 
-struct PaintedRow {
-    text: String,
-    line_idx: usize,
-    start: usize,
-    end: usize,
+#[derive(Clone)]
+pub(crate) struct PaintedRow {
+    pub(crate) text: String,
+    pub(crate) line_idx: usize,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
 pub struct Page {
@@ -37,6 +38,7 @@ pub struct Page {
     pub(crate) echo: Option<String>,
     pub(crate) marked: Option<(Location, Location)>,
     pub(crate) origin: Point<Pixels>,
+    pub(crate) dragging: bool,
 }
 
 impl Page {
@@ -53,6 +55,7 @@ impl Page {
             echo: None,
             marked: None,
             origin: point(px(0.0), px(0.0)),
+            dragging: false,
         }
     }
 }
@@ -96,7 +99,7 @@ impl Render for Page {
                             canvas(
                                 move |_bounds, _window, _cx| (rows, empty, caret, anchor),
                                 move |bounds, (rows, empty, caret, anchor), window, cx| {
-                                    entity.update(cx, |page, _cx| page.origin = bounds.origin);
+                                    watch_pointer(window, bounds, &rows, entity.clone());
                                     window.handle_input(
                                         &focus,
                                         ElementInputHandler::new(bounds, entity.clone()),
@@ -309,6 +312,150 @@ fn shape_line(
 
 fn grapheme_byte_in_row(text: &str, grapheme_idx: usize) -> usize {
     grapheme_byte(text, grapheme_idx)
+}
+
+pub(crate) fn location_at(
+    window: &mut Window,
+    rows: &[PaintedRow],
+    origin: Point<Pixels>,
+    position: Point<Pixels>,
+) -> (Location, usize) {
+    if rows.is_empty() {
+        return (Location::default(), 0);
+    }
+    let row_index = row_at_y(origin.y, position.y, rows.len());
+    let Some(row) = rows.get(row_index) else {
+        return (Location::default(), 0);
+    };
+    if row.text.is_empty() {
+        return (
+            Location {
+                grapheme_idx: row.start,
+                line_idx: row.line_idx,
+            },
+            row_index,
+        );
+    }
+    let style = PaintStyle {
+        face: font("Georgia"),
+        color: rgb(INK).into(),
+        font_size: px(FONT_PX),
+        line_height: px(LINE_PX),
+    };
+    let shaped = layout_line(&row.text, &style, window);
+    let x = if position.x > origin.x {
+        position.x - origin.x
+    } else {
+        px(0.0)
+    };
+    let byte = shaped.closest_index_for_x(x);
+    (
+        Location {
+            grapheme_idx: row.start.saturating_add(grapheme_for_byte(&row.text, byte)),
+            line_idx: row.line_idx,
+        },
+        row_index,
+    )
+}
+
+fn layout_line(text: &str, style: &PaintStyle, window: &mut Window) -> gpui::ShapedLine {
+    let run = TextRun {
+        len: text.len(),
+        font: style.face.clone(),
+        color: style.color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    window.text_system().shape_line(
+        SharedString::from(text.to_owned()),
+        style.font_size,
+        &[run],
+        None,
+    )
+}
+
+fn grapheme_for_byte(text: &str, byte: usize) -> usize {
+    let mut index = 0usize;
+    loop {
+        if grapheme_byte(text, index) >= byte {
+            return index;
+        }
+        index = index.saturating_add(1);
+        if index > text.len() {
+            return index;
+        }
+    }
+}
+
+fn row_at_y(origin_y: Pixels, y: Pixels, count: usize) -> usize {
+    if y <= origin_y || count == 0 {
+        return 0;
+    }
+    let mut walked = origin_y;
+    let mut row = 0usize;
+    let step = px(LINE_PX);
+    while row.saturating_add(1) < count && walked + step <= y {
+        walked += step;
+        row = row.saturating_add(1);
+    }
+    row
+}
+
+fn watch_pointer(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    rows: &[PaintedRow],
+    entity: gpui::Entity<Page>,
+) {
+    let rows = rows.to_vec();
+    let origin = bounds.origin;
+    window.on_mouse_event({
+        let rows = rows.clone();
+        let entity = entity.clone();
+        move |event: &gpui::MouseDownEvent, phase, window, cx| {
+            if phase != gpui::DispatchPhase::Bubble || event.button != gpui::MouseButton::Left {
+                return;
+            }
+            if !inside(bounds, event.position) {
+                return;
+            }
+            entity.update(cx, |page, cx| {
+                page.mouse_down(event, &rows, origin, window, cx);
+            });
+        }
+    });
+    window.on_mouse_event({
+        let rows = rows.clone();
+        let entity = entity.clone();
+        move |event: &gpui::MouseMoveEvent, phase, window, cx| {
+            if phase != gpui::DispatchPhase::Bubble {
+                return;
+            }
+            entity.update(cx, |page, cx| {
+                if !page.dragging && !inside(bounds, event.position) {
+                    return;
+                }
+                page.mouse_move(&rows, origin, event.position, window, cx);
+            });
+        }
+    });
+    window.on_mouse_event({
+        let entity = entity.clone();
+        move |event: &gpui::MouseUpEvent, phase, _window, cx| {
+            if phase != gpui::DispatchPhase::Bubble || event.button != gpui::MouseButton::Left {
+                return;
+            }
+            entity.update(cx, |page, cx| page.mouse_up(cx));
+        }
+    });
+}
+
+fn inside(bounds: Bounds<Pixels>, position: Point<Pixels>) -> bool {
+    position.x >= bounds.origin.x
+        && position.y >= bounds.origin.y
+        && position.x <= bounds.origin.x + bounds.size.width
+        && position.y <= bounds.origin.y + bounds.size.height
 }
 
 fn painted_rows(buffer: &Buffer) -> Vec<PaintedRow> {
