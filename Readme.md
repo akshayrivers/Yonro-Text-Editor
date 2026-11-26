@@ -4,8 +4,8 @@
 
 Yonro is a **prototype** novel-writing studio: one headless narrative engine
 (`yonro-core`) with two frontends over the same workspace on disk — a terminal
-UI (`yonro-tui`) for distraction-free drafting, and a desktop app (`yonro-gui`,
-Tauri v2) for outline, relationship graph, timeline, and lore. It started life
+UI (`yonro-tui`) for distraction-free drafting, and a desktop page (`yonro-app`)
+for the manuscript. It started life
 as a Hecto-tutorial terminal editor; the manuscript, lore, graph, and session
 features are what it is now. The author is writing a novel inside it.
 
@@ -24,9 +24,8 @@ runs find, toggles zen mode (`F11`), and quits. Recorded with
 ### desktop — write, outline, graph, timeline, lore
 ![gui demo](assets/gui.gif)
 
-Screen capture of `cargo run -p yonro-gui -- <seeded workspace>`, cycling the
-five views over the same sample novel (30 entities, so the graph stays
-readable). Views are driven in order: Write, Outline, Graph, Timeline, Lore.
+Screen capture of the earlier desktop studio on a seeded sample novel. The
+current desktop page is `cargo run -p yonro-app -- <workspace_dir>`.
 
 
 ## what each crate does
@@ -52,15 +51,10 @@ lore sheets, find, zen/typewriter mode, live word counts, mouse support, split
 and floating panes with a command bar, and an async plugin runtime that hosts
 the sidebars without blocking key input.
 
-### `yonro-gui` — the desktop frontend (Tauri v2)
-The same core and the same files, behind five views: **Write**
-(drafting with `@mention` autocomplete), **Outline** (manuscript table plus
-alternate outlines), **Graph** (inferred relationships, custom canvases,
-lenses), **Timeline** (scene order plus continuity notes), and **Lore**
-(entity sheets, aliases, backlinks) — plus command palette, inspector,
-session bar, and export. Only `crates/yonro-gui/ui/core.js` touches
-`window.__TAURI__`; the rest is dependency-free static JS (no npm, no
-bundler, no framework).
+### `yonro-app` — the desktop page
+A native window over the same core and the same files. The page is a centered
+sheet: caret, selection, marks, and a format sidecar. Graph, timeline, and lore
+stay in core; those desks say they are not on the page yet.
 
 
 ## on-disk format
@@ -78,8 +72,7 @@ fields. Missing or corrupt JSON falls back to Untitled/empty — never a crash.
 
 ## quick start
 
-Requirements: stable Rust. The desktop app on Linux also needs the
-WebKitGTK stack (see `.github/workflows/rust.yml`).
+Requirements: stable Rust.
 
 ```bash
 git clone https://github.com/akshayrivers/Text_Editor.git
@@ -88,8 +81,8 @@ cd Text_Editor
 # terminal editor (reads the .yonro workspace in <cwd>)
 cargo run -p yonro-tui
 
-# desktop studio (paths resolve under your home folder)
-cargo run -p yonro-gui -- <workspace_dir>
+# desktop page
+cargo run -p yonro-app -- <workspace_dir>
 
 # sample novel (3 acts, 36 scenes, @mentions) for trying the views/graph
 cargo run -p yonro-core --example seed -- /tmp/y --entities 250
@@ -121,7 +114,7 @@ lore sheet, `Esc` dismisses). Splits also resize by dragging dividers.
 graph TD
     Core[yonro-core: manuscript, lore, graph, timeline, search, export, sessions]
     TUI[yonro-tui: crossterm loop, sidebars, tabs, panes, plugin runtime]
-    GUI[yonro-gui: Tauri commands + static ui, five views]
+    GUI[yonro-app: native page]
     Disk[.yonro JSON + scene .md files]
     Core --- Disk
     TUI -->|calls| Core

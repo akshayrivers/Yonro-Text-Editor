@@ -10,7 +10,7 @@
 //! `yonro-core`: headless narrative text engine.
 //!
 //! Zero UI dependencies: no `crossterm`, no terminal, no rendering.
-//! Frontends (`yonro-tui`, future `yonro-gui`) are thin clients over this API.
+//! Frontends (`yonro-tui`, `yonro-app`) are thin clients over this API.
 
 pub mod alt_outlines;
 pub mod annotatedstring;
