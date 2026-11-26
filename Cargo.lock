@@ -9516,6 +9516,7 @@ name = "yonro-app"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "yonro-core",
 ]
 
 [[package]]

@@ -49,6 +49,19 @@ pub fn visual_rows(buffer: &Buffer, columns: ColIdx) -> Vec<VisualRow> {
     rows
 }
 
+/// The words of one visual row, graphemes `[start, end)`.
+#[must_use]
+pub fn row_text(buffer: &Buffer, row: &VisualRow) -> String {
+    buffer
+        .get_line(row.line_idx)
+        .map_or_else(String::new, |line| {
+            line.graphemes(true)
+                .skip(row.start)
+                .take(row.end.saturating_sub(row.start))
+                .collect()
+        })
+}
+
 /// `(row index, display column within that row)` for a caret.
 #[must_use]
 pub fn location_to_point(buffer: &Buffer, columns: ColIdx, at: Location) -> (usize, ColIdx) {
@@ -56,9 +69,7 @@ pub fn location_to_point(buffer: &Buffer, columns: ColIdx, at: Location) -> (usi
     let row_index = rows
         .iter()
         .position(|row| {
-            row.line_idx == at.line_idx
-                && at.grapheme_idx >= row.start
-                && at.grapheme_idx < row.end
+            row.line_idx == at.line_idx && at.grapheme_idx >= row.start && at.grapheme_idx < row.end
         })
         .or_else(|| rows.iter().rposition(|row| row.line_idx == at.line_idx))
         .unwrap_or(0);
@@ -119,6 +130,14 @@ pub fn word_bounds_at(buffer: &Buffer, at: Location) -> (Location, Location) {
         grapheme_at = next;
     }
     (at, at)
+}
+
+/// Byte offset of grapheme `index` in `text`, or `text.len()` past the end.
+#[must_use]
+pub fn grapheme_byte(text: &str, index: usize) -> usize {
+    text.grapheme_indices(true)
+        .nth(index)
+        .map_or(text.len(), |(byte, _)| byte)
 }
 
 fn grapheme_at_column(buffer: &Buffer, row: &VisualRow, column: ColIdx) -> usize {
