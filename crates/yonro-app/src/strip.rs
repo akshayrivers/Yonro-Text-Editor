@@ -163,6 +163,95 @@ impl Page {
         }
     }
 
+    pub(crate) fn use_painter(&mut self) {
+        let (start, end) = self.selected_flats();
+        if self.painter.is_empty() || start == end {
+            self.painter = self.marks_covering(start, end);
+            return;
+        }
+        self.log.note_format(self.caret);
+        for kind in self.painter.clone() {
+            self.log.format_mut().add_mark(start, end, kind);
+        }
+        self.painter.clear();
+    }
+
+    pub(crate) fn open_note(&mut self, window: &mut gpui::Window) {
+        let (start, end) = self.selected_flats();
+        if start == end {
+            return;
+        }
+        self.note_open = true;
+        self.note_draft.clear();
+        self.note_focus.focus(window);
+    }
+
+    pub(crate) fn on_note_key(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let mods = &event.keystroke.modifiers;
+        if mods.platform || mods.control {
+            return;
+        }
+        match event.keystroke.key.as_str() {
+            "escape" => {
+                self.note_open = false;
+                self.focus.focus(window);
+            }
+            "enter" => self.commit_note(window),
+            "backspace" => {
+                let mut chars: Vec<char> = self.note_draft.chars().collect();
+                chars.pop();
+                self.note_draft = chars.into_iter().collect();
+            }
+            _ => {
+                if let Some(text) = event.keystroke.key_char.as_deref() {
+                    if !text.is_empty() && text.chars().all(|ch| !ch.is_control()) {
+                        self.note_draft.push_str(text);
+                    }
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn commit_note(&mut self, window: &mut gpui::Window) {
+        let (start, end) = self.selected_flats();
+        if start < end && !self.note_draft.is_empty() {
+            self.log.note_format(self.caret);
+            self.log
+                .format_mut()
+                .set_note(start, end, self.note_draft.clone());
+        }
+        self.note_open = false;
+        self.focus.focus(window);
+    }
+
+    fn marks_covering(&self, start: usize, end: usize) -> Vec<yonro_core::MarkKind> {
+        let end = if start == end {
+            start.saturating_add(1)
+        } else {
+            end
+        };
+        let mut kinds = Vec::new();
+        for mark in self.log.format().marks() {
+            if mark.end <= start || mark.start >= end {
+                continue;
+            }
+            if kinds
+                .iter()
+                .any(|kind| std::mem::discriminant(kind) == std::mem::discriminant(&mark.kind))
+            {
+                continue;
+            }
+            kinds.push(mark.kind.clone());
+        }
+        kinds
+    }
+
     fn caret_para(&self) -> Paragraph {
         paragraph_on(self.log.format(), self.caret.line_idx)
     }

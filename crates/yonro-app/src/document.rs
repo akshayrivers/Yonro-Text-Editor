@@ -26,6 +26,7 @@ pub(crate) struct InkSpan {
     pub(crate) strike: bool,
     pub(crate) highlight: bool,
     pub(crate) accent: bool,
+    pub(crate) wavy: bool,
 }
 
 #[derive(Clone)]
@@ -60,6 +61,10 @@ pub struct Page {
     pub(crate) origin: Point<Pixels>,
     pub(crate) dragging: bool,
     pub(crate) sticky: Vec<yonro_core::MarkKind>,
+    pub(crate) painter: Vec<yonro_core::MarkKind>,
+    pub(crate) note_open: bool,
+    pub(crate) note_draft: String,
+    pub(crate) note_focus: FocusHandle,
     pub(crate) lore: yonro_core::LoreBook,
     pub(crate) find_open: bool,
     pub(crate) find_query: String,
@@ -90,6 +95,10 @@ impl Page {
             origin: point(px(0.0), px(0.0)),
             dragging: false,
             sticky: Vec::new(),
+            painter: Vec::new(),
+            note_open: false,
+            note_draft: String::new(),
+            note_focus: cx.focus_handle(),
             lore,
             find_open: false,
             find_query: String::new(),
@@ -131,6 +140,14 @@ impl Render for Page {
         let find_query = self.find_query.clone();
         let replace_query = self.replace_query.clone();
         let replace_on = self.replace_on;
+        let note_label = self
+            .log
+            .format()
+            .notes()
+            .first()
+            .map(|note| note.text.clone());
+        let note_open = self.note_open;
+        let note_draft = self.note_draft.clone();
         let mention_names = self.mentions.clone();
         let mention_pick = self.mention_pick;
         let mut height = px(0.0);
@@ -146,41 +163,57 @@ impl Render for Page {
             .flex()
             .flex_col()
             .child(
-                div().flex_1().flex().justify_center().child(
-                    div()
-                        .id("sheet")
-                        .track_focus(&self.focus)
-                        .on_key_down(cx.listener(Page::on_key))
-                        .w(px(760.0))
-                        .h_full()
-                        .bg(rgb(PAPER))
-                        .overflow_y_scroll()
-                        .p_8()
-                        .child(
-                            canvas(
-                                move |_bounds, _window, _cx| (rows, empty, caret, anchor),
-                                move |bounds, (rows, empty, caret, anchor), window, cx| {
-                                    watch_pointer(window, bounds, &rows, entity.clone());
-                                    window.handle_input(
-                                        &focus,
-                                        ElementInputHandler::new(bounds, entity.clone()),
-                                        cx,
-                                    );
-                                    paint_page(
-                                        bounds.origin,
-                                        &rows,
-                                        empty,
-                                        caret,
-                                        anchor,
-                                        window,
-                                        cx,
-                                    );
-                                },
-                            )
-                            .w_full()
-                            .h(height),
-                        ),
-                ),
+                div()
+                    .flex_1()
+                    .flex()
+                    .justify_center()
+                    .child(
+                        div()
+                            .id("sheet")
+                            .track_focus(&self.focus)
+                            .on_key_down(cx.listener(Page::on_key))
+                            .w(px(760.0))
+                            .h_full()
+                            .bg(rgb(PAPER))
+                            .overflow_y_scroll()
+                            .p_8()
+                            .child(
+                                canvas(
+                                    move |_bounds, _window, _cx| (rows, empty, caret, anchor),
+                                    move |bounds, (rows, empty, caret, anchor), window, cx| {
+                                        watch_pointer(window, bounds, &rows, entity.clone());
+                                        window.handle_input(
+                                            &focus,
+                                            ElementInputHandler::new(bounds, entity.clone()),
+                                            cx,
+                                        );
+                                        paint_page(
+                                            bounds.origin,
+                                            &rows,
+                                            empty,
+                                            caret,
+                                            anchor,
+                                            window,
+                                            cx,
+                                        );
+                                    },
+                                )
+                                .w_full()
+                                .h(height),
+                            ),
+                    )
+                    .when(note_label.is_some(), |row| {
+                        let text = note_label.clone().unwrap_or_default();
+                        row.child(
+                            div()
+                                .w(px(200.0))
+                                .p_4()
+                                .text_sm()
+                                .font(font("Menlo"))
+                                .text_color(rgb(QUIET))
+                                .child(SharedString::from(text)),
+                        )
+                    }),
             )
             .when(find_open, |sheet| {
                 sheet.child(
@@ -214,6 +247,28 @@ impl Render for Page {
                             .child(SharedString::from(name))
                     }),
                 ))
+            })
+            .when(note_open, |sheet| {
+                let draft = if note_draft.is_empty() {
+                    "note".to_string()
+                } else {
+                    note_draft
+                };
+                sheet.child(
+                    div()
+                        .id("note")
+                        .track_focus(&self.note_focus)
+                        .on_key_down(cx.listener(Page::on_note_key))
+                        .h(px(32.0))
+                        .px(px(16.0))
+                        .flex()
+                        .items_center()
+                        .text_sm()
+                        .font(font("Menlo"))
+                        .text_color(rgb(INK))
+                        .bg(rgb(PAPER))
+                        .child(SharedString::from(draft)),
+                )
             })
             .child(
                 div()
@@ -255,7 +310,8 @@ impl Render for Page {
                         self.strip_on(&yonro_core::MarkKind::Color { swatch: 0 }),
                     ))
                     .child(strip_label(self.face_label(), true))
-                    .child(strip_label(self.spacing_label(), true)),
+                    .child(strip_label(self.spacing_label(), true))
+                    .child(strip_label("paint", !self.painter.is_empty())),
             )
             .child(
                 div()
@@ -520,10 +576,10 @@ fn plain_run(len: usize, style: &PaintStyle, span: &InkSpan) -> TextRun {
         font: face,
         color,
         background_color: span.highlight.then(|| rgb(MARK).into()),
-        underline: span.underline.then(|| gpui::UnderlineStyle {
+        underline: (span.underline || span.wavy).then(|| gpui::UnderlineStyle {
             thickness: px(1.0),
             color: Some(color),
-            wavy: false,
+            wavy: span.wavy,
         }),
         strikethrough: span.strike.then(|| gpui::StrikethroughStyle {
             thickness: px(1.0),
@@ -809,13 +865,20 @@ fn ink_spans(
     let mut spans = Vec::new();
     let mut grapheme = 0usize;
     let mut start_byte = 0usize;
-    let mut current = look(format, row_flat, mentions, 0);
+    let typos = yonro_core::misspelled_bytes(text);
+    let mut current = look(format, row_flat, mentions, &typos, 0);
     loop {
         let byte = grapheme_byte(text, grapheme);
         if byte >= text.len() {
             break;
         }
-        let flags = look(format, row_flat.saturating_add(grapheme), mentions, byte);
+        let flags = look(
+            format,
+            row_flat.saturating_add(grapheme),
+            mentions,
+            &typos,
+            byte,
+        );
         if grapheme > 0 && !same_look(&flags, &current) {
             spans.push(InkSpan {
                 range: start_byte..byte,
@@ -842,12 +905,14 @@ fn look(
     format: &yonro_core::Format,
     flat: usize,
     mentions: &[std::ops::Range<usize>],
+    typos: &[(usize, usize)],
     byte: usize,
 ) -> InkSpan {
     let mut span = InkSpan {
         underline: mentions
             .iter()
             .any(|mention| byte >= mention.start && byte < mention.end),
+        wavy: typos.iter().any(|typo| byte >= typo.0 && byte < typo.1),
         ..InkSpan::default()
     };
     for mark in format.marks() {
@@ -874,6 +939,7 @@ fn same_look(left: &InkSpan, right: &InkSpan) -> bool {
         && left.strike == right.strike
         && left.highlight == right.highlight
         && left.accent == right.accent
+        && left.wavy == right.wavy
 }
 
 fn mention_marks(

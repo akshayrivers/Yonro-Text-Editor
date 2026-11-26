@@ -105,6 +105,8 @@ impl Page {
             "[" => self.indent_lines(true),
             "s" if mods.alt => self.cycle_spacing(),
             "f" if mods.alt => self.cycle_face(),
+            "p" if mods.alt => self.use_painter(),
+            "n" if mods.alt => self.open_note(window),
             "v" => self.paste(cx),
             "s" => self.save(),
             "f" => self.open_find(window),
