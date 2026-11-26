@@ -65,6 +65,15 @@ pub enum EditOp {
         /// Caret to restore.
         caret: Location,
     },
+    /// Every match of `query` became `replacement` in one step.
+    ReplaceAll {
+        /// Match starts, in document order, taken before the edit.
+        hits: Vec<Location>,
+        /// Text that was matched. It does not cross a line.
+        query: String,
+        /// Text written in its place. May be empty.
+        replacement: String,
+    },
 }
 
 /// Undo and redo stacks of [`EditOp`].
@@ -309,6 +318,66 @@ impl EditLog {
         self.undo.push(EditOp::Format { caret });
     }
 
+    /// Replace every match of `query` in one undo step.
+    ///
+    /// Marks shift once for the whole pass. An empty query replaces nothing.
+    pub fn replace_all(&mut self, buffer: &mut Buffer, query: &str, replacement: &str) -> usize {
+        let hits = collect_hits(buffer, query);
+        self.replace_hits(buffer, hits, query, replacement)
+    }
+
+    /// Replace the next match at or after `from`.
+    ///
+    /// Returns the caret just after the new text.
+    pub fn replace_next(
+        &mut self,
+        buffer: &mut Buffer,
+        from: Location,
+        query: &str,
+        replacement: &str,
+    ) -> Option<Location> {
+        let hit = buffer.search_forward(query, from)?;
+        let replacement = normalize_newlines(replacement);
+        self.replace_hits(buffer, vec![hit], query, &replacement);
+        Some(end_after_insert(hit, &replacement))
+    }
+
+    fn replace_hits(
+        &mut self,
+        buffer: &mut Buffer,
+        hits: Vec<Location>,
+        query: &str,
+        replacement: &str,
+    ) -> usize {
+        if query.is_empty() || hits.is_empty() || query == replacement {
+            return 0;
+        }
+        let replacement = normalize_newlines(replacement);
+        let count = hits.len();
+        self.checkpoint();
+        let query_len = flat_len(query);
+        for hit in hits.iter().rev() {
+            let end = Location {
+                grapheme_idx: hit.grapheme_idx.saturating_add(query_len),
+                line_idx: hit.line_idx,
+            };
+            let flat = flat_index(buffer, *hit);
+            delete_span(buffer, *hit, end);
+            self.format
+                .shift_delete(flat, flat.saturating_add(query_len));
+            if !replacement.is_empty() {
+                buffer.insert_str(*hit, &replacement);
+                self.format.shift_insert(flat, flat_len(&replacement));
+            }
+        }
+        self.undo.push(EditOp::ReplaceAll {
+            hits,
+            query: query.to_string(),
+            replacement,
+        });
+        count
+    }
+
     fn checkpoint(&mut self) {
         self.break_burst();
         self.redo.clear();
@@ -365,6 +434,16 @@ fn undo_op(buffer: &mut Buffer, op: &EditOp) -> Location {
             }
         }
         EditOp::Format { caret } => *caret,
+        EditOp::ReplaceAll {
+            hits,
+            query,
+            replacement,
+        } => {
+            for hit in hits {
+                swap_span(buffer, *hit, replacement, query);
+            }
+            hits.first().copied().unwrap_or_default()
+        }
     }
 }
 
@@ -407,11 +486,66 @@ fn redo_op(buffer: &mut Buffer, op: &EditOp) -> Location {
             }
         }
         EditOp::Format { caret } => *caret,
+        EditOp::ReplaceAll {
+            hits,
+            query,
+            replacement,
+        } => {
+            let query_len = flat_len(query);
+            for hit in hits.iter().rev() {
+                let end = Location {
+                    grapheme_idx: hit.grapheme_idx.saturating_add(query_len),
+                    line_idx: hit.line_idx,
+                };
+                delete_span(buffer, *hit, end);
+                if !replacement.is_empty() {
+                    buffer.insert_str(*hit, replacement);
+                }
+            }
+            hits.last()
+                .map(|hit| end_after_insert(*hit, replacement))
+                .unwrap_or_default()
+        }
     }
 }
 
 fn normalize_newlines(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+fn swap_span(buffer: &mut Buffer, at: Location, from: &str, to: &str) {
+    if !from.is_empty() {
+        delete_span(buffer, at, end_after_insert(at, from));
+    }
+    if !to.is_empty() {
+        buffer.insert_str(at, to);
+    }
+}
+
+fn collect_hits(buffer: &Buffer, query: &str) -> Vec<Location> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let step = flat_len(query).max(1);
+    let mut hits = Vec::new();
+    for line_idx in 0..buffer.height() {
+        let Some(line) = buffer.get_line(line_idx) else {
+            continue;
+        };
+        let mut from = 0usize;
+        while let Some(at) = line.search_forward(query, from) {
+            hits.push(Location {
+                grapheme_idx: at,
+                line_idx,
+            });
+            let next = at.saturating_add(step);
+            if next <= from || next >= line.grapheme_count() {
+                break;
+            }
+            from = next;
+        }
+    }
+    hits
 }
 
 fn end_after_insert(start: Location, text: &str) -> Location {
@@ -514,6 +648,30 @@ mod tests {
             grapheme_idx,
             line_idx,
         }
+    }
+
+    #[test]
+    fn replace_all_is_one_undo() {
+        use crate::format::MarkKind;
+
+        let mut buffer = Buffer::default();
+        let mut log = EditLog::new();
+        let t0 = Instant::now();
+        log.insert_text(&mut buffer, loc(0, 0), "cat and cat", t0);
+        log.format_mut().add_mark(0, 3, MarkKind::Bold);
+        let count = log.replace_all(&mut buffer, "cat", "d");
+        assert_eq!(count, 2);
+        assert_eq!(buffer.text().trim_end_matches(['\n', '\r']), "d and d");
+        log.undo(&mut buffer);
+        assert_eq!(buffer.text().trim_end_matches(['\n', '\r']), "cat and cat");
+        assert!(log
+            .format()
+            .marks()
+            .iter()
+            .any(|mark| mark.start == 0 && mark.end == 3 && mark.kind == MarkKind::Bold));
+        assert!(log.can_undo());
+        log.undo(&mut buffer);
+        assert!(buffer.text().trim_end_matches(['\n', '\r']).is_empty());
     }
 
     #[test]

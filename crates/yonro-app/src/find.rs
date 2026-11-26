@@ -16,26 +16,45 @@ impl Page {
     ) {
         let mods = &event.keystroke.modifiers;
         if mods.platform || mods.control {
+            match event.keystroke.key.as_str() {
+                "enter" if mods.shift => self.replace_every(),
+                "enter" => self.replace_one(),
+                _ => {}
+            }
+            cx.notify();
             return;
         }
         match event.keystroke.key.as_str() {
             "escape" => {
                 self.find_open = false;
+                self.replace_on = false;
                 self.focus.focus(window);
             }
+            "tab" => self.replace_on = !self.replace_on,
             "enter" if mods.shift => self.seek(self.anchor.unwrap_or(self.caret), false),
             "enter" => self.seek(self.caret, true),
             "backspace" => {
-                let mut chars: Vec<char> = self.find_query.chars().collect();
+                let query = if self.replace_on {
+                    &mut self.replace_query
+                } else {
+                    &mut self.find_query
+                };
+                let mut chars: Vec<char> = query.chars().collect();
                 chars.pop();
-                self.find_query = chars.into_iter().collect();
-                self.seek(self.find_from, true);
+                *query = chars.into_iter().collect();
+                if !self.replace_on {
+                    self.seek(self.find_from, true);
+                }
             }
             _ => {
                 if let Some(text) = event.keystroke.key_char.as_deref() {
                     if !text.is_empty() && text.chars().all(|ch| !ch.is_control()) {
-                        self.find_query.push_str(text);
-                        self.seek(self.find_from, true);
+                        if self.replace_on {
+                            self.replace_query.push_str(text);
+                        } else {
+                            self.find_query.push_str(text);
+                            self.seek(self.find_from, true);
+                        }
                     }
                 }
             }
@@ -46,7 +65,31 @@ impl Page {
     pub(crate) fn open_find(&mut self, window: &mut Window) {
         self.find_open = true;
         self.find_from = self.caret;
+        self.replace_on = false;
         self.find_focus.focus(window);
+    }
+
+    fn replace_one(&mut self) {
+        let Some(caret) = self.log.replace_next(
+            &mut self.buffer,
+            self.anchor.unwrap_or(self.caret),
+            &self.find_query,
+            &self.replace_query,
+        ) else {
+            return;
+        };
+        self.caret = caret;
+        self.anchor = None;
+    }
+
+    fn replace_every(&mut self) {
+        let count = self
+            .log
+            .replace_all(&mut self.buffer, &self.find_query, &self.replace_query);
+        if count == 0 {
+            return;
+        }
+        self.anchor = None;
     }
 
     pub(crate) fn mention_key(&mut self, event: &KeyDownEvent) -> bool {

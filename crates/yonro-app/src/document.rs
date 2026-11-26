@@ -42,6 +42,7 @@ pub(crate) struct PaintedRow {
     pub(crate) indent: u8,
     pub(crate) hang: bool,
     pub(crate) marker: String,
+    pub(crate) zoom: f32,
 }
 
 pub struct Page {
@@ -62,6 +63,9 @@ pub struct Page {
     pub(crate) lore: yonro_core::LoreBook,
     pub(crate) find_open: bool,
     pub(crate) find_query: String,
+    pub(crate) replace_query: String,
+    pub(crate) replace_on: bool,
+    pub(crate) zoom: f32,
     pub(crate) find_from: Location,
     pub(crate) find_focus: FocusHandle,
     pub(crate) mentions: Vec<String>,
@@ -89,6 +93,9 @@ impl Page {
             lore,
             find_open: false,
             find_query: String::new(),
+            replace_query: String::new(),
+            replace_on: false,
+            zoom: 1.0,
             find_from: Location::default(),
             find_focus: cx.focus_handle(),
             mentions: Vec::new(),
@@ -101,7 +108,7 @@ impl Page {
 impl Render for Page {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.echo = None;
-        let rows = painted_rows(&self.buffer, &self.lore, self.log.format());
+        let rows = painted_rows(&self.buffer, &self.lore, self.log.format(), self.zoom);
         let empty = self.buffer.is_empty();
         let caret = self.caret;
         let anchor = self.anchor;
@@ -109,18 +116,29 @@ impl Render for Page {
         let entity = cx.entity();
         let (_row, col) = location_to_point(&self.buffer, COLUMNS, caret);
         let mark = if self.buffer.is_dirty() { "●  " } else { "" };
+        let percent = (self.zoom * 100.0).round();
+        let zoomed = if (percent - 100.0).abs() > 0.5 {
+            format!("{percent:.0}%  ")
+        } else {
+            String::new()
+        };
         let status = format!(
-            "{mark}Ln {}  Col {}",
+            "{mark}{zoomed}Ln {}  Col {}",
             caret.line_idx.saturating_add(1),
             col.saturating_add(1)
         );
         let find_open = self.find_open;
         let find_query = self.find_query.clone();
+        let replace_query = self.replace_query.clone();
+        let replace_on = self.replace_on;
         let mention_names = self.mentions.clone();
         let mention_pick = self.mention_pick;
         let mut height = px(0.0);
-        for _ in 0..rows.len().max(1) {
-            height += px(LINE_PX);
+        if rows.is_empty() {
+            height = px(LINE_PX);
+        }
+        for row in &rows {
+            height += px(row.line_px);
         }
         div()
             .size_full()
@@ -178,11 +196,11 @@ impl Render for Page {
                         .font(font("Menlo"))
                         .text_color(rgb(INK))
                         .bg(rgb(PAPER))
-                        .child(SharedString::from(if find_query.is_empty() {
-                            "find".to_string()
-                        } else {
-                            find_query
-                        })),
+                        .child(SharedString::from(find_bar(
+                            &find_query,
+                            &replace_query,
+                            replace_on,
+                        ))),
                 )
             })
             .when(!mention_names.is_empty(), |sheet| {
@@ -258,6 +276,20 @@ fn strip_label(label: &'static str, on: bool) -> gpui::Div {
     div().text_color(rgb(color)).child(label)
 }
 
+fn find_bar(query: &str, replacement: &str, replace_on: bool) -> String {
+    let query = if query.is_empty() { "find" } else { query };
+    let replacement = if replacement.is_empty() {
+        "replace"
+    } else {
+        replacement
+    };
+    if replace_on {
+        format!("{query}   /   {replacement}  ·")
+    } else {
+        format!("{query}  ·   /   {replacement}")
+    }
+}
+
 fn paint_page(
     origin: Point<Pixels>,
     rows: &[PaintedRow],
@@ -309,7 +341,7 @@ fn paint_page(
         if !row.marker.is_empty() {
             let mut mark_at = origin;
             mark_at.y += y;
-            mark_at.x += px(f32::from(row.indent) * 24.0);
+            mark_at.x += px(f32::from(row.indent) * 24.0 * row.zoom);
             let _marker = shape_line(mark_at, &row.marker, &[], &style, window, cx);
         }
         let shaped = shape_line(at, &row.text, &row.spans, &style, window, cx);
@@ -601,8 +633,8 @@ fn row_style(row: &PaintedRow) -> PaintStyle {
 }
 
 fn text_dx(row: &PaintedRow, text_width: Pixels) -> Pixels {
-    let left = px(f32::from(row.indent) * 24.0 + if row.hang { 24.0 } else { 0.0 });
-    let sheet = px(700.0);
+    let left = px((f32::from(row.indent) * 24.0 + if row.hang { 24.0 } else { 0.0 }) * row.zoom);
+    let sheet = px(700.0 * row.zoom);
     let room = if sheet > left { sheet - left } else { px(0.0) };
     let extra = if room > text_width {
         room - text_width
@@ -676,6 +708,7 @@ fn painted_rows(
     buffer: &Buffer,
     lore: &yonro_core::LoreBook,
     format: &yonro_core::Format,
+    zoom: f32,
 ) -> Vec<PaintedRow> {
     let mut flat = 0usize;
     let mut previous = None;
@@ -694,6 +727,7 @@ fn painted_rows(
             flat = flat.saturating_add(row_len);
             let para = crate::strip::paragraph_on(format, row.line_idx);
             let (font_px, line_px) = line_metrics(para.style, format.spacing());
+            let zoom = zoom.clamp(0.8, 2.0);
             let hang = para.list != yonro_core::ListKind::None;
             let marker = if first {
                 list_marker(format, row.line_idx, para.list)
@@ -712,12 +746,13 @@ fn painted_rows(
                 end: row.end,
                 spans,
                 face,
-                font_px,
-                line_px,
+                font_px: font_px * zoom,
+                line_px: line_px * zoom,
                 align: para.align,
                 indent: para.indent,
                 hang,
                 marker,
+                zoom,
             }
         })
         .collect()
