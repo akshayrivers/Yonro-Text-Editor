@@ -15,6 +15,7 @@ impl Page {
         cx: &mut Context<Self>,
     ) {
         self.focus.focus(window);
+        self.mentions.clear();
         self.origin = origin;
         let (caret, row_index) = location_at(window, rows, origin, event.position);
         match event.click_count {

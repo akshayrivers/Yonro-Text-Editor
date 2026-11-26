@@ -22,11 +22,15 @@ impl Page {
     pub(crate) fn on_key(
         &mut self,
         event: &KeyDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let mods = &event.keystroke.modifiers;
-        if self.command(event, cx) {
+        if self.command(event, window, cx) {
+            cx.notify();
+            return;
+        }
+        if self.mention_key(event) {
             cx.notify();
             return;
         }
@@ -55,10 +59,16 @@ impl Page {
                 }
             }
         }
+        self.refresh_mentions();
         cx.notify();
     }
 
-    fn command(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
+    fn command(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let mods = &event.keystroke.modifiers;
         if !mods.platform && !mods.control {
             return false;
@@ -72,6 +82,7 @@ impl Page {
             "x" => self.cut(cx),
             "v" => self.paste(cx),
             "s" => self.save(),
+            "f" => self.open_find(window),
             _ => return false,
         }
         true
@@ -158,6 +169,7 @@ impl Page {
             self.anchor = None;
         }
         self.caret = next;
+        self.refresh_mentions();
     }
 
     fn step_left(&self, word: bool) -> Location {
@@ -282,6 +294,7 @@ impl Page {
         };
         self.anchor = None;
         self.echo = Some(text.to_string());
+        self.refresh_mentions();
     }
 
     fn take_selection(&mut self) -> bool {

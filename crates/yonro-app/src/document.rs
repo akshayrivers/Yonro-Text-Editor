@@ -23,6 +23,7 @@ pub(crate) struct PaintedRow {
     pub(crate) line_idx: usize,
     pub(crate) start: usize,
     pub(crate) end: usize,
+    pub(crate) marks: Vec<std::ops::Range<usize>>,
 }
 
 pub struct Page {
@@ -39,11 +40,20 @@ pub struct Page {
     pub(crate) marked: Option<(Location, Location)>,
     pub(crate) origin: Point<Pixels>,
     pub(crate) dragging: bool,
+    pub(crate) lore: yonro_core::LoreBook,
+    pub(crate) find_open: bool,
+    pub(crate) find_query: String,
+    pub(crate) find_from: Location,
+    pub(crate) find_focus: FocusHandle,
+    pub(crate) mentions: Vec<String>,
+    pub(crate) mention_at: Option<Location>,
+    pub(crate) mention_pick: usize,
 }
 
 impl Page {
     /// Open a scene file, or an empty page when `path` is missing.
     pub fn open(path: Option<PathBuf>, cx: &mut Context<Self>) -> Self {
+        let lore = lore_for(path.as_deref());
         let (buffer, path) = load(path);
         Self {
             buffer,
@@ -56,6 +66,14 @@ impl Page {
             marked: None,
             origin: point(px(0.0), px(0.0)),
             dragging: false,
+            lore,
+            find_open: false,
+            find_query: String::new(),
+            find_from: Location::default(),
+            find_focus: cx.focus_handle(),
+            mentions: Vec::new(),
+            mention_at: None,
+            mention_pick: 0,
         }
     }
 }
@@ -63,7 +81,7 @@ impl Page {
 impl Render for Page {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.echo = None;
-        let rows = painted_rows(&self.buffer);
+        let rows = painted_rows(&self.buffer, &self.lore);
         let empty = self.buffer.is_empty();
         let caret = self.caret;
         let anchor = self.anchor;
@@ -76,6 +94,10 @@ impl Render for Page {
             caret.line_idx.saturating_add(1),
             col.saturating_add(1)
         );
+        let find_open = self.find_open;
+        let find_query = self.find_query.clone();
+        let mention_names = self.mentions.clone();
+        let mention_pick = self.mention_pick;
         let mut height = px(0.0);
         for _ in 0..rows.len().max(1) {
             height += px(LINE_PX);
@@ -122,6 +144,39 @@ impl Render for Page {
                         ),
                 ),
             )
+            .when(find_open, |sheet| {
+                sheet.child(
+                    div()
+                        .id("find")
+                        .track_focus(&self.find_focus)
+                        .on_key_down(cx.listener(Page::on_find_key))
+                        .h(px(32.0))
+                        .px(px(16.0))
+                        .flex()
+                        .items_center()
+                        .text_sm()
+                        .font(font("Menlo"))
+                        .text_color(rgb(INK))
+                        .bg(rgb(PAPER))
+                        .child(SharedString::from(if find_query.is_empty() {
+                            "find".to_string()
+                        } else {
+                            find_query
+                        })),
+                )
+            })
+            .when(!mention_names.is_empty(), |sheet| {
+                sheet.child(div().flex().flex_col().px(px(16.0)).py(px(4.0)).children(
+                    mention_names.into_iter().enumerate().map(|(index, name)| {
+                        let color = if index == mention_pick { INK } else { QUIET };
+                        div()
+                            .text_sm()
+                            .font(font("Menlo"))
+                            .text_color(rgb(color))
+                            .child(SharedString::from(name))
+                    }),
+                ))
+            })
             .child(
                 div()
                     .h(px(28.0))
@@ -158,6 +213,7 @@ fn paint_page(
         let _hint = shape_line(
             origin,
             "start the draft here.",
+            &[],
             &PaintStyle {
                 face,
                 color: rgb(QUIET).into(),
@@ -181,7 +237,7 @@ fn paint_page(
     for (index, row) in rows.iter().enumerate() {
         let mut at = origin;
         at.y += y;
-        let shaped = shape_line(at, &row.text, &style, window, cx);
+        let shaped = shape_line(at, &row.text, &row.marks, &style, window, cx);
         if let Some((start, end)) = selection {
             paint_wash(origin.x, at.y, row, start, end, &shaped, window);
         }
@@ -288,27 +344,59 @@ struct PaintStyle {
 fn shape_line(
     origin: Point<Pixels>,
     text: &str,
+    marks: &[std::ops::Range<usize>],
     style: &PaintStyle,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::ShapedLine {
     let shown = if text.is_empty() { " " } else { text };
-    let run = TextRun {
-        len: shown.len(),
-        font: style.face.clone(),
-        color: style.color,
-        background_color: None,
-        underline: None,
-        strikethrough: None,
-    };
+    let runs = text_runs(shown, if text.is_empty() { &[] } else { marks }, style);
     let shaped = window.text_system().shape_line(
         SharedString::from(shown.to_owned()),
         style.font_size,
-        &[run],
+        &runs,
         None,
     );
     let _ = shaped.paint(origin, style.line_height, window, cx);
     shaped
+}
+
+fn text_runs(text: &str, marks: &[std::ops::Range<usize>], style: &PaintStyle) -> Vec<TextRun> {
+    let plain = |len: usize, mention: bool| TextRun {
+        len,
+        font: style.face.clone(),
+        color: style.color,
+        background_color: None,
+        underline: mention.then(|| gpui::UnderlineStyle {
+            thickness: px(1.0),
+            color: Some(style.color),
+            wavy: false,
+        }),
+        strikethrough: None,
+    };
+    if marks.is_empty() {
+        return vec![plain(text.len().max(1), false)];
+    }
+    let mut runs = Vec::new();
+    let mut cursor = 0usize;
+    for mark in marks {
+        let start = mark.start.min(text.len());
+        let end = mark.end.min(text.len()).max(start);
+        if start > cursor {
+            runs.push(plain(start.saturating_sub(cursor), false));
+        }
+        if end > start {
+            runs.push(plain(end.saturating_sub(start), true));
+        }
+        cursor = end;
+    }
+    if cursor < text.len() {
+        runs.push(plain(text.len().saturating_sub(cursor), false));
+    }
+    if runs.is_empty() {
+        runs.push(plain(text.len().max(1), false));
+    }
+    runs
 }
 
 fn grapheme_byte_in_row(text: &str, grapheme_idx: usize) -> usize {
@@ -459,19 +547,65 @@ fn inside(bounds: Bounds<Pixels>, position: Point<Pixels>) -> bool {
         && position.y <= bounds.origin.y + bounds.size.height
 }
 
-fn painted_rows(buffer: &Buffer) -> Vec<PaintedRow> {
+fn painted_rows(buffer: &Buffer, lore: &yonro_core::LoreBook) -> Vec<PaintedRow> {
     visual_rows(buffer, COLUMNS)
         .into_iter()
         .map(|row| {
             let text = row_text(buffer, &row);
+            let marks = mention_marks(buffer, lore, &row, &text);
             PaintedRow {
                 text,
                 line_idx: row.line_idx,
                 start: row.start,
                 end: row.end,
+                marks,
             }
         })
         .collect()
+}
+
+fn mention_marks(
+    buffer: &Buffer,
+    lore: &yonro_core::LoreBook,
+    row: &yonro_core::VisualRow,
+    row_text: &str,
+) -> Vec<std::ops::Range<usize>> {
+    let Some(line) = buffer.get_line(row.line_idx) else {
+        return Vec::new();
+    };
+    let mut marks = Vec::new();
+    for mention in lore.parse_mentions(&line) {
+        let start = grapheme_for_byte(&line, mention.byte_range.start);
+        let end = grapheme_for_byte(&line, mention.byte_range.end);
+        if end <= row.start || start >= row.end {
+            continue;
+        }
+        let local_start = start.max(row.start).saturating_sub(row.start);
+        let local_end = end.min(row.end).saturating_sub(row.start);
+        let byte_start = grapheme_byte(row_text, local_start);
+        let byte_end = grapheme_byte(row_text, local_end);
+        if byte_end > byte_start {
+            marks.push(byte_start..byte_end);
+        }
+    }
+    marks
+}
+
+fn lore_for(path: Option<&std::path::Path>) -> yonro_core::LoreBook {
+    let Some(path) = path else {
+        return yonro_core::LoreBook::default();
+    };
+    let root = if path.is_dir() {
+        path.to_path_buf()
+    } else {
+        path.parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_default()
+    };
+    if root.as_os_str().is_empty() {
+        return yonro_core::LoreBook::default();
+    }
+    yonro_core::Project::load(&root).lore
 }
 
 fn load(path: Option<PathBuf>) -> (Buffer, Option<PathBuf>) {

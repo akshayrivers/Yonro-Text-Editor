@@ -3,6 +3,7 @@
 //! GPUI is the window and the shaper. `yonro-core` owns the rope.
 
 mod document;
+mod find;
 mod keys;
 mod mouse;
 mod theme;
