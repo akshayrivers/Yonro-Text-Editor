@@ -17,10 +17,14 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Install desktop build dependencies
-      # yonro-app links GPUI. Linux needs the X11 and Wayland client libraries.
+      # yonro-gui still links WebKitGTK, which needs glib. yonro-app links GPUI,
+      # which needs the X11 and Wayland client libraries.
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential pkg-config libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev
+        sudo apt-get install -y \
+          build-essential curl wget file pkg-config \
+          libssl-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev \
+          libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libfreetype6-dev
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
