@@ -86,12 +86,15 @@ impl Page {
             "u" => self.toggle_kind(yonro_core::MarkKind::Underline),
             "h" if mods.shift => self.toggle_kind(yonro_core::MarkKind::Highlight { swatch: 1 }),
             "e" if mods.shift => self.toggle_kind(yonro_core::MarkKind::Color { swatch: 1 }),
+            "=" if mods.shift => self.zoom_by(0.1),
             "=" => self.toggle_kind(yonro_core::MarkKind::Size { points: 24 }),
             "k" => self.toggle_kind(yonro_core::MarkKind::Link {
                 href: "https://".to_string(),
             }),
             "\\" => self.clear_format(),
             "0" if mods.alt => self.set_style(yonro_core::ParaStyle::Normal),
+            "0" => self.zoom = 1.0,
+            "-" if mods.shift => self.zoom_by(-0.1),
             "1" if mods.alt => self.set_style(yonro_core::ParaStyle::H1),
             "2" if mods.alt => self.set_style(yonro_core::ParaStyle::H2),
             "3" if mods.alt => self.set_style(yonro_core::ParaStyle::H3),
@@ -108,6 +111,10 @@ impl Page {
             _ => return false,
         }
         true
+    }
+
+    fn zoom_by(&mut self, delta: f32) {
+        self.zoom = (self.zoom + delta).clamp(0.8, 2.0);
     }
 
     fn undo(&mut self) {
