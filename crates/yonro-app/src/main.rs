@@ -6,6 +6,7 @@ mod document;
 mod find;
 mod keys;
 mod mouse;
+mod strip;
 mod theme;
 
 use std::path::PathBuf;

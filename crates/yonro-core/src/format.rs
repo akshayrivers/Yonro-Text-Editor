@@ -177,6 +177,58 @@ impl Format {
         self.marks.push(InlineMark { start, end, kind });
     }
 
+    /// Add `kind` on the span, or remove it when the span is already covered.
+    pub fn toggle(&mut self, start: usize, end: usize, kind: MarkKind) {
+        if end <= start {
+            return;
+        }
+        let covered = self
+            .marks
+            .iter()
+            .any(|mark| same_kind(&mark.kind, &kind) && mark.start <= start && mark.end >= end);
+        if covered {
+            self.trim_kind(start, end, &kind);
+        } else {
+            self.add_mark(start, end, kind);
+        }
+    }
+
+    /// Drop every mark on the span. Marks outside it stay put.
+    pub fn clear_range(&mut self, start: usize, end: usize) {
+        if end <= start {
+            return;
+        }
+        let mut next = Vec::new();
+        for mark in self.marks.drain(..) {
+            for (part_start, part_end) in trim_span(mark.start, mark.end, start, end) {
+                next.push(InlineMark {
+                    start: part_start,
+                    end: part_end,
+                    kind: mark.kind.clone(),
+                });
+            }
+        }
+        self.marks = next;
+    }
+
+    fn trim_kind(&mut self, start: usize, end: usize, kind: &MarkKind) {
+        let mut next = Vec::new();
+        for mark in self.marks.drain(..) {
+            if !same_kind(&mark.kind, kind) {
+                next.push(mark);
+                continue;
+            }
+            for (part_start, part_end) in trim_span(mark.start, mark.end, start, end) {
+                next.push(InlineMark {
+                    start: part_start,
+                    end: part_end,
+                    kind: mark.kind.clone(),
+                });
+            }
+        }
+        self.marks = next;
+    }
+
     /// Replace paragraph props for `line`, or append them.
     pub fn set_paragraph(&mut self, paragraph: Paragraph) {
         if let Some(found) = self
@@ -321,6 +373,29 @@ pub fn flat_len(text: &str) -> usize {
         count = count.saturating_add(part.graphemes(true).count());
     }
     count
+}
+
+fn same_kind(left: &MarkKind, right: &MarkKind) -> bool {
+    std::mem::discriminant(left) == std::mem::discriminant(right)
+}
+
+fn trim_span(
+    mark_start: usize,
+    mark_end: usize,
+    cut_start: usize,
+    cut_end: usize,
+) -> Vec<(usize, usize)> {
+    if mark_end <= cut_start || mark_start >= cut_end || mark_end <= mark_start {
+        return vec![(mark_start, mark_end)];
+    }
+    let mut parts = Vec::new();
+    if mark_start < cut_start {
+        parts.push((mark_start, cut_start.min(mark_end)));
+    }
+    if mark_end > cut_end {
+        parts.push((cut_end.max(mark_start), mark_end));
+    }
+    parts
 }
 
 fn subtract_span(

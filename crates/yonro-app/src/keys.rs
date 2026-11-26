@@ -79,7 +79,18 @@ impl Page {
             "y" => self.redo(),
             "a" => self.select_all(),
             "c" => self.copy(cx),
+            "x" if mods.shift => self.toggle_kind(yonro_core::MarkKind::Strike),
             "x" => self.cut(cx),
+            "b" => self.toggle_kind(yonro_core::MarkKind::Bold),
+            "i" => self.toggle_kind(yonro_core::MarkKind::Italic),
+            "u" => self.toggle_kind(yonro_core::MarkKind::Underline),
+            "h" if mods.shift => self.toggle_kind(yonro_core::MarkKind::Highlight { swatch: 1 }),
+            "e" if mods.shift => self.toggle_kind(yonro_core::MarkKind::Color { swatch: 1 }),
+            "=" => self.toggle_kind(yonro_core::MarkKind::Size { points: 24 }),
+            "k" => self.toggle_kind(yonro_core::MarkKind::Link {
+                href: "https://".to_string(),
+            }),
+            "\\" => self.clear_format(),
             "v" => self.paste(cx),
             "s" => self.save(),
             "f" => self.open_find(window),
@@ -282,6 +293,7 @@ impl Page {
         }
         self.take_selection();
         let now = Instant::now();
+        let before = self.caret;
         let single = text.chars().nth(1).is_none() && !text.contains('\n') && !text.contains('\r');
         self.caret = if single {
             let Some(ch) = text.chars().next() else {
@@ -294,6 +306,7 @@ impl Page {
         };
         self.anchor = None;
         self.echo = Some(text.to_string());
+        self.apply_sticky(before);
         self.refresh_mentions();
     }
 
