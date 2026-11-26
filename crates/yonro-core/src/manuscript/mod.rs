@@ -63,6 +63,20 @@ pub struct SceneMeta {
     pub current_words: usize,
     /// Draft file backing this scene, if any.
     pub file: Option<PathBuf>,
+    /// Prose or verse. Missing on disk means prose.
+    #[serde(default)]
+    pub role: Role,
+}
+
+/// How a scene wants to be read.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    /// Cast, setting, and mentions stay available.
+    #[default]
+    Prose,
+    /// Title only while this scene is focused.
+    Verse,
 }
 
 /// One node of the manuscript tree.
@@ -434,10 +448,19 @@ mod tests {
                 target_words: 1000,
                 current_words: 250,
                 file: None,
+                role: Role::Prose,
             },
         )
         .unwrap();
         ms
+    }
+
+    #[test]
+    fn missing_role_loads_as_prose() {
+        let raw = r#"{"pov":"Mara","setting":"","story_date":"","story_time":"","synopsis":"","target_words":0,"current_words":0,"file":null}"#;
+        let meta: SceneMeta = serde_json::from_str(raw).unwrap();
+        assert_eq!(meta.role, Role::Prose);
+        assert_eq!(meta.pov, "Mara");
     }
 
     #[test]

@@ -41,6 +41,9 @@ pub struct SceneMetaFields {
     /// Draft word-count goal (`0` = no target).
     #[serde(default)]
     pub target_words: usize,
+    /// Prose or verse. Missing means prose.
+    #[serde(default)]
+    pub role: super::manuscript::Role,
 }
 
 /// `project.json` shape: workspace-level settings (additive over time).
@@ -514,6 +517,7 @@ impl Project {
         meta.story_time = fields.story_time.trim().to_string();
         meta.synopsis = fields.synopsis.trim().to_string();
         meta.target_words = fields.target_words;
+        meta.role = fields.role;
         self.manuscript
             .set_meta(id, meta)
             .map_err(|err| ProjectError::Structure(err.to_string()))?;
@@ -840,6 +844,37 @@ impl Project {
         let project_json = serde_json::to_string_pretty(&file)
             .map_err(|err| ProjectError::Io(format!("project.json: {err}")))?;
         write_atomic(&dir.join("project.json"), project_json.as_bytes())
+    }
+
+    /// Pieces keeps one act and one chapter so a piece is still a scene.
+    ///
+    /// # Errors
+    /// `Structure` or `Io` when the spine cannot be saved.
+    pub fn ensure_pieces(&mut self) -> Result<(), ProjectError> {
+        let root = self.manuscript.root();
+        let act = match self
+            .manuscript
+            .children(root)
+            .into_iter()
+            .find(|node| node.alive && node.kind == NodeKind::Act)
+        {
+            Some(node) => node.id,
+            None => self
+                .manuscript
+                .add_act("pieces")
+                .map_err(|err| ProjectError::Structure(err.to_string()))?,
+        };
+        let has_chapter = self
+            .manuscript
+            .children(act)
+            .iter()
+            .any(|node| node.alive && node.kind == NodeKind::Chapter);
+        if !has_chapter {
+            self.manuscript
+                .add_chapter(act, "pieces")
+                .map_err(|err| ProjectError::Structure(err.to_string()))?;
+        }
+        self.save()
     }
 
     /// Record the current manuscript total into `log` for `today`.
@@ -1288,6 +1323,7 @@ mod tests {
                     story_time: "dawn".to_string(),
                     synopsis: "Joren sails.".to_string(),
                     target_words: 500,
+                    role: crate::manuscript::Role::Prose,
                 },
             )
             .unwrap();

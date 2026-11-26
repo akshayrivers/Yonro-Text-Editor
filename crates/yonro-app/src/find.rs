@@ -114,6 +114,11 @@ impl Page {
     }
 
     pub(crate) fn refresh_mentions(&mut self) {
+        if self.verse {
+            self.mentions.clear();
+            self.mention_at = None;
+            return;
+        }
         let Some((at, prefix)) = self.mention_token() else {
             self.mentions.clear();
             self.mention_at = None;
