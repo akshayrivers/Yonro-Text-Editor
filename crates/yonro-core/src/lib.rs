@@ -21,6 +21,7 @@ pub mod buffers;
 pub mod command;
 pub mod custom_graphs;
 pub mod documentstatus;
+pub mod editlog;
 pub mod events;
 pub mod export;
 pub mod fileinfo;
@@ -49,6 +50,7 @@ pub use custom_graphs::{
     CustomGraphId, CustomGraphStore, MAX_COORD,
 };
 pub use documentstatus::DocumentStatus;
+pub use editlog::{EditLog, EditOp};
 pub use events::EditorEvent;
 pub use export::{CompiledExport, ExportError, ExportFormat, ExportSummary, SCENE_SEPARATOR};
 pub use fileinfo::FileInfo;

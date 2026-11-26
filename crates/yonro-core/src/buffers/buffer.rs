@@ -303,6 +303,35 @@ impl Buffer {
         Arc::new(self.rope.clone())
     }
 
+    /// Insert `text` at a grapheme [`Location`].
+    ///
+    /// Newlines in `text` split lines. An empty string is a no-op.
+    pub fn insert_str(&mut self, at: Location, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if self.rope.len_chars() == 0 {
+            self.rope.insert(0, text);
+            self.dirty = true;
+            return;
+        }
+        if at.line_idx >= self.height() {
+            let mut prefix = String::new();
+            if !self.ends_with_newline() {
+                prefix.push('\n');
+            }
+            prefix.push_str(text);
+            let end = self.rope.len_chars();
+            self.rope.insert(end, &prefix);
+            self.dirty = true;
+            return;
+        }
+        if let Some(abs) = self.location_to_char_idx(at) {
+            self.rope.insert(abs, text);
+            self.dirty = true;
+        }
+    }
+
     pub fn insert_char(&mut self, character: char, at: Location) {
         if self.rope.len_chars() == 0 {
             debug_assert!(at.line_idx == 0);
