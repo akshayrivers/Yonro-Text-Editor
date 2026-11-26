@@ -9,6 +9,13 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 unicode-segmentation = "1.12.0"
 unicode-width = "0.2.2"
+# OOXML door only. The rope and marks stay the editor.
+# Pinned: docx 1.1.2 (PoiScript/docx-rs). License MIT.
+# Do not float. Import and export call this; keystrokes do not.
+docx = "=1.1.2"
+# Same zip the docx crate uses to open the package, so a drawing can be named
+# when the document model skips it.
+zip = "=0.5.13"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
