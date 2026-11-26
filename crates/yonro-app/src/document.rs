@@ -35,6 +35,13 @@ pub(crate) struct PaintedRow {
     pub(crate) start: usize,
     pub(crate) end: usize,
     pub(crate) spans: Vec<InkSpan>,
+    pub(crate) face: String,
+    pub(crate) font_px: f32,
+    pub(crate) line_px: f32,
+    pub(crate) align: yonro_core::Align,
+    pub(crate) indent: u8,
+    pub(crate) hang: bool,
+    pub(crate) marker: String,
 }
 
 pub struct Page {
@@ -199,6 +206,15 @@ impl Render for Page {
                     .gap_2()
                     .text_sm()
                     .font(font("Menlo"))
+                    .child(strip_label(
+                        self.style_label(),
+                        self.style_label() != "body",
+                    ))
+                    .child(strip_label(
+                        self.align_label(),
+                        self.align_label() != "left",
+                    ))
+                    .child(strip_label(self.list_label(), self.list_label() != "list"))
                     .child(strip_label("b", self.strip_on(&yonro_core::MarkKind::Bold)))
                     .child(strip_label(
                         "i",
@@ -219,7 +235,9 @@ impl Render for Page {
                     .child(strip_label(
                         "ink",
                         self.strip_on(&yonro_core::MarkKind::Color { swatch: 0 }),
-                    )),
+                    ))
+                    .child(strip_label(self.face_label(), true))
+                    .child(strip_label(self.spacing_label(), true)),
             )
             .child(
                 div()
@@ -249,16 +267,10 @@ fn paint_page(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let face = font("Georgia");
-    let font_size = px(FONT_PX);
-    let line_height = px(LINE_PX);
-    let style = PaintStyle {
-        face: face.clone(),
-        color: rgb(INK).into(),
-        font_size,
-        line_height,
-    };
     if empty {
+        let face = font("Georgia");
+        let font_size = px(FONT_PX);
+        let line_height = px(LINE_PX);
         let _hint = shape_line(
             origin,
             "start the draft here.",
@@ -284,11 +296,25 @@ fn paint_page(
     let selection = anchor.and_then(|mark| ordered_span(mark, caret));
     let mut y = px(0.0);
     for (index, row) in rows.iter().enumerate() {
+        let style = row_style(row);
+        let probe = layout_line(
+            if row.text.is_empty() { " " } else { &row.text },
+            &style,
+            window,
+        );
+        let dx = text_dx(row, probe.width);
         let mut at = origin;
         at.y += y;
+        at.x += dx;
+        if !row.marker.is_empty() {
+            let mut mark_at = origin;
+            mark_at.y += y;
+            mark_at.x += px(f32::from(row.indent) * 24.0);
+            let _marker = shape_line(mark_at, &row.marker, &[], &style, window, cx);
+        }
         let shaped = shape_line(at, &row.text, &row.spans, &style, window, cx);
         if let Some((start, end)) = selection {
-            paint_wash(origin.x, at.y, row, start, end, &shaped, window);
+            paint_wash(at.x, at.y, row, start, end, &shaped, window);
         }
         let last_of_line = rows
             .get(index.saturating_add(1))
@@ -303,13 +329,13 @@ fn paint_page(
             };
             window.paint_quad(fill(
                 Bounds {
-                    origin: point(origin.x + x, at.y),
-                    size: size(px(1.0), px(LINE_PX - 6.0)),
+                    origin: point(at.x + x, at.y),
+                    size: size(px(1.0), px(row.line_px - 6.0)),
                 },
                 rgb(INK),
             ));
         }
-        y += line_height;
+        y += px(row.line_px);
     }
 }
 
@@ -357,7 +383,7 @@ fn paint_wash(
     window.paint_quad(fill(
         Bounds {
             origin: point(x0 + left, y),
-            size: size(width, px(LINE_PX - 6.0)),
+            size: size(width, px(row.line_px - 6.0)),
         },
         rgb(WASH),
     ));
@@ -487,7 +513,7 @@ pub(crate) fn location_at(
     if rows.is_empty() {
         return (Location::default(), 0);
     }
-    let row_index = row_at_y(origin.y, position.y, rows.len());
+    let row_index = row_at_y(origin.y, position.y, rows);
     let Some(row) = rows.get(row_index) else {
         return (Location::default(), 0);
     };
@@ -500,15 +526,11 @@ pub(crate) fn location_at(
             row_index,
         );
     }
-    let style = PaintStyle {
-        face: font("Georgia"),
-        color: rgb(INK).into(),
-        font_size: px(FONT_PX),
-        line_height: px(LINE_PX),
-    };
+    let style = row_style(row);
     let shaped = layout_line(&row.text, &style, window);
-    let x = if position.x > origin.x {
-        position.x - origin.x
+    let dx = text_dx(row, shaped.width);
+    let x = if position.x > origin.x + dx {
+        position.x - origin.x - dx
     } else {
         px(0.0)
     };
@@ -552,18 +574,46 @@ fn grapheme_for_byte(text: &str, byte: usize) -> usize {
     }
 }
 
-fn row_at_y(origin_y: Pixels, y: Pixels, count: usize) -> usize {
-    if y <= origin_y || count == 0 {
+fn row_at_y(origin_y: Pixels, y: Pixels, rows: &[PaintedRow]) -> usize {
+    if y <= origin_y || rows.is_empty() {
         return 0;
     }
     let mut walked = origin_y;
     let mut row = 0usize;
-    let step = px(LINE_PX);
-    while row.saturating_add(1) < count && walked + step <= y {
+    while row.saturating_add(1) < rows.len() {
+        let step = px(rows[row].line_px);
+        if walked + step > y {
+            break;
+        }
         walked += step;
         row = row.saturating_add(1);
     }
     row
+}
+
+fn row_style(row: &PaintedRow) -> PaintStyle {
+    PaintStyle {
+        face: font(SharedString::from(row.face.clone())),
+        color: rgb(INK).into(),
+        font_size: px(row.font_px),
+        line_height: px(row.line_px),
+    }
+}
+
+fn text_dx(row: &PaintedRow, text_width: Pixels) -> Pixels {
+    let left = px(f32::from(row.indent) * 24.0 + if row.hang { 24.0 } else { 0.0 });
+    let sheet = px(700.0);
+    let room = if sheet > left { sheet - left } else { px(0.0) };
+    let extra = if room > text_width {
+        room - text_width
+    } else {
+        px(0.0)
+    };
+    match row.align {
+        yonro_core::Align::Center => left + extra * 0.5,
+        yonro_core::Align::Right => left + extra,
+        yonro_core::Align::Left | yonro_core::Align::Justify => left,
+    }
 }
 
 fn watch_pointer(
@@ -632,6 +682,7 @@ fn painted_rows(
     visual_rows(buffer, COLUMNS)
         .into_iter()
         .map(|row| {
+            let first = previous != Some(row.line_idx);
             if previous.is_some_and(|line: usize| line != row.line_idx) {
                 flat = flat.saturating_add(1);
             }
@@ -641,15 +692,74 @@ fn painted_rows(
             let spans = ink_spans(&text, flat, format, &mentions);
             let row_len = row.end.saturating_sub(row.start);
             flat = flat.saturating_add(row_len);
+            let para = crate::strip::paragraph_on(format, row.line_idx);
+            let (font_px, line_px) = line_metrics(para.style, format.spacing());
+            let hang = para.list != yonro_core::ListKind::None;
+            let marker = if first {
+                list_marker(format, row.line_idx, para.list)
+            } else {
+                String::new()
+            };
+            let face = if format.face().is_empty() {
+                "Georgia".to_string()
+            } else {
+                format.face().to_string()
+            };
             PaintedRow {
                 text,
                 line_idx: row.line_idx,
                 start: row.start,
                 end: row.end,
                 spans,
+                face,
+                font_px,
+                line_px,
+                align: para.align,
+                indent: para.indent,
+                hang,
+                marker,
             }
         })
         .collect()
+}
+
+fn line_metrics(style: yonro_core::ParaStyle, spacing: yonro_core::Spacing) -> (f32, f32) {
+    let (font_px, extra) = match style {
+        yonro_core::ParaStyle::Normal => (20.0, 0.0),
+        yonro_core::ParaStyle::H1 => (30.0, 10.0),
+        yonro_core::ParaStyle::H2 => (26.0, 6.0),
+        yonro_core::ParaStyle::H3 => (22.0, 2.0),
+    };
+    let base = match spacing {
+        yonro_core::Spacing::Compact => 28.0,
+        yonro_core::Spacing::Roomy => 34.0,
+        yonro_core::Spacing::Airy => 42.0,
+    };
+    (font_px, base + extra)
+}
+
+fn list_marker(format: &yonro_core::Format, line: usize, kind: yonro_core::ListKind) -> String {
+    match kind {
+        yonro_core::ListKind::None => String::new(),
+        yonro_core::ListKind::Bullet => "•".to_string(),
+        yonro_core::ListKind::Number => format!("{}.", list_number(format, line)),
+    }
+}
+
+fn list_number(format: &yonro_core::Format, line: usize) -> u32 {
+    let mut count = 0u32;
+    let mut cursor = line;
+    loop {
+        if crate::strip::paragraph_on(format, cursor).list != yonro_core::ListKind::Number {
+            break;
+        }
+        count = count.saturating_add(1);
+        if cursor == 0 {
+            break;
+        }
+        cursor = cursor.saturating_sub(1);
+    }
+    count
 }
 
 fn ink_spans(
