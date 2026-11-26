@@ -269,4 +269,26 @@ mod tests {
         assert_eq!(location_to_utf16(&buffer, loc(0, 2)), 3);
         assert_eq!(utf16_to_location(&buffer, 2).grapheme_idx, 1);
     }
+
+    #[test]
+    fn dead_key_emoji_and_devanagari_stay_whole_graphemes() {
+        let mut buffer = Buffer::default();
+        buffer.insert_str(loc(0, 0), "é");
+        assert_eq!(buffer.grapheme_count(0), 1);
+        assert_eq!(location_to_utf16(&buffer, loc(0, 1)), 1);
+
+        buffer.insert_str(loc(0, 1), "😀");
+        assert_eq!(buffer.grapheme_count(0), 2);
+        assert_eq!(location_to_utf16(&buffer, loc(0, 2)), 3);
+        assert_eq!(utf16_to_location(&buffer, 2).grapheme_idx, 1);
+
+        buffer.insert_str(loc(0, 2), "क्ष");
+        assert_eq!(buffer.grapheme_count(0), 3);
+        let after = location_to_utf16(&buffer, loc(0, 3));
+        assert!(after > 3);
+        assert_eq!(
+            utf16_to_location(&buffer, after.saturating_sub(1)).grapheme_idx,
+            2
+        );
+    }
 }

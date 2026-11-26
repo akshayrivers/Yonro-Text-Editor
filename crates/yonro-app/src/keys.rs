@@ -419,6 +419,7 @@ impl EntityInputHandler for Page {
                 self.anchor = Some(end);
             }
         }
+        self.marked = None;
         self.type_text(text);
         cx.notify();
     }
@@ -427,13 +428,25 @@ impl EntityInputHandler for Page {
         &mut self,
         range: Option<Range<usize>>,
         new_text: &str,
-        _new_selected_range: Option<Range<usize>>,
+        new_selected_range: Option<Range<usize>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let start = self.caret;
+        let range = range.or_else(|| self.marked_text_range(window, cx));
+        let insert_at = range
+            .as_ref()
+            .map(|span| utf16_to_location(&self.buffer, span.start))
+            .unwrap_or(self.caret);
         self.replace_text_in_range(range, new_text, window, cx);
-        self.marked = Some((start, self.caret));
+        if new_text.is_empty() {
+            self.marked = None;
+            return;
+        }
+        self.marked = Some((insert_at, self.caret));
+        if let Some(selected) = new_selected_range {
+            let base = location_to_utf16(&self.buffer, insert_at);
+            self.caret = utf16_to_location(&self.buffer, base.saturating_add(selected.end));
+        }
     }
 
     fn bounds_for_range(
