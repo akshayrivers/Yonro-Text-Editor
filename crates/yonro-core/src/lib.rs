@@ -26,6 +26,7 @@ pub mod events;
 pub mod export;
 pub mod fileinfo;
 pub mod filetype;
+pub mod format;
 pub mod graph;
 pub mod highlighter;
 pub mod history;
@@ -56,6 +57,10 @@ pub use events::EditorEvent;
 pub use export::{CompiledExport, ExportError, ExportFormat, ExportSummary, SCENE_SEPARATOR};
 pub use fileinfo::FileInfo;
 pub use filetype::FileType;
+pub use format::{
+    flat_index, flat_len, Align, Format, FormatFile, InlineMark, ListKind, MarkKind, ParaStyle,
+    Paragraph, Spacing,
+};
 pub use graph::lens::{
     builtin_lenses, Engine, Lens, LensError, LensStore, PresenceColumn, PresenceRow, SceneEdge,
     SceneNode, MAX_LENSES,

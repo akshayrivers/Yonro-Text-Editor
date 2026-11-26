@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::buffers::Buffer;
+use super::format::{flat_index, flat_len, Format};
 use super::prelude::Location;
 
 /// How long successive character inserts stay one undo step.
@@ -67,6 +68,9 @@ pub struct EditLog {
     undo: Vec<EditOp>,
     redo: Vec<EditOp>,
     last_insert: Option<Instant>,
+    format: Format,
+    undo_formats: Vec<Format>,
+    redo_formats: Vec<Format>,
 }
 
 impl EditLog {
@@ -88,6 +92,17 @@ impl EditLog {
         !self.redo.is_empty()
     }
 
+    /// Marks for the open scene.
+    #[must_use]
+    pub const fn format(&self) -> &Format {
+        &self.format
+    }
+
+    /// Marks for the open scene.
+    pub fn format_mut(&mut self) -> &mut Format {
+        &mut self.format
+    }
+
     /// Insert one character and record it. Returns the caret after the insert.
     pub fn insert_char(
         &mut self,
@@ -97,12 +112,14 @@ impl EditLog {
         now: Instant,
     ) -> Location {
         let before = buffer.grapheme_count(at.line_idx);
+        let flat = flat_index(buffer, at);
         buffer.insert_char(text, at);
         let after = buffer.grapheme_count(at.line_idx);
         if after == before {
             return at;
         }
         self.note_insert(at, text, now);
+        self.format.shift_insert(flat, 1);
         Location {
             line_idx: at.line_idx,
             grapheme_idx: at.grapheme_idx.saturating_add(1),
@@ -121,8 +138,11 @@ impl EditLog {
         if text.is_empty() {
             return at;
         }
-        self.break_burst();
+        let flat = flat_index(buffer, at);
+        let len = flat_len(&text);
+        self.checkpoint();
         buffer.insert_str(at, &text);
+        self.format.shift_insert(flat, len);
         let caret = end_after_insert(at, &text);
         self.redo.clear();
         self.undo.push(EditOp::InsertText { at, text });
@@ -144,8 +164,11 @@ impl EditLog {
         if text.is_empty() {
             return start;
         }
-        self.break_burst();
+        let flat = flat_index(buffer, start);
+        let len = flat_len(&text);
+        self.checkpoint();
         delete_span(buffer, start, end);
+        self.format.shift_delete(flat, flat.saturating_add(len));
         self.redo.clear();
         self.undo.push(EditOp::DeleteRange { start, text });
         start
@@ -153,9 +176,12 @@ impl EditLog {
 
     /// Split the line at `at`.
     pub fn insert_newline(&mut self, buffer: &mut Buffer, at: Location, _now: Instant) -> Location {
-        self.break_burst();
+        let flat = flat_index(buffer, at);
+        self.checkpoint();
         let grapheme_count_at_split = buffer.grapheme_count(at.line_idx);
         buffer.insert_newline(at);
+        self.format.shift_insert(flat, 1);
+        self.format.split_line(at.line_idx);
         self.redo.clear();
         self.undo.push(EditOp::InsertNewLine {
             at,
@@ -175,12 +201,21 @@ impl EditLog {
         line_idx: usize,
         _now: Instant,
     ) -> Location {
-        self.break_burst();
         let split_at_grapheme = buffer.grapheme_count(line_idx);
+        let flat = flat_index(
+            buffer,
+            Location {
+                grapheme_idx: split_at_grapheme,
+                line_idx,
+            },
+        );
+        self.checkpoint();
         buffer.delete(Location {
             line_idx,
             grapheme_idx: split_at_grapheme,
         });
+        self.format.shift_delete(flat, flat.saturating_add(1));
+        self.format.join_line(line_idx);
         self.redo.clear();
         self.undo.push(EditOp::DeleteNewLine {
             line_idx,
@@ -195,6 +230,9 @@ impl EditLog {
     /// Undo one step. Returns the caret to place, if a step existed.
     pub fn undo(&mut self, buffer: &mut Buffer) -> Option<Location> {
         let op = self.undo.pop()?;
+        let before = self.undo_formats.pop().unwrap_or_default();
+        self.redo_formats.push(self.format.clone());
+        self.format = before;
         let caret = undo_op(buffer, &op);
         self.redo.push(op);
         self.last_insert = None;
@@ -204,6 +242,9 @@ impl EditLog {
     /// Redo one step. Returns the caret to place, if a step existed.
     pub fn redo(&mut self, buffer: &mut Buffer) -> Option<Location> {
         let op = self.redo.pop()?;
+        let after = self.redo_formats.pop().unwrap_or_default();
+        self.undo_formats.push(self.format.clone());
+        self.format = after;
         let caret = redo_op(buffer, &op);
         self.undo.push(op);
         self.last_insert = None;
@@ -212,6 +253,7 @@ impl EditLog {
 
     fn note_insert(&mut self, at: Location, text: char, now: Instant) {
         self.redo.clear();
+        self.redo_formats.clear();
         let burst = self
             .last_insert
             .is_some_and(|last| now.saturating_duration_since(last) <= BURST);
@@ -249,8 +291,16 @@ impl EditLog {
                 }
             }
         }
+        self.undo_formats.push(self.format.clone());
         self.undo.push(EditOp::InsertChar { at, text });
         self.last_insert = Some(now);
+    }
+
+    fn checkpoint(&mut self) {
+        self.break_burst();
+        self.redo.clear();
+        self.redo_formats.clear();
+        self.undo_formats.push(self.format.clone());
     }
 
     fn break_burst(&mut self) {
