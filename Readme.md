@@ -10,21 +10,32 @@ features are what it is now. The author is writing a novel inside it.
 
 ## demos
 
-### terminal — outline sidebar, explorer, find, zen mode
-![tui demo](assets/pane.gif)
+### page — yonro-app
+![page](assets/page.png)
 
-Scripted pty session on a seeded sample novel: toggles the outline sidebar
-(`Ctrl-O`), opens a scene into a new tab, browses the file explorer (`Ctrl-E`),
-runs find, toggles zen mode (`F11`), and quits. Recorded with
-[asciinema](https://docs.asciinema.org/) and rendered with `agg`
-(`assets/tui.cast` keeps the raw recording).
+Warm paper, a seeded scene, underlined `@mentions`, and the format strip.
+Captured from `yonro-app` opened on a sample novel.
 
-### desktop — write, outline, graph, timeline, lore
+### terminal — a scene, the outline, find
+![tui demo](assets/tui.gif)
+
+Seeded scene text (Mara, Mill farm, `@mentions`), the outline column, and
+find. One frame of the recording prints a raw escape from the pty driver.
+
+### terminal — split panes
+![pane demo](assets/pane.gif)
+
+Three panes, a divider drag, and a short typed line. This is the earlier
+editor chrome, not the outline or zen pass. Recorded with
+[asciinema](https://docs.asciinema.org/) (`assets/tui.cast` is the raw take
+for the scene demo above).
+
+### desktop — outline, graph, lore, write
 ![gui demo](assets/gui.gif)
 
-Screen capture of `cargo run -p yonro-gui -- <seeded workspace>`, cycling the
-five views over the same sample novel (30 entities, so the graph stays
-readable). Views are driven in order: Write, Outline, Graph, Timeline, Lore.
+`yonro-gui` on a seeded novel: the outline table, the graph lens strip, a
+lore sheet, and the empty write view. A system privacy prompt sits along the
+bottom of the recording. The graph canvas in this take is empty.
 
 
 ## what each crate does
