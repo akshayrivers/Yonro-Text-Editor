@@ -1,43 +1,37 @@
-//! Spike: a warm-paper window and one serif line.
+//! Yonro desktop page.
 //!
-//! No buffer yet. This only proves GPUI builds and paints on this machine.
+//! GPUI is the window and the shaper. `yonro-core` owns the rope.
 
-use gpui::{
-    div, prelude::*, px, rgb, size, App, Application, Bounds, Context, Window, WindowBounds,
-    WindowOptions,
-};
+mod document;
+mod find;
+mod keys;
+mod mouse;
+mod strip;
+mod theme;
 
-/// Warm paper, dark default. Named here until a theme module exists.
-const PAPER: u32 = 0x2c26_1fff;
-const INK: u32 = 0xf3e6_d0ff;
+use std::path::PathBuf;
 
-struct Page;
-
-impl Render for Page {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .bg(rgb(PAPER))
-            .size_full()
-            .justify_center()
-            .items_center()
-            .text_3xl()
-            .font_family("Georgia")
-            .text_color(rgb(INK))
-            .child("once upon a time")
-    }
-}
+use document::Page;
+use gpui::prelude::*;
+use gpui::{px, size, App, Application, Bounds, WindowBounds, WindowOptions};
 
 fn main() {
     Application::new().run(|cx: &mut App| {
+        let path = std::env::args().nth(1).map(PathBuf::from);
         let bounds = Bounds::centered(None, size(px(960.0), px(720.0)), cx);
-        cx.open_window(
+        let opened = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_window, cx| cx.new(|_cx| Page),
-        )
-        .ok();
+            |window, cx| {
+                let page = cx.new(|cx| Page::open(path, cx));
+                page.update(cx, |page, _cx| page.focus.focus(window));
+                page
+            },
+        );
+        if opened.is_err() {
+            eprintln!("yonro: could not open the window");
+        }
     });
 }

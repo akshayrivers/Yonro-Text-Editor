@@ -21,10 +21,13 @@ pub mod buffers;
 pub mod command;
 pub mod custom_graphs;
 pub mod documentstatus;
+pub mod docxio;
+pub mod editlog;
 pub mod events;
 pub mod export;
 pub mod fileinfo;
 pub mod filetype;
+pub mod format;
 pub mod graph;
 pub mod highlighter;
 pub mod history;
@@ -33,6 +36,7 @@ pub mod lore;
 pub mod manuscript;
 pub mod prelude;
 pub mod project;
+pub mod prose;
 pub mod recents;
 pub mod search;
 pub mod session;
@@ -49,10 +53,16 @@ pub use custom_graphs::{
     CustomGraphId, CustomGraphStore, MAX_COORD,
 };
 pub use documentstatus::DocumentStatus;
+pub use docxio::{export_docx, import_docx, DocxDoor, DocxDoorError};
+pub use editlog::{EditLog, EditOp};
 pub use events::EditorEvent;
 pub use export::{CompiledExport, ExportError, ExportFormat, ExportSummary, SCENE_SEPARATOR};
 pub use fileinfo::FileInfo;
 pub use filetype::FileType;
+pub use format::{
+    flat_index, flat_len, Align, Format, FormatFile, InlineMark, ListKind, MarkKind, ParaStyle,
+    Paragraph, Spacing,
+};
 pub use graph::lens::{
     builtin_lenses, Engine, Lens, LensError, LensStore, PresenceColumn, PresenceRow, SceneEdge,
     SceneNode, MAX_LENSES,
@@ -68,6 +78,10 @@ pub use line::Line;
 pub use lore::{is_mention_char, Entity, EntityId, EntityKind, LoreBook, LoreError, Mention};
 pub use manuscript::{Manuscript, ManuscriptError, Node, NodeId, NodeKind, SceneMeta};
 pub use project::{Project, ProjectError, SceneMetaFields};
+pub use prose::{
+    grapheme_byte, location_to_point, location_to_utf16, point_to_location, row_text,
+    utf16_to_location, visual_rows, word_bounds_at, VisualRow,
+};
 pub use recents::{RecentEntry, Recents, RecentsError, MAX_RECENTS};
 pub use search::{ProjectHit, Utf16Span, EXCERPT_CHARS, MAX_PROJECT_HITS};
 pub use session::{DayRecord, SessionLog};
