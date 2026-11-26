@@ -1,5 +1,5 @@
 # ROLE
-Senior Rust + vanilla-JS engineer on `yonro` (Cargo workspace: crates/yonro-core, yonro-tui, yonro-gui).
+Senior Rust engineer on `yonro` (Cargo workspace: crates/yonro-core, yonro-tui, yonro-app).
 Yonro = narrative studio for fiction writers. The author is writing a novel inside it.
 Stage: PROTOTYPE. Ship small verified increments. No gold-plating, no speculative abstractions.
 
@@ -16,16 +16,13 @@ Microcopy: terse, lowercase-friendly, no exclamation marks, no emoji, every empt
    progress, search, export, session stats live in yonro-core. JS formats and displays. JS never
    counts words, parses @mentions, or derives narrative facts.
    (UI-only math is fine: scroll positions, caret Ln:Col, layout coordinates, fuzzy-filtering labels.)
-2. ADAPTER SEAM: only crates/yonro-gui/ui/core.js may touch `window.__TAURI__`.
-   Every other file calls `core.<fn>()`. A future WASM build reimplements core.js only.
-3. No npm, no bundler, no framework, no CDN, no webfonts, no inline <script>.
-   CSP = default-src 'self'; style-src 'self' 'unsafe-inline'. Classic <script> files loaded in order
-   (NOT ES modules; keeps `node --check` trivial). Share state via top-level `const`s / one `Yonro` namespace.
+2. The desktop page is `yonro-app`. It calls `yonro-core` and paints. Colors live in `crates/yonro-app/src/theme.rs`.
+3. No npm, no bundler, no framework, no CDN. The desktop window is native.
 4. On-disk format stays readable by BOTH tui and gui:
    <root>/.yonro/{manuscript.json, lore.json}  +  <root>/scene-<id>.md
    Adding new files under .yonro/ is fine. Changing existing JSON shapes is not (additive serde fields
    with #[serde(default)] only). Missing/corrupt JSON => fallback to Untitled/empty, never crash.
-5. Theming: ALL hex/rgb colors live in ui/themes.css. ui/styles.css and all JS use var(--token) only.
+5. Theming: hex colors for the desktop page live in `crates/yonro-app/src/theme.rs`.
 6. Rust lints are strict (clippy::all, pedantic, arithmetic_side_effects, as_conversions, integer_division):
    saturating_*/checked_* math, no `as` casts (use try_from/From), no unwrap()/expect() outside tests,
    typed errors, `# Errors` docs on pub fns returning Result, #[must_use] where pedantic asks.
@@ -47,13 +44,9 @@ Microcopy: terse, lowercase-friendly, no exclamation marks, no emoji, every empt
 
 # GATES (run after every task; all must pass)
 cargo fmt --all
-cargo clippy -p yonro-core -p yonro-gui --all-targets     # no NEW warnings vs baseline (record baseline count in P0 first)
+cargo clippy -p yonro-core -p yonro-app --all-targets     # no NEW warnings vs baseline
 cargo test --all
-for f in crates/yonro-gui/ui/*.js; do node --check "$f" || exit 1; done
-test "$(grep -l '__TAURI__' crates/yonro-gui/ui/*.js | wc -l)" = 1 && grep -l '__TAURI__' crates/yonro-gui/ui/*.js   # must print core.js only
-! grep -nE '#[0-9a-fA-F]{3,8}\b|rgba?\(' crates/yonro-gui/ui/*.js crates/yonro-gui/ui/index.html crates/yonro-gui/ui/styles.css
-   # (use literal glyphs like ● not entities like &#9679; — the entity trips this grep)
-Dev loop:  cargo run -p yonro-gui -- <workspace_dir>
+Dev loop:  cargo run -p yonro-app -- <workspace_dir>
 
 # KEYMAP (mod = Ctrl on win/linux, Cmd on mac; one helper `isMod(e)` in util.js)
 mod+S save · mod+Shift+S save as · mod+N new draft · mod+Z undo · mod+Shift+Z / mod+Y redo
