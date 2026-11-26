@@ -78,7 +78,7 @@ pub use history::UndoStack;
 pub use line::Line;
 pub use lore::{is_mention_char, Entity, EntityId, EntityKind, LoreBook, LoreError, Mention};
 pub use manuscript::{Manuscript, ManuscriptError, Node, NodeId, NodeKind, SceneMeta};
-pub use project::{Project, ProjectError, SceneMetaFields};
+pub use project::{Profile, Project, ProjectError, SceneMetaFields};
 pub use prose::{
     grapheme_byte, location_to_point, location_to_utf16, point_to_location, row_text,
     utf16_to_location, visual_rows, word_bounds_at, VisualRow,

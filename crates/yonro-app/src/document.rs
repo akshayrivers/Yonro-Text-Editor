@@ -80,6 +80,8 @@ pub struct Page {
     pub(crate) scroll: gpui::ScrollHandle,
     pub(crate) title: String,
     pub(crate) scenes: Vec<String>,
+    pub(crate) creating: bool,
+    pub(crate) profile: yonro_core::Profile,
 }
 
 impl Page {
@@ -88,6 +90,7 @@ impl Page {
         let lore = lore_for(path.as_deref());
         let (buffer, path) = load(path);
         let (title, scenes) = chrome_for(path.as_deref());
+        let (creating, profile) = desk_for(path.as_deref());
         Self {
             buffer,
             path,
@@ -119,7 +122,29 @@ impl Page {
             scroll: gpui::ScrollHandle::new(),
             title,
             scenes,
+            creating,
+            profile,
         }
+    }
+
+    pub(crate) fn choose_profile(&mut self, profile: yonro_core::Profile) {
+        self.profile = profile;
+        self.creating = false;
+        let Some(root) = workspace_root(self.path.as_deref()) else {
+            return;
+        };
+        if !yonro_core::Project::has_project(&root) {
+            let _ = yonro_core::Project::create(&root, "untitled");
+        }
+        let project = yonro_core::Project::load(&root);
+        let _ = project.set_profile(profile);
+        self.title = project.manuscript.title().to_string();
+        self.scenes.clear();
+        scene_titles(
+            &project.manuscript,
+            project.manuscript.root(),
+            &mut self.scenes,
+        );
     }
 }
 
@@ -190,6 +215,19 @@ impl Render for Page {
                         .child("yonro")
                         .child(SharedString::from(title))
                         .child("zen"),
+                )
+            })
+            .when(self.creating, |column| {
+                column.child(
+                    div()
+                        .h(px(28.0))
+                        .px(px(16.0))
+                        .flex()
+                        .items_center()
+                        .text_sm()
+                        .font(font("Menlo"))
+                        .text_color(rgb(INK))
+                        .child("novel   story   pieces"),
                 )
             })
             .child(
@@ -1044,6 +1082,25 @@ fn settle_caret(
     let target = above - view * 0.45;
     let y = if target > 0.0 { target } else { 0.0 };
     scroll.set_offset(point(px(0.0), px(y)));
+}
+
+fn desk_for(path: Option<&std::path::Path>) -> (bool, yonro_core::Profile) {
+    let Some(root) = workspace_root(path) else {
+        return (true, yonro_core::Profile::Novel);
+    };
+    if yonro_core::Project::has_project(&root) {
+        (false, yonro_core::Project::load(&root).profile())
+    } else {
+        (true, yonro_core::Profile::Novel)
+    }
+}
+
+fn workspace_root(path: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+    let path = path?;
+    if path.is_dir() {
+        return Some(path.to_path_buf());
+    }
+    path.parent().map(std::path::Path::to_path_buf)
 }
 
 fn chrome_for(path: Option<&std::path::Path>) -> (String, Vec<String>) {
