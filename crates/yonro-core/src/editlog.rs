@@ -60,6 +60,11 @@ pub enum EditOp {
         /// Grapheme where the next line was joined.
         split_at_grapheme: usize,
     },
+    /// Marks or paragraph props changed. The prose stays put.
+    Format {
+        /// Caret to restore.
+        caret: Location,
+    },
 }
 
 /// Undo and redo stacks of [`EditOp`].
@@ -296,6 +301,14 @@ impl EditLog {
         self.last_insert = Some(now);
     }
 
+    /// Remember the format, then let the caller change marks or paragraphs.
+    ///
+    /// Undo restores the format and leaves the rope alone.
+    pub fn note_format(&mut self, caret: Location) {
+        self.checkpoint();
+        self.undo.push(EditOp::Format { caret });
+    }
+
     fn checkpoint(&mut self) {
         self.break_burst();
         self.redo.clear();
@@ -351,6 +364,7 @@ fn undo_op(buffer: &mut Buffer, op: &EditOp) -> Location {
                 grapheme_idx: 0,
             }
         }
+        EditOp::Format { caret } => *caret,
     }
 }
 
@@ -392,6 +406,7 @@ fn redo_op(buffer: &mut Buffer, op: &EditOp) -> Location {
                 grapheme_idx: *split_at_grapheme,
             }
         }
+        EditOp::Format { caret } => *caret,
     }
 }
 
@@ -499,6 +514,31 @@ mod tests {
             grapheme_idx,
             line_idx,
         }
+    }
+
+    #[test]
+    fn format_step_undoes_without_touching_prose() {
+        use crate::format::{Align, ListKind, ParaStyle, Paragraph};
+
+        let mut buffer = Buffer::default();
+        let mut log = EditLog::new();
+        let t0 = Instant::now();
+        log.insert_text(&mut buffer, loc(0, 0), "hello", t0);
+        let prose = buffer.text();
+        log.note_format(loc(0, 5));
+        log.format_mut().set_paragraph(Paragraph {
+            line: 0,
+            style: ParaStyle::H1,
+            align: Align::Center,
+            list: ListKind::Bullet,
+            indent: 1,
+        });
+        log.undo(&mut buffer);
+        assert!(log.format().paragraphs().is_empty());
+        assert_eq!(buffer.text(), prose);
+        log.redo(&mut buffer);
+        assert_eq!(log.format().paragraphs()[0].style, ParaStyle::H1);
+        assert_eq!(buffer.text(), prose);
     }
 
     #[test]

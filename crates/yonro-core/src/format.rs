@@ -169,6 +169,16 @@ impl Format {
         self.spacing
     }
 
+    /// Replace the document face. Empty means the default serif.
+    pub fn set_face(&mut self, face: impl Into<String>) {
+        self.face = face.into();
+    }
+
+    /// Replace the document line spacing.
+    pub fn set_spacing(&mut self, spacing: Spacing) {
+        self.spacing = spacing;
+    }
+
     /// Record a mark. An empty span is ignored.
     pub fn add_mark(&mut self, start: usize, end: usize, kind: MarkKind) {
         if end <= start {
