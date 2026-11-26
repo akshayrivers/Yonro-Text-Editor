@@ -82,6 +82,8 @@ pub struct Page {
     pub(crate) scenes: Vec<String>,
     pub(crate) creating: bool,
     pub(crate) profile: yonro_core::Profile,
+    pub(crate) verse: bool,
+    pub(crate) desk: usize,
 }
 
 impl Page {
@@ -91,6 +93,7 @@ impl Page {
         let (buffer, path) = load(path);
         let (title, scenes) = chrome_for(path.as_deref());
         let (creating, profile) = desk_for(path.as_deref());
+        let verse = scene_is_verse(path.as_deref());
         Self {
             buffer,
             path,
@@ -124,6 +127,8 @@ impl Page {
             scenes,
             creating,
             profile,
+            verse,
+            desk: 0,
         }
     }
 
@@ -137,6 +142,10 @@ impl Page {
             let _ = yonro_core::Project::create(&root, "untitled");
         }
         let project = yonro_core::Project::load(&root);
+        let mut project = project;
+        if profile == yonro_core::Profile::Pieces {
+            let _ = project.ensure_pieces();
+        }
         let _ = project.set_profile(profile);
         self.title = project.manuscript.title().to_string();
         self.scenes.clear();
@@ -145,6 +154,21 @@ impl Page {
             project.manuscript.root(),
             &mut self.scenes,
         );
+        self.verse = scene_is_verse(self.path.as_deref());
+    }
+
+    pub(crate) fn desk_for_key(&self, key: usize) -> usize {
+        let count = match self.profile {
+            yonro_core::Profile::Novel => 5,
+            yonro_core::Profile::Story => 4,
+            yonro_core::Profile::Pieces => 1,
+        };
+        let index = key.saturating_sub(1);
+        if index < count {
+            index
+        } else {
+            0
+        }
     }
 }
 
@@ -230,11 +254,38 @@ impl Render for Page {
                         .child("novel   story   pieces"),
                 )
             })
+            .when(!self.zen && !self.creating, |column| {
+                let label = desk_label(self.profile).to_string();
+                column.child(
+                    div()
+                        .h(px(28.0))
+                        .px(px(16.0))
+                        .flex()
+                        .items_center()
+                        .text_sm()
+                        .font(font("Menlo"))
+                        .text_color(rgb(QUIET))
+                        .child(SharedString::from(label)),
+                )
+            })
+            .when(self.desk > 0, |column| {
+                column.child(
+                    div()
+                        .px(px(16.0))
+                        .py(px(8.0))
+                        .text_sm()
+                        .font(font("Menlo"))
+                        .text_color(rgb(QUIET))
+                        .child("not on the page yet."),
+                )
+            })
             .child(
                 div()
                     .flex_1()
                     .flex()
-                    .when(!self.zen, |row| row.child(binder_column(&self.scenes)))
+                    .when(!self.zen, |row| {
+                        row.child(binder_column(self.profile, &self.scenes))
+                    })
                     .justify_center()
                     .child(
                         div()
@@ -1039,9 +1090,15 @@ fn mention_marks(
     marks
 }
 
-fn binder_column(scenes: &[String]) -> gpui::Div {
+fn binder_column(profile: yonro_core::Profile, scenes: &[String]) -> gpui::Div {
+    let empty = match profile {
+        yonro_core::Profile::Pieces => "no pieces yet. press s to add a piece.",
+        yonro_core::Profile::Novel | yonro_core::Profile::Story => {
+            "no scenes yet. press a to add an act, then c, then s."
+        }
+    };
     let lines: Vec<String> = if scenes.is_empty() {
-        vec!["no scenes yet. press a to add an act, then c, then s.".to_string()]
+        vec![empty.to_string()]
     } else {
         scenes.to_vec()
     };
@@ -1101,6 +1158,65 @@ fn workspace_root(path: Option<&std::path::Path>) -> Option<std::path::PathBuf> 
         return Some(path.to_path_buf());
     }
     path.parent().map(std::path::Path::to_path_buf)
+}
+
+fn desk_label(profile: yonro_core::Profile) -> &'static str {
+    match profile {
+        yonro_core::Profile::Novel => "page  outline  graph  timeline  lore",
+        yonro_core::Profile::Story => "page  outline  timeline  lore",
+        yonro_core::Profile::Pieces => "page",
+    }
+}
+
+fn scene_is_verse(path: Option<&std::path::Path>) -> bool {
+    let Some(path) = path else {
+        return false;
+    };
+    let Some(root) = workspace_root(Some(path)) else {
+        return false;
+    };
+    if !yonro_core::Project::has_project(&root) {
+        return false;
+    }
+    let project = yonro_core::Project::load(&root);
+    let mut verse = false;
+    verse_at(
+        &project.manuscript,
+        project.manuscript.root(),
+        path,
+        &mut verse,
+    );
+    verse
+}
+
+fn verse_at(
+    manuscript: &yonro_core::Manuscript,
+    id: yonro_core::NodeId,
+    file: &std::path::Path,
+    verse: &mut bool,
+) {
+    for child in manuscript.children(id) {
+        if !child.alive {
+            continue;
+        }
+        if child.kind == yonro_core::NodeKind::Scene {
+            let matches = child
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.file.as_deref())
+                .is_some_and(|scene| scene == file);
+            if matches
+                && child
+                    .meta
+                    .as_ref()
+                    .is_some_and(|meta| meta.role == yonro_core::Role::Verse)
+            {
+                *verse = true;
+            }
+        } else {
+            verse_at(manuscript, child.id, file, verse);
+        }
+    }
 }
 
 fn chrome_for(path: Option<&std::path::Path>) -> (String, Vec<String>) {

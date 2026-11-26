@@ -200,6 +200,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         target_words: target,
                         current_words: 0,
                         file: None,
+                        role: yonro_core::Role::Prose,
                     },
                 )?;
                 let path = project.scene_file(scene)?;
