@@ -34,6 +34,16 @@ impl Page {
             cx.notify();
             return;
         }
+        if self.creating && !mods.platform && !mods.control {
+            match event.keystroke.key.as_str() {
+                "n" => self.choose_profile(yonro_core::Profile::Novel),
+                "s" => self.choose_profile(yonro_core::Profile::Story),
+                "p" => self.choose_profile(yonro_core::Profile::Pieces),
+                _ => {}
+            }
+            cx.notify();
+            return;
+        }
         let shift = mods.shift;
         let word = mods.platform || mods.control;
         match event.keystroke.key.as_str() {

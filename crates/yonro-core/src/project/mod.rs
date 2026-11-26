@@ -49,6 +49,22 @@ struct ProjectFile {
     /// Daily word goal (`0` = none).
     #[serde(default)]
     daily_goal: usize,
+    /// Which tools the workspace shows. Missing means novel.
+    #[serde(default)]
+    profile: Profile,
+}
+
+/// Which desk a workspace opens.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Profile {
+    /// Page, outline, graph, timeline, and lore.
+    #[default]
+    Novel,
+    /// Page, outline, timeline, and lore.
+    Story,
+    /// Page and a flat list of pieces.
+    Pieces,
 }
 
 /// One history snapshot: file name plus draft words at the time.
@@ -798,13 +814,32 @@ impl Project {
         let sessions_json = serde_json::to_string_pretty(log.days())
             .map_err(|err| ProjectError::Io(format!("sessions.json: {err}")))?;
         write_atomic(&dir.join("sessions.json"), sessions_json.as_bytes())?;
-        let file = ProjectFile {
-            daily_goal: log.goal(),
-        };
+        let mut file = read_project_file(&self.root);
+        file.daily_goal = log.goal();
         let project_json = serde_json::to_string_pretty(&file)
             .map_err(|err| ProjectError::Io(format!("project.json: {err}")))?;
         write_atomic(&dir.join("project.json"), project_json.as_bytes())?;
         Ok(())
+    }
+
+    /// Workspace profile. A missing or corrupt file is novel.
+    #[must_use]
+    pub fn profile(&self) -> Profile {
+        read_project_file(&self.root).profile
+    }
+
+    /// Write the profile. The daily goal already on disk stays.
+    ///
+    /// # Errors
+    /// `Io` when the directory cannot be created or the write fails.
+    pub fn set_profile(&self, profile: Profile) -> Result<(), ProjectError> {
+        let dir = self.root.join(".yonro");
+        std::fs::create_dir_all(&dir).map_err(|err| ProjectError::Io(format!(".yonro: {err}")))?;
+        let mut file = read_project_file(&self.root);
+        file.profile = profile;
+        let project_json = serde_json::to_string_pretty(&file)
+            .map_err(|err| ProjectError::Io(format!("project.json: {err}")))?;
+        write_atomic(&dir.join("project.json"), project_json.as_bytes())
     }
 
     /// Record the current manuscript total into `log` for `today`.
@@ -892,6 +927,14 @@ impl Project {
         self.save()?;
         Ok(())
     }
+}
+
+fn read_project_file(root: &Path) -> ProjectFile {
+    let path = root.join(".yonro/project.json");
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return ProjectFile::default();
+    };
+    serde_json::from_str(&text).unwrap_or_default()
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), ProjectError> {
@@ -1440,6 +1483,21 @@ mod tests {
             .iter()
             .any(|warning| warning.contains("sessions.json")));
         assert_eq!(fallback.goal(), 500);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_profile_is_novel_and_sessions_keep_it() {
+        let dir = unique_dir("profile");
+        let project = Project::create(&dir, "Book").unwrap();
+        assert_eq!(project.profile(), Profile::Novel);
+        std::fs::write(dir.join(".yonro/project.json"), "{\"daily_goal\":12}").unwrap();
+        assert_eq!(project.profile(), Profile::Novel);
+        project.set_profile(Profile::Pieces).unwrap();
+        assert_eq!(project.profile(), Profile::Pieces);
+        let (log, _) = project.load_sessions();
+        project.save_sessions(&log).unwrap();
+        assert_eq!(project.profile(), Profile::Pieces);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
