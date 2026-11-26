@@ -1,11 +1,9 @@
 # Yonro — a narrative studio for fiction writers
 
-[![Build Status](https://github.com/akshayrivers/Text_Editor/actions/workflows/rust.yml/badge.svg)](https://github.com/akshayrivers/Text_Editor/actions/workflows/rust.yml)
-
 Yonro is a **prototype** novel-writing studio: one headless narrative engine
-(`yonro-core`) with two frontends over the same workspace on disk — a terminal
-UI (`yonro-tui`) for distraction-free drafting, and a desktop app (`yonro-gui`,
-Tauri v2) for outline, relationship graph, timeline, and lore. It started life
+(`yonro-core`) over the same workspace on disk. `yonro-tui` is the terminal.
+`yonro-app` is the native page. `yonro-gui` (Tauri v2) is the older desktop
+studio: outline, relationship graph, timeline, and lore. It started life
 as a Hecto-tutorial terminal editor; the manuscript, lore, graph, and session
 features are what it is now. The author is writing a novel inside it.
 
@@ -52,6 +50,11 @@ lore sheets, find, zen/typewriter mode, live word counts, mouse support, split
 and floating panes with a command bar, and an async plugin runtime that hosts
 the sidebars without blocking key input.
 
+### `yonro-app` — the page
+A native window. GPUI shapes the glyphs; the rope, the caret, and the marks
+stay in our code. Open a workspace with
+`cargo run -p yonro-app -- <workspace_dir>`.
+
 ### `yonro-gui` — the desktop frontend (Tauri v2)
 The same core and the same files, behind five views: **Write**
 (drafting with `@mention` autocomplete), **Outline** (manuscript table plus
@@ -65,7 +68,7 @@ bundler, no framework).
 
 ## on-disk format
 
-Both frontends read and write the same workspace:
+The frontends read and write the same workspace:
 
 ```text
 <root>/.yonro/{manuscript.json, lore.json, ...}
@@ -78,17 +81,20 @@ fields. Missing or corrupt JSON falls back to Untitled/empty — never a crash.
 
 ## quick start
 
-Requirements: stable Rust. The desktop app on Linux also needs the
-WebKitGTK stack (see `.github/workflows/rust.yml`).
+Requirements: stable Rust. On Linux, `yonro-gui` needs the WebKitGTK
+libraries and `yonro-app` needs the X11 and Wayland client libraries.
 
 ```bash
-git clone https://github.com/akshayrivers/Text_Editor.git
-cd Text_Editor
+git clone https://github.com/akshayrivers/Yonro-Text-Editor.git
+cd Yonro-Text-Editor
 
 # terminal editor (reads the .yonro workspace in <cwd>)
 cargo run -p yonro-tui
 
-# desktop studio (paths resolve under your home folder)
+# native page
+cargo run -p yonro-app -- <workspace_dir>
+
+# older desktop studio (paths resolve under your home folder)
 cargo run -p yonro-gui -- <workspace_dir>
 
 # sample novel (3 acts, 36 scenes, @mentions) for trying the views/graph
@@ -121,14 +127,16 @@ lore sheet, `Esc` dismisses). Splits also resize by dragging dividers.
 graph TD
     Core[yonro-core: manuscript, lore, graph, timeline, search, export, sessions]
     TUI[yonro-tui: crossterm loop, sidebars, tabs, panes, plugin runtime]
+    APP[yonro-app: native page]
     GUI[yonro-gui: Tauri commands + static ui, five views]
     Disk[.yonro JSON + scene .md files]
     Core --- Disk
     TUI -->|calls| Core
+    APP -->|calls| Core
     GUI -->|calls| Core
 ```
 
-`yonro-core` never touches a screen; both frontends never derive a narrative
+`yonro-core` never touches a screen. The frontends never derive a narrative
 fact. Details live in `architecture.md` (TUI loop, plugin messages, layout
 tree, and the full Tauri command list behind `ui/core.js`).
 
