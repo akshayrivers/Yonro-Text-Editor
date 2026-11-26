@@ -1,0 +1,17 @@
+[package]
+name = "yonro-app"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Desktop page. GPUI is the window and the text shaper; the editor stays ours.
+# Pinned: gpui 0.2.2. License Apache-2.0 (crates.io, not yanked).
+# Zed the application is copyleft; this library crate is Apache-2.0.
+# Do not float the version. Pre-1.0, so an upgrade is a deliberate task.
+
+[[bin]]
+name = "yonro-app"
+path = "src/main.rs"
+
+[dependencies]
+gpui = "=0.2.2"
