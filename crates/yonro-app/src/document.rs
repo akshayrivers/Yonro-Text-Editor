@@ -76,6 +76,10 @@ pub struct Page {
     pub(crate) mentions: Vec<String>,
     pub(crate) mention_at: Option<Location>,
     pub(crate) mention_pick: usize,
+    pub(crate) zen: bool,
+    pub(crate) scroll: gpui::ScrollHandle,
+    pub(crate) title: String,
+    pub(crate) scenes: Vec<String>,
 }
 
 impl Page {
@@ -83,6 +87,7 @@ impl Page {
     pub fn open(path: Option<PathBuf>, cx: &mut Context<Self>) -> Self {
         let lore = lore_for(path.as_deref());
         let (buffer, path) = load(path);
+        let (title, scenes) = chrome_for(path.as_deref());
         Self {
             buffer,
             path,
@@ -110,14 +115,21 @@ impl Page {
             mentions: Vec::new(),
             mention_at: None,
             mention_pick: 0,
+            zen: false,
+            scroll: gpui::ScrollHandle::new(),
+            title,
+            scenes,
         }
     }
 }
 
 impl Render for Page {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.echo = None;
         let rows = painted_rows(&self.buffer, &self.lore, self.log.format(), self.zoom);
+        if self.zen {
+            settle_caret(&self.scroll, window, &rows, self.caret);
+        }
         let empty = self.buffer.is_empty();
         let caret = self.caret;
         let anchor = self.anchor;
@@ -131,8 +143,9 @@ impl Render for Page {
         } else {
             String::new()
         };
+        let (_, words, _) = self.buffer.word_count_stats();
         let status = format!(
-            "{mark}{zoomed}Ln {}  Col {}",
+            "{mark}{zoomed}{words} words  Ln {}  Col {}",
             caret.line_idx.saturating_add(1),
             col.saturating_add(1)
         );
@@ -162,15 +175,34 @@ impl Render for Page {
             .bg(rgb(DESK))
             .flex()
             .flex_col()
+            .when(!self.zen, |column| {
+                let title = self.title.clone();
+                column.child(
+                    div()
+                        .h(px(28.0))
+                        .px(px(16.0))
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .text_sm()
+                        .font(font("Menlo"))
+                        .text_color(rgb(QUIET))
+                        .child("yonro")
+                        .child(SharedString::from(title))
+                        .child("zen"),
+                )
+            })
             .child(
                 div()
                     .flex_1()
                     .flex()
+                    .when(!self.zen, |row| row.child(binder_column(&self.scenes)))
                     .justify_center()
                     .child(
                         div()
                             .id("sheet")
                             .track_focus(&self.focus)
+                            .track_scroll(&self.scroll)
                             .on_key_down(cx.listener(Page::on_key))
                             .w(px(760.0))
                             .h_full()
@@ -967,6 +999,93 @@ fn mention_marks(
         }
     }
     marks
+}
+
+fn binder_column(scenes: &[String]) -> gpui::Div {
+    let lines: Vec<String> = if scenes.is_empty() {
+        vec!["no scenes yet. press a to add an act, then c, then s.".to_string()]
+    } else {
+        scenes.to_vec()
+    };
+    div()
+        .w(px(200.0))
+        .h_full()
+        .p_4()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_sm()
+        .font(font("Menlo"))
+        .text_color(rgb(QUIET))
+        .children(
+            lines
+                .into_iter()
+                .map(|title| div().child(SharedString::from(title))),
+        )
+}
+
+fn settle_caret(
+    scroll: &gpui::ScrollHandle,
+    window: &Window,
+    rows: &[PaintedRow],
+    caret: Location,
+) {
+    let mut above = 0.0f32;
+    for row in rows {
+        let on_row = row.line_idx == caret.line_idx
+            && caret.grapheme_idx >= row.start
+            && caret.grapheme_idx <= row.end;
+        if on_row {
+            break;
+        }
+        above += row.line_px;
+    }
+    let view = window.viewport_size().height / px(1.0);
+    let target = above - view * 0.45;
+    let y = if target > 0.0 { target } else { 0.0 };
+    scroll.set_offset(point(px(0.0), px(y)));
+}
+
+fn chrome_for(path: Option<&std::path::Path>) -> (String, Vec<String>) {
+    let Some(path) = path else {
+        return ("untitled".to_string(), Vec::new());
+    };
+    let root = if path.is_dir() {
+        path.to_path_buf()
+    } else {
+        path.parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_default()
+    };
+    if root.as_os_str().is_empty() || !yonro_core::Project::has_project(&root) {
+        let name = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("untitled");
+        return (name.to_string(), vec![name.to_string()]);
+    }
+    let project = yonro_core::Project::load(&root);
+    let title = project.manuscript.title().to_string();
+    let mut scenes = Vec::new();
+    scene_titles(&project.manuscript, project.manuscript.root(), &mut scenes);
+    (title, scenes)
+}
+
+fn scene_titles(
+    manuscript: &yonro_core::Manuscript,
+    id: yonro_core::NodeId,
+    out: &mut Vec<String>,
+) {
+    for child in manuscript.children(id) {
+        if !child.alive {
+            continue;
+        }
+        if child.kind == yonro_core::NodeKind::Scene {
+            out.push(child.title.clone());
+        } else {
+            scene_titles(manuscript, child.id, out);
+        }
+    }
 }
 
 fn lore_for(path: Option<&std::path::Path>) -> yonro_core::LoreBook {
